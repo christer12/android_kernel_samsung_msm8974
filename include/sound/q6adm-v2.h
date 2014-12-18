@@ -41,16 +41,17 @@ int adm_dolby_dap_send_params(int port_id, char *params,
 int adm_multi_ch_copp_open(int port, int path, int rate, int mode,
 			int topology, bool perf_mode, uint16_t bits_per_sample);
 
+int adm_unmap_cal_blocks(void);
+
 int adm_memory_map_regions(int port_id, uint32_t *buf_add, uint32_t mempool_id,
 				uint32_t *bufsz, uint32_t bufcnt);
 
-int adm_memory_unmap_regions(int port_id, uint32_t *buf_add, uint32_t *bufsz,
-						uint32_t bufcnt);
+int adm_memory_unmap_regions(int port_id);
 
-int adm_close(int port);
+int adm_close(int port, bool perf_mode);
 
 int adm_matrix_map(int session_id, int path, int num_copps,
-				unsigned int *port_id, int copp_id);
+		unsigned int *port_id, int copp_id, bool perf_mode);
 
 int adm_connect_afe_port(int mode, int session_id, int port_id);
 

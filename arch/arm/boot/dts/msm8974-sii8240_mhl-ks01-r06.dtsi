@@ -10,8 +10,8 @@
  * GNU General Public License for more details.
  */
 
- / {
-i2c@f9966000 {
+&soc {
+	i2c@f9966000 {
 		gpios = <&msmgpio 55 0>, /* sda */
 			<&msmgpio 56 0>; /* scl */
 		sii8240tmds@39 {
@@ -22,6 +22,7 @@ i2c@f9966000 {
 			interrupt-parent = <&msmgpio>;
 			interrupts = <31 0x1>;
 			sii8240,gpio_mhl_reset = <&msmgpio 60 0x00>;/*&msmgpio 60 0x00*/
+			sii8240,gpio_mhl_reset_type = "msmgpio";
 			sii8240,gpio_mhl_en = <0>;
 			sii8240,swing_level = <0x25>;
 

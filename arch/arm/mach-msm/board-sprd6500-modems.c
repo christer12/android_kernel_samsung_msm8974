@@ -38,7 +38,111 @@
 #define GPIO_SIM_SEL		115
 #define ESC_SIM_DETECT_IRQ	125
 
+#if defined(CONFIG_GSM_MODEM_GG_DUOS)
+/* gsm target platform data */
+static struct modem_io_t gsm_io_devices[] = {
+	[0] = {
+		.name = "gsm_boot0",
+		.id = 0x1,
+		.format = IPC_BOOT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[1] = {
+		.name = "gsm_ipc0",
+		.id = 0x00,
+		.format = IPC_FMT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[2] = {
+		.name = "umts_ipc0",
+		.id = 0x01,
+		.format = IPC_FMT,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[3] = {
+		.name = "gsm_rfs0",
+		.id = 0x28,
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[4] = {
+		.name = "gsm_multi_pdp",
+		.id = 0x1,
+		.format = IPC_MULTI_RAW,
+		.io_type = IODEV_DUMMY,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[5] = {
+		.name = "gsm_rmnet0",
+		.id = 0x2A,
+		.format = IPC_RAW,
+		.io_type = IODEV_NET,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[6] = {
+		.name = "gsm_rmnet1",
+		.id = 0x2B,
+		.format = IPC_RAW,
+		.io_type = IODEV_NET,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[7] = {
+		.name = "gsm_rmnet2",
+		.id = 0x2C,
+		.format = IPC_RAW,
+		.io_type = IODEV_NET,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[8] = {
+		.name = "gsm_router",
+		.id = 0x39,
+		.format = IPC_RAW,
+		.io_type = IODEV_NET,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	/*
+	[8] = {
+		.name = "gsm_csd",
+		.id = 0x21,
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[9] = {
+		.name = "gsm_ramdump0",
+		.id = 0x1,
+		.format = IPC_RAMDUMP,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	[10] = {
+		.name = "gsm_loopback0",
+		.id = 0x3F,
+		.format = IPC_RAW,
+		.io_type = IODEV_MISC,
+		.links = LINKTYPE(LINKDEV_SPI),
+	},
+	*/
+};
 
+static struct modem_data gsm_modem_data = {
+	.name = "sprd6500",
+
+	.modem_type = SPRD_SC6500,
+	.link_types = LINKTYPE(LINKDEV_SPI),
+	.modem_net = TDSCDMA_NETWORK,
+	.use_handover = false,
+	.ipc_version = SIPC_VER_42,
+
+	.num_iodevs = ARRAY_SIZE(gsm_io_devices),
+	.iodevs = gsm_io_devices,
+};
+
+#else
 /* gsm target platform data */
 static struct modem_io_t gsm_io_devices[] = {
 	[0] = {
@@ -134,6 +238,8 @@ static struct modem_data gsm_modem_data = {
 	.num_iodevs = ARRAY_SIZE(gsm_io_devices),
 	.iodevs = gsm_io_devices,
 };
+
+#endif
 
 
 #if 0 //def CONFIG_OF
@@ -286,11 +392,11 @@ void sprd6500_modem_cfg_gpio(void)
 		GPIO_CFG_ENABLE);
 
 	gpio_tlmm_config(GPIO_CFG(GPIO_CP_DUMP_INT, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
 		GPIO_CFG_ENABLE);
 
 	gpio_tlmm_config(GPIO_CFG(GPIO_AP_CP_INT1, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 		GPIO_CFG_ENABLE);
 
 	gsm_modem_data.gpio_cp_on = GPIO_GSM_PHONE_ON;

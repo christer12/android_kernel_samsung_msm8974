@@ -13,7 +13,9 @@
  *
  */
 #include "ssp.h"
-
+#if defined (CONFIG_MACH_VIKALCU)
+#include <linux/regulator/lp8720.h>
+#endif
 /*************************************************************************/
 /* SSP data delay function                                              */
 /*************************************************************************/
@@ -114,7 +116,6 @@ static int ssp_remove_sensor(struct ssp_data *data,
 	u8 uBuf[2];
 	int iRet = 0;
 	int64_t dSensorDelay = data->adDelayBuf[uChangedSensor];
-
 	ssp_dbg("[SSP]: %s - remove sensor = %d, current state = %d\n",
 		__func__, (1 << uChangedSensor), uNewEnable);
 
@@ -122,10 +123,18 @@ static int ssp_remove_sensor(struct ssp_data *data,
 
 	if (data->aiCheckStatus[uChangedSensor] == INITIALIZATION_STATE) {
 		data->aiCheckStatus[uChangedSensor] = NO_SENSOR_STATE;
-		if (uChangedSensor == ACCELEROMETER_SENSOR)
+		if (uChangedSensor == ACCELEROMETER_SENSOR) {
 			accel_open_calibration(data);
-		else if (uChangedSensor == GYROSCOPE_SENSOR)
+			iRet = set_accel_cal(data);
+			if (iRet < 0)
+				pr_err("[SSP]: %s - set_accel_cal failed %d\n", __func__, iRet);
+		}
+		else if (uChangedSensor == GYROSCOPE_SENSOR) {
 			gyro_open_calibration(data);
+			iRet = set_gyro_cal(data);
+			if (iRet < 0)
+				pr_err("[SSP]: %s - set_gyro_cal failed %d\n", __func__,  iRet);
+		}
 		else if (uChangedSensor == PRESSURE_SENSOR)
 			pressure_open_calibration(data);
 		else if (uChangedSensor == PROXIMITY_SENSOR) {
@@ -165,13 +174,15 @@ static int ssp_remove_sensor(struct ssp_data *data,
 			pr_err("mag_store_hwoffset success\n");
 	}
 
-	if (atomic_read(&data->aSensorEnable) & (1 << uChangedSensor)) {
-		uBuf[1] = (u8)get_msdelay(dSensorDelay);
-		uBuf[0] = (u8)get_delay_cmd(uBuf[1]);
+	if (!data->bSspShutdown)
+		if (atomic_read(&data->aSensorEnable) & (1 << uChangedSensor)) {
+			uBuf[1] = (u8) get_msdelay(dSensorDelay);
+			uBuf[0] = (u8) get_delay_cmd(uBuf[1]);
 
-		send_instruction(data, REMOVE_SENSOR, uChangedSensor, uBuf, 2);
-	}
+			send_instruction(data, REMOVE_SENSOR, uChangedSensor, uBuf, 2);
+		}
 	data->aiCheckStatus[uChangedSensor] = NO_SENSOR_STATE;
+
 	return 0;
 }
 
@@ -239,7 +250,7 @@ static ssize_t set_sensors_enable(struct device *dev,
 	if (uNewEnable == atomic_read(&data->aSensorEnable))
 		return size;
 
-	for (uChangedSensor = 0; uChangedSensor < SENSOR_MAX; uChangedSensor++)
+	for (uChangedSensor = 0; uChangedSensor < SENSOR_MAX; uChangedSensor++) {
 		if ((atomic_read(&data->aSensorEnable) & (1 << uChangedSensor))
 			!= (uNewEnable & (1 << uChangedSensor))) {
 
@@ -247,10 +258,14 @@ static ssize_t set_sensors_enable(struct device *dev,
 				ssp_remove_sensor(data, uChangedSensor,
 					uNewEnable); /* disable */
 			/* In case of enabling */
-			/* we will sensor instruction on change_sensor_delay. */			
+			/* we will sensor instruction on change_sensor_delay. */
+			else if (!((uNewEnable & (1 << uChangedSensor)) & data->uSensorState)) {
+				pr_err("[SSP] %s - Sensor was not connected(%u)!!\n", __func__, uChangedSensor);
+				return -ENODEV; //-19
+			}
 			break;
 		}
-
+	}
 	atomic_set(&data->aSensorEnable, uNewEnable);
 
 	return size;
@@ -352,6 +367,138 @@ static ssize_t set_mag_delay(struct device *dev,
 		return -EINVAL;
 
 	change_sensor_delay(data, GEOMAGNETIC_SENSOR, dNewDelay);
+
+	return size;
+}
+
+static ssize_t show_uncalib_mag_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n", data->adDelayBuf[GEOMAGNETIC_UNCALIB_SENSOR]);
+}
+
+static ssize_t set_uncalib_mag_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -EINVAL;
+
+	change_sensor_delay(data, GEOMAGNETIC_UNCALIB_SENSOR, dNewDelay);
+
+	return size;
+}
+
+static ssize_t show_rot_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n", data->adDelayBuf[ROTATION_VECTOR]);
+}
+
+static ssize_t set_rot_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -EINVAL;
+
+	change_sensor_delay(data, ROTATION_VECTOR, dNewDelay);
+
+	return size;
+}
+
+static ssize_t show_game_rot_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n", data->adDelayBuf[GAME_ROTATION_VECTOR]);
+}
+
+static ssize_t set_game_rot_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -EINVAL;
+
+	change_sensor_delay(data, GAME_ROTATION_VECTOR, dNewDelay);
+
+	return size;
+}
+
+static ssize_t show_step_det_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data  = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n",
+		data->adDelayBuf[STEP_DETECTOR]);
+}
+
+static ssize_t set_step_det_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data  = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -1;
+
+	change_sensor_delay(data, STEP_DETECTOR, dNewDelay);
+	return size;
+}
+
+static ssize_t show_sig_motion_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data  = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n",
+		data->adDelayBuf[SIG_MOTION_SENSOR]);
+}
+
+static ssize_t set_sig_motion_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data  = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -1;
+
+	change_sensor_delay(data, SIG_MOTION_SENSOR, dNewDelay);
+	return size;
+}
+
+static ssize_t show_uncalib_gyro_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n", data->adDelayBuf[GYRO_UNCALIB_SENSOR]);
+}
+
+static ssize_t set_uncalib_gyro_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -EINVAL;
+
+	change_sensor_delay(data, GYRO_UNCALIB_SENSOR, dNewDelay);
 
 	return size;
 }
@@ -463,6 +610,33 @@ static ssize_t set_temp_humi_delay(struct device *dev,
 	return size;
 }
 
+ssize_t ssp_sensorhub_voicel_pcmdump_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data = dev_get_drvdata(dev);
+	int status = ssp_sensorhub_pcm_dump(data->hub_data);
+
+	return sprintf(buf, "%s\n", (status ? "OK" : "NG"));
+}
+
+static DEVICE_ATTR(voice_pcmdump, S_IRUGO, ssp_sensorhub_voicel_pcmdump_show, NULL);
+
+static struct device_attribute *voice_attrs[] = {
+	&dev_attr_voice_pcmdump,
+	NULL,
+};
+
+static void initialize_voice_sysfs(struct ssp_data *data)
+{
+	sensors_register(data->voice_device, data, voice_attrs, "ssp_voice");
+}
+
+static void remove_voice_sysfs(struct ssp_data *data)
+{
+	sensors_unregister(data->voice_device, voice_attrs);
+}
+
+
 static DEVICE_ATTR(mcu_rev, S_IRUGO, mcu_revision_show, NULL);
 static DEVICE_ATTR(mcu_name, S_IRUGO, mcu_model_name_show, NULL);
 static DEVICE_ATTR(mcu_update, S_IRUGO, mcu_update_kernel_bin_show, NULL);
@@ -470,6 +644,7 @@ static DEVICE_ATTR(mcu_update2, S_IRUGO,
 	mcu_update_kernel_crashed_bin_show, NULL);
 static DEVICE_ATTR(mcu_update_ums, S_IRUGO, mcu_update_ums_bin_show, NULL);
 static DEVICE_ATTR(mcu_reset, S_IRUGO, mcu_reset_show, NULL);
+static DEVICE_ATTR(mcu_dump, S_IRUGO, mcu_dump_show, NULL);
 
 static DEVICE_ATTR(mcu_test, S_IRUGO | S_IWUSR | S_IWGRP,
 	mcu_factorytest_show, mcu_factorytest_store);
@@ -489,6 +664,18 @@ static struct device_attribute dev_attr_gyro_poll_delay
 static struct device_attribute dev_attr_mag_poll_delay
 	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
 	show_mag_delay, set_mag_delay);
+static struct device_attribute dev_attr_uncalib_mag_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_uncalib_mag_delay, set_uncalib_mag_delay);
+static struct device_attribute dev_attr_rot_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_rot_delay, set_rot_delay);
+static struct device_attribute dev_attr_game_rot_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_game_rot_delay, set_game_rot_delay);
+static struct device_attribute dev_attr_step_det_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_step_det_delay, set_step_det_delay);
 static struct device_attribute dev_attr_pressure_poll_delay
 	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
 	show_pressure_delay, set_pressure_delay);
@@ -504,6 +691,12 @@ static struct device_attribute dev_attr_prox_poll_delay
 static struct device_attribute dev_attr_temp_humi_poll_delay
 	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
 	show_temp_humi_delay, set_temp_humi_delay);
+static struct device_attribute dev_attr_sig_motion_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_sig_motion_delay, set_sig_motion_delay);
+static struct device_attribute dev_attr_uncalib_gyro_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_uncalib_gyro_delay, set_uncalib_gyro_delay);
 
 static struct device_attribute *mcu_attrs[] = {
 	&dev_attr_enable,
@@ -511,6 +704,7 @@ static struct device_attribute *mcu_attrs[] = {
 	&dev_attr_mcu_name,
 	&dev_attr_mcu_test,
 	&dev_attr_mcu_reset,
+	&dev_attr_mcu_dump,
 	&dev_attr_mcu_update,
 	&dev_attr_mcu_update2,
 	&dev_attr_mcu_update_ums,
@@ -563,6 +757,29 @@ int initialize_sysfs(struct ssp_data *data)
 		&dev_attr_mag_poll_delay))
 		goto err_mag_input_dev;
 
+	if (device_create_file(&data->uncalib_mag_input_dev->dev,
+		&dev_attr_uncalib_mag_poll_delay))
+		goto err_uncalib_mag_input_dev;
+
+	if (device_create_file(&data->rot_input_dev->dev,
+		&dev_attr_rot_poll_delay))
+		goto err_rot_input_dev;
+
+	if (device_create_file(&data->game_rot_input_dev->dev,
+		&dev_attr_game_rot_poll_delay))
+		goto err_game_rot_input_dev;
+	if (device_create_file(&data->step_det_input_dev->dev,
+		&dev_attr_step_det_poll_delay))
+		goto err_step_det_input_dev;
+
+	if (device_create_file(&data->sig_motion_input_dev->dev,
+		&dev_attr_sig_motion_poll_delay))
+		goto err_sig_motion_input_dev;
+
+	if (device_create_file(&data->uncalib_gyro_input_dev->dev,
+		&dev_attr_uncalib_gyro_poll_delay))
+		goto err_uncalib_gyro_input_dev;
+
 	initialize_accel_factorytest(data);
 	initialize_gyro_factorytest(data);
 	initialize_prox_factorytest(data);
@@ -570,13 +787,35 @@ int initialize_sysfs(struct ssp_data *data)
 	initialize_pressure_factorytest(data);
 	initialize_magnetic_factorytest(data);
 	initialize_mcu_factorytest(data);
-#ifdef CONFIG_SENSORS_SSP_MAX88920
+#if defined (CONFIG_SENSORS_SSP_MAX88921)
 	initialize_gesture_factorytest(data);
 #endif
 #ifdef CONFIG_SENSORS_SSP_SHTC1
 	initialize_temphumidity_factorytest(data);
 #endif
+	/*snamy.jeong_0630 voice dump & data*/
+	initialize_voice_sysfs(data);
+
 	return SUCCESS;
+
+err_uncalib_gyro_input_dev:
+	device_remove_file(&data->sig_motion_input_dev->dev,
+		&dev_attr_sig_motion_poll_delay);
+err_sig_motion_input_dev:
+	device_remove_file(&data->step_det_input_dev->dev,
+		&dev_attr_step_det_poll_delay);
+err_step_det_input_dev:
+	device_remove_file(&data->game_rot_input_dev->dev,
+		&dev_attr_game_rot_poll_delay);
+err_game_rot_input_dev:
+	device_remove_file(&data->rot_input_dev->dev,
+		&dev_attr_rot_poll_delay);
+err_rot_input_dev:
+	device_remove_file(&data->uncalib_mag_input_dev->dev,
+		&dev_attr_uncalib_mag_poll_delay);
+err_uncalib_mag_input_dev:
+	device_remove_file(&data->mag_input_dev->dev,
+		&dev_attr_mag_poll_delay);
 err_mag_input_dev:
 	device_remove_file(&data->temp_humi_input_dev->dev,
 		&dev_attr_temp_humi_poll_delay);
@@ -587,14 +826,14 @@ err_prox_input_dev:
 	device_remove_file(&data->light_input_dev->dev,
 		&dev_attr_light_poll_delay);
 err_light_input_dev:
+	device_remove_file(&data->gesture_input_dev->dev,
+		&dev_attr_gesture_poll_delay);
+err_gesture_input_dev:
 	device_remove_file(&data->pressure_input_dev->dev,
 		&dev_attr_pressure_poll_delay);
 err_pressure_input_dev:
 	device_remove_file(&data->gyro_input_dev->dev,
 		&dev_attr_gyro_poll_delay);
-err_gesture_input_dev:
-	device_remove_file(&data->gesture_input_dev->dev,
-		&dev_attr_gesture_poll_delay);
 err_gyro_input_dev:
 	device_remove_file(&data->acc_input_dev->dev,
 		&dev_attr_accel_poll_delay);
@@ -620,6 +859,14 @@ void remove_sysfs(struct ssp_data *data)
 		&dev_attr_temp_humi_poll_delay);
 	device_remove_file(&data->mag_input_dev->dev,
 		&dev_attr_mag_poll_delay);
+	device_remove_file(&data->uncalib_mag_input_dev->dev,
+		&dev_attr_uncalib_mag_poll_delay);
+	device_remove_file(&data->step_det_input_dev->dev,
+		&dev_attr_step_det_poll_delay);
+	device_remove_file(&data->sig_motion_input_dev->dev,
+		&dev_attr_sig_motion_poll_delay);
+	device_remove_file(&data->uncalib_gyro_input_dev->dev,
+		&dev_attr_uncalib_gyro_poll_delay);
 	remove_accel_factorytest(data);
 	remove_gyro_factorytest(data);
 	remove_prox_factorytest(data);
@@ -633,5 +880,54 @@ void remove_sysfs(struct ssp_data *data)
 #ifdef CONFIG_SENSORS_SSP_SHTC1
 	remove_temphumidity_factorytest(data);
 #endif
+
+	/*snamy.jeong_0630 voice dump & data*/
+	remove_voice_sysfs(data);
+
 	destroy_sensor_class();
 }
+
+#if defined (CONFIG_MACH_VIKALCU)
+static struct regulator *sub_ldo1 = NULL;
+extern int get_lcd_attached(void); 
+void proximity_ldo_enable(int onoff)
+{
+	int ret = 0;
+	if (get_lcd_attached() == 0)
+	{
+		pr_err("skip proximity_ldo_enable : LCD is not attached\n");
+		return;
+	}
+
+	if(!sub_ldo1){
+		sub_ldo1 = regulator_get(NULL, "lp8720_ldo1");
+		if (IS_ERR(sub_ldo1)){
+			pr_err("lp8720 : could not get sub_ldo1, rc = %ld\n", PTR_ERR(sub_ldo1));
+			sub_ldo1 = NULL;
+		}
+		if(sub_ldo1 != NULL){
+			ret = regulator_set_voltage(sub_ldo1, 1800000, 1800000);
+			if (ret) 
+				pr_err("set_voltage sub_ldo1 failed, rc=%d\n", ret);
+		}
+	}
+	if(sub_ldo1 != NULL){
+	if(onoff){
+		printk(KERN_ERR "[SSP] %s : on\n",__func__);
+		ret = regulator_enable(sub_ldo1);
+		if (ret) 
+			pr_err("enable sub_ldo1 failed, rc=%d\n", ret);
+	}
+	else{
+		printk(KERN_ERR "[SSP] %s : off ",__func__);
+		ret = regulator_disable(sub_ldo1);
+		if (ret) 
+			pr_err("enable sub_ldo1 failed, rc=%d\n", ret);
+	}
+	gpio_tlmm_config(GPIO_CFG(561, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);	
+	gpio_set_value(561, 1);
+	}else{
+		pr_err("sub_ldo1 is NULL, failed\n");
+	}
+}
+#endif

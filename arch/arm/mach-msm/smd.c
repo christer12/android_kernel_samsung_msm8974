@@ -47,11 +47,13 @@
 #include <mach/msm_ipc_logging.h>
 #include <mach/ramdump.h>
 #include <mach/board.h>
+#include <mach/msm_smem.h>
 
 #include <asm/cacheflush.h>
 
 #include "smd_private.h"
 #include "modem_notifier.h"
+#include "smem_private.h"
 
 #if defined(CONFIG_ARCH_QSD8X50) || defined(CONFIG_ARCH_MSM8X60) \
 	|| defined(CONFIG_ARCH_MSM8960) || defined(CONFIG_ARCH_FSM9XXX) \
@@ -71,7 +73,6 @@
 #endif
 
 #define MODULE_NAME "msm_smd"
-#define SMEM_VERSION 0x000B
 #define SMD_VERSION 0x00020000
 #define SMSM_SNAPSHOT_CNT 64
 #define SMSM_SNAPSHOT_SIZE ((SMSM_NUM_ENTRIES + 1) * 4)
@@ -90,7 +91,8 @@ enum {
 	MSM_SMSM_DEBUG = 1U << 1,
 	MSM_SMD_INFO = 1U << 2,
 	MSM_SMSM_INFO = 1U << 3,
-	MSM_SMx_POWER_INFO = 1U << 4,
+	MSM_SMD_POWER_INFO = 1U << 4,
+	MSM_SMSM_POWER_INFO = 1U << 5,
 };
 
 struct smsm_shared_info {
@@ -175,16 +177,6 @@ static struct interrupt_config private_intr_config[NUM_SMD_SUBSYSTEMS] = {
 	},
 };
 
-struct smem_area {
-	phys_addr_t phys_addr;
-	resource_size_t size;
-	void __iomem *virt_addr;
-};
-static uint32_t num_smem_areas;
-static struct smem_area *smem_areas;
-static struct ramdump_segment *smem_ramdump_segments;
-static void *smem_ramdump_dev;
-static void *smem_phys_to_virt(phys_addr_t base, unsigned offset);
 static void *smd_dev;
 
 struct interrupt_stat interrupt_stats[NUM_SMD_SUBSYSTEMS];
@@ -199,15 +191,25 @@ enum {
 	SMSM_APPS_DEM_I = 3,
 };
 
-static int msm_smd_debug_mask = MSM_SMx_POWER_INFO;
+int msm_smd_debug_mask = MSM_SMD_POWER_INFO | MSM_SMD_INFO |
+							MSM_SMSM_POWER_INFO;
 module_param_named(debug_mask, msm_smd_debug_mask,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 static void *smd_log_ctx;
+void *smsm_log_ctx;
+
 #define NUM_LOG_PAGES 4
 
-#define IPC_LOG(level, x...) do { \
+#define IPC_LOG_SMD(level, x...) do { \
 	if (smd_log_ctx) \
 		ipc_log_string(smd_log_ctx, x); \
+	else \
+		printk(level x); \
+	} while (0)
+
+#define IPC_LOG_SMSM(level, x...) do { \
+	if (smsm_log_ctx) \
+		ipc_log_string(smsm_log_ctx, x); \
 	else \
 		printk(level x); \
 	} while (0)
@@ -215,33 +217,40 @@ static void *smd_log_ctx;
 #if defined(CONFIG_MSM_SMD_DEBUG)
 #define SMD_DBG(x...) do {				\
 		if (msm_smd_debug_mask & MSM_SMD_DEBUG) \
-			IPC_LOG(KERN_DEBUG, x);		\
+			IPC_LOG_SMD(KERN_DEBUG, x);		\
 	} while (0)
 
 #define SMSM_DBG(x...) do {					\
 		if (msm_smd_debug_mask & MSM_SMSM_DEBUG)	\
-			IPC_LOG(KERN_DEBUG, x);		\
+			IPC_LOG_SMSM(KERN_DEBUG, x);		\
 	} while (0)
 
 #define SMD_INFO(x...) do {			 	\
 		if (msm_smd_debug_mask & MSM_SMD_INFO)	\
-			IPC_LOG(KERN_INFO, x);		\
+			IPC_LOG_SMD(KERN_INFO, x);		\
 	} while (0)
 
 #define SMSM_INFO(x...) do {				\
 		if (msm_smd_debug_mask & MSM_SMSM_INFO) \
-			IPC_LOG(KERN_INFO, x);		\
+			IPC_LOG_SMSM(KERN_INFO, x);		\
 	} while (0)
-#define SMx_POWER_INFO(x...) do {				\
-		if (msm_smd_debug_mask & MSM_SMx_POWER_INFO) \
-			IPC_LOG(KERN_INFO, x);		\
+
+#define SMD_POWER_INFO(x...) do {				\
+		if (msm_smd_debug_mask & MSM_SMD_POWER_INFO)	\
+			IPC_LOG_SMD(KERN_INFO, x);		\
 	} while (0)
+
+#define SMSM_POWER_INFO(x...) do {				\
+		if (msm_smd_debug_mask & MSM_SMSM_POWER_INFO)	\
+			IPC_LOG_SMSM(KERN_INFO, x);		\
+ 	} while (0)
 #else
 #define SMD_DBG(x...) do { } while (0)
 #define SMSM_DBG(x...) do { } while (0)
 #define SMD_INFO(x...) do { } while (0)
 #define SMSM_INFO(x...) do { } while (0)
-#define SMx_POWER_INFO(x...) do { } while (0)
+#define SMD_POWER_INFO(x...) do { } while (0)
+#define SMSM_POWER_INFO(x...) do { } while (0)
 #endif
 
 /**
@@ -380,9 +389,6 @@ static inline void smd_write_intr(unsigned int val,
 
 #define SMD_LOOPBACK_CID 100
 
-#define SMEM_SPINLOCK_SMEM_ALLOC       "S:3"
-static remote_spinlock_t remote_spinlock;
-
 static LIST_HEAD(smd_ch_list_loopback);
 static void smd_fake_irq_handler(unsigned long arg);
 static void smsm_cb_snapshot(uint32_t use_wakelock);
@@ -392,7 +398,6 @@ static void notify_smsm_cb_clients_worker(struct work_struct *work);
 static DECLARE_WORK(smsm_cb_work, notify_smsm_cb_clients_worker);
 static DEFINE_MUTEX(smsm_lock);
 static struct smsm_state_info *smsm_states;
-static int spinlocks_initialized;
 
 /**
  * Variables to indicate smd module initialization.
@@ -419,9 +424,9 @@ static inline void log_notify(uint32_t subsystem, smd_channel_t *ch)
 	(void) subsys;
 
 	if (!ch)
-		SMx_POWER_INFO("Apps->%s\n", subsys);
+		SMD_POWER_INFO("Apps->%s\n", subsys);
 	else
-		SMx_POWER_INFO(
+		SMD_POWER_INFO(
 			"Apps->%s ch%d '%s': tx%d/rx%d %dr/%dw : %dr/%dw\n",
 			subsys, ch->n, ch->name,
 			ch->fifo_size -
@@ -515,6 +520,9 @@ static inline void notify_modem_smsm(void)
 {
 	static const struct interrupt_config_item *intr
 		= &private_intr_config[SMD_MODEM].smsm;
+
+	SMSM_POWER_INFO("SMSM Apps->%s", "MODEM");
+
 	if (intr->out_base) {
 		++interrupt_stats[SMD_MODEM].smsm_out_config_count;
 		smd_write_intr(intr->out_bit_pos,
@@ -529,6 +537,9 @@ static inline void notify_dsp_smsm(void)
 {
 	static const struct interrupt_config_item *intr
 		= &private_intr_config[SMD_Q6].smsm;
+
+	SMSM_POWER_INFO("SMSM Apps->%s", "ADSP");
+
 	if (intr->out_base) {
 		++interrupt_stats[SMD_Q6].smsm_out_config_count;
 		smd_write_intr(intr->out_bit_pos,
@@ -543,6 +554,9 @@ static inline void notify_dsps_smsm(void)
 {
 	static const struct interrupt_config_item *intr
 		= &private_intr_config[SMD_DSPS].smsm;
+
+	SMSM_POWER_INFO("SMSM Apps->%s", "DSPS");
+
 	if (intr->out_base) {
 		++interrupt_stats[SMD_DSPS].smsm_out_config_count;
 		smd_write_intr(intr->out_bit_pos,
@@ -557,6 +571,8 @@ static inline void notify_wcnss_smsm(void)
 {
 	static const struct interrupt_config_item *intr
 		= &private_intr_config[SMD_WCNSS].smsm;
+
+	SMSM_POWER_INFO("SMSM Apps->%s", "WCNSS");
 
 	if (intr->out_base) {
 		++interrupt_stats[SMD_WCNSS].smsm_out_config_count;
@@ -993,7 +1009,7 @@ void smd_channel_reset(uint32_t restart_pid)
 	struct smd_alloc_elm *shared;
 	unsigned long flags;
 
-	SMx_POWER_INFO("%s: starting reset\n", __func__);
+	SMD_POWER_INFO("%s: starting reset\n", __func__);
 
 	shared = smem_find(ID_CH_ALLOC_TBL, sizeof(*shared) * 64);
 	if (!shared) {
@@ -1052,7 +1068,7 @@ void smd_channel_reset(uint32_t restart_pid)
 	notify_wcnss_smd(NULL);
 	notify_rpm_smd(NULL);
 
-	SMx_POWER_INFO("%s: finished reset\n", __func__);
+	SMD_POWER_INFO("%s: finished reset\n", __func__);
 }
 
 /* how many bytes are available for reading */
@@ -1355,14 +1371,14 @@ static void handle_smd_irq(struct list_head *list,
 		}
 		tmp = ch->half_ch->get_state(ch->recv);
 		if (tmp != ch->last_state) {
-			SMx_POWER_INFO("SMD ch%d '%s' State change %d->%d\n",
+			SMD_POWER_INFO("SMD ch%d '%s' State change %d->%d\n",
 					ch->n, ch->name, ch->last_state, tmp);
 			smd_state_change(ch, ch->last_state, tmp);
 			state_change = 1;
 		}
 		if (ch_flags & 0x3) {
 			ch->update_state(ch);
-			SMx_POWER_INFO(
+			SMD_POWER_INFO(
 				"SMD ch%d '%s' Data event 0x%x tx%d/rx%d %dr/%dw : %dr/%dw\n",
 				ch->n, ch->name,
 				ch_flags,
@@ -1377,7 +1393,7 @@ static void handle_smd_irq(struct list_head *list,
 			ch->notify(ch->priv, SMD_EVENT_DATA);
 		}
 		if (ch_flags & 0x4 && !state_change) {
-			SMx_POWER_INFO("SMD ch%d '%s' State update\n",
+			SMD_POWER_INFO("SMD ch%d '%s' State update\n",
 					ch->n, ch->name);
 			ch->notify(ch->priv, SMD_EVENT_STATUS);
 		}
@@ -1392,7 +1408,7 @@ static inline void log_irq(uint32_t subsystem)
 
 	(void) subsys;
 
-	SMx_POWER_INFO("SMD Int %s->Apps\n", subsys);
+	SMD_POWER_INFO("SMD Int %s->Apps\n", subsys);
 }
 
 static irqreturn_t smd_modem_irq_handler(int irq, void *data)
@@ -2294,11 +2310,11 @@ int smd_mask_receive_interrupt(smd_channel_t *ch, bool mask)
 		return -ENODEV;
 
 	if (mask) {
-		SMx_POWER_INFO("SMD Masking interrupts from %s\n",
+		SMD_POWER_INFO("SMD Masking interrupts from %s\n",
 				edge_to_pids[ch->type].subsys_name);
 		irq_chip->irq_mask(irq_data);
 	} else {
-		SMx_POWER_INFO("SMD Unmasking interrupts from %s\n",
+		SMD_POWER_INFO("SMD Unmasking interrupts from %s\n",
 				edge_to_pids[ch->type].subsys_name);
 		irq_chip->irq_unmask(irq_data);
 	}
@@ -2407,222 +2423,6 @@ int smd_is_pkt_avail(smd_channel_t *ch)
 	return ch->current_packet ? 1 : 0;
 }
 EXPORT_SYMBOL(smd_is_pkt_avail);
-
-
-/* -------------------------------------------------------------------------- */
-
-/**
- * smem_phys_to_virt() - Convert a physical base and offset to virtual address
- *
- * @base: physical base address to check
- * @offset: offset from the base to get the final address
- * @returns: virtual SMEM address; NULL for failure
- *
- * Takes a physical address and an offset and checks if the resulting physical
- * address would fit into one of the smem regions.  If so, returns the
- * corresponding virtual address.  Otherwise returns NULL.
- */
-static void *smem_phys_to_virt(phys_addr_t base, unsigned offset)
-{
-	int i;
-	phys_addr_t phys_addr;
-	resource_size_t size;
-
-	if (OVERFLOW_ADD_UNSIGNED(phys_addr_t, base, offset))
-		return NULL;
-
-	if (!smem_areas) {
-		/*
-		 * Early boot - no area configuration yet, so default
-		 * to using the main memory region.
-		 *
-		 * To remove the MSM_SHARED_RAM_BASE and the static
-		 * mapping of SMEM in the future, add dump_stack()
-		 * to identify the early callers of smem_get_entry()
-		 * (which calls this function) and replace those calls
-		 * with a new function that knows how to lookup the
-		 * SMEM base address before SMEM has been probed.
-		 */
-		phys_addr = msm_shared_ram_phys;
-		size = MSM_SHARED_RAM_SIZE;
-
-		if (base >= phys_addr && base + offset < phys_addr + size) {
-			if (OVERFLOW_ADD_UNSIGNED(uintptr_t,
-				(uintptr_t)MSM_SHARED_RAM_BASE, offset)) {
-				pr_err("%s: overflow %p %x\n", __func__,
-					MSM_SHARED_RAM_BASE, offset);
-				return NULL;
-			}
-
-			return MSM_SHARED_RAM_BASE + offset;
-		} else {
-			return NULL;
-		}
-	}
-	for (i = 0; i < num_smem_areas; ++i) {
-		phys_addr = smem_areas[i].phys_addr;
-		size = smem_areas[i].size;
-
-		if (base < phys_addr || base + offset >= phys_addr + size)
-			continue;
-
-		if (OVERFLOW_ADD_UNSIGNED(uintptr_t,
-				(uintptr_t)smem_areas[i].virt_addr, offset)) {
-			pr_err("%s: overflow %p %x\n", __func__,
-				smem_areas[i].virt_addr, offset);
-			return NULL;
-		}
-
-		return smem_areas[i].virt_addr + offset;
-	}
-
-	return NULL;
-}
-
-/**
- * smem_virt_to_phys() - Convert SMEM address to physical address.
- *
- * @smem_address: Address of SMEM item (returned by smem_alloc(), etc)
- * @returns: Physical address (or NULL if there is a failure)
- *
- * This function should only be used if an SMEM item needs to be handed
- * off to a DMA engine.
- */
-phys_addr_t smem_virt_to_phys(void *smem_address)
-{
-	phys_addr_t phys_addr = 0;
-	int i;
-	void *vend;
-
-	if (!smem_areas)
-		return phys_addr;
-
-	for (i = 0; i < num_smem_areas; ++i) {
-		vend = (void *)(smem_areas[i].virt_addr + smem_areas[i].size);
-
-		if (smem_address >= smem_areas[i].virt_addr &&
-				smem_address < vend) {
-			phys_addr = smem_address - smem_areas[i].virt_addr;
-			phys_addr +=  smem_areas[i].phys_addr;
-			break;
-		}
-	}
-
-	return phys_addr;
-}
-EXPORT_SYMBOL(smem_virt_to_phys);
-
-/* smem_alloc returns the pointer to smem item if it is already allocated.
- * Otherwise, it returns NULL.
- */
-void *smem_alloc(unsigned id, unsigned size)
-{
-	return smem_find(id, size);
-}
-EXPORT_SYMBOL(smem_alloc);
-
-/* smem_alloc2 returns the pointer to smem item.  If it is not allocated,
- * it allocates it and then returns the pointer to it.
- */
-void *smem_alloc2(unsigned id, unsigned size_in)
-{
-	struct smem_shared *shared = (void *) MSM_SHARED_RAM_BASE;
-	struct smem_heap_entry *toc = shared->heap_toc;
-	unsigned long flags;
-	void *ret = NULL;
-
-	if (!shared->heap_info.initialized) {
-		pr_err("%s: smem heap info not initialized\n", __func__);
-		return NULL;
-	}
-
-	if (id >= SMEM_NUM_ITEMS)
-		return NULL;
-
-	size_in = ALIGN(size_in, 8);
-	remote_spin_lock_irqsave(&remote_spinlock, flags);
-	if (toc[id].allocated) {
-		SMD_DBG("%s: %u already allocated\n", __func__, id);
-		if (size_in != toc[id].size)
-			pr_err("%s: wrong size %u (expected %u)\n",
-			       __func__, toc[id].size, size_in);
-		else
-			ret = (void *)(MSM_SHARED_RAM_BASE + toc[id].offset);
-	} else if (id > SMEM_FIXED_ITEM_LAST) {
-		SMD_DBG("%s: allocating %u\n", __func__, id);
-		if (shared->heap_info.heap_remaining >= size_in) {
-			toc[id].offset = shared->heap_info.free_offset;
-			toc[id].size = size_in;
-			wmb();
-			toc[id].allocated = 1;
-
-			shared->heap_info.free_offset += size_in;
-			shared->heap_info.heap_remaining -= size_in;
-			ret = (void *)(MSM_SHARED_RAM_BASE + toc[id].offset);
-		} else
-			pr_err("%s: not enough memory %u (required %u)\n",
-			       __func__, shared->heap_info.heap_remaining,
-			       size_in);
-	}
-	wmb();
-	remote_spin_unlock_irqrestore(&remote_spinlock, flags);
-	return ret;
-}
-EXPORT_SYMBOL(smem_alloc2);
-
-void *smem_get_entry(unsigned id, unsigned *size)
-{
-	struct smem_shared *shared = (void *) MSM_SHARED_RAM_BASE;
-	struct smem_heap_entry *toc = shared->heap_toc;
-	int use_spinlocks = spinlocks_initialized;
-	void *ret = 0;
-	unsigned long flags = 0;
-
-	if (id >= SMEM_NUM_ITEMS)
-		return ret;
-
-	if (use_spinlocks)
-		remote_spin_lock_irqsave(&remote_spinlock, flags);
-	/* toc is in device memory and cannot be speculatively accessed */
-	if (toc[id].allocated) {
-		phys_addr_t phys_base;
-
-		*size = toc[id].size;
-		barrier();
-
-		phys_base = toc[id].reserved & BASE_ADDR_MASK;
-		if (!phys_base)
-			phys_base = (phys_addr_t)msm_shared_ram_phys;
-		ret = smem_phys_to_virt(phys_base, toc[id].offset);
-	} else {
-		*size = 0;
-	}
-	if (use_spinlocks)
-		remote_spin_unlock_irqrestore(&remote_spinlock, flags);
-
-	return ret;
-}
-EXPORT_SYMBOL(smem_get_entry);
-
-void *smem_find(unsigned id, unsigned size_in)
-{
-	unsigned size;
-	void *ptr;
-
-	ptr = smem_get_entry(id, &size);
-	if (!ptr)
-		return 0;
-
-	size_in = ALIGN(size_in, 8);
-	if (size_in != size) {
-		pr_err("smem_find(%d, %d): wrong size %d\n",
-		       id, size_in, size);
-		return 0;
-	}
-
-	return ptr;
-}
-EXPORT_SYMBOL(smem_find);
 
 static int smsm_cb_init(void)
 {
@@ -2803,7 +2603,7 @@ static void smsm_cb_snapshot(uint32_t use_wakelock)
 	if (use_wakelock) {
 		spin_lock_irqsave(&smsm_snapshot_count_lock, flags);
 		if (smsm_snapshot_count == 0) {
-			SMx_POWER_INFO("SMSM snapshot wake lock\n");
+			SMSM_POWER_INFO("SMSM snapshot wake lock\n");
 			wake_lock(&smsm_snapshot_wakelock);
 		}
 		++smsm_snapshot_count;
@@ -2839,7 +2639,7 @@ restore_snapshot_count:
 		if (smsm_snapshot_count) {
 			--smsm_snapshot_count;
 			if (smsm_snapshot_count == 0) {
-				SMx_POWER_INFO("SMSM snapshot wake unlock\n");
+				SMSM_POWER_INFO("SMSM snapshot wake unlock\n");
 				wake_unlock(&smsm_snapshot_wakelock);
 			}
 		} else {
@@ -2934,28 +2734,28 @@ static irqreturn_t smsm_irq_handler(int irq, void *data)
 
 static irqreturn_t smsm_modem_irq_handler(int irq, void *data)
 {
-	SMx_POWER_INFO("SMSM Int Modem->Apps\n");
+	SMSM_POWER_INFO("SMSM Int Modem->Apps\n");
 	++interrupt_stats[SMD_MODEM].smsm_in_count;
 	return smsm_irq_handler(irq, data);
 }
 
 static irqreturn_t smsm_dsp_irq_handler(int irq, void *data)
 {
-	SMx_POWER_INFO("SMSM Int LPASS->Apps\n");
+	SMSM_POWER_INFO("SMSM Int LPASS->Apps\n");
 	++interrupt_stats[SMD_Q6].smsm_in_count;
 	return smsm_irq_handler(irq, data);
 }
 
 static irqreturn_t smsm_dsps_irq_handler(int irq, void *data)
 {
-	SMx_POWER_INFO("SMSM Int DSPS->Apps\n");
+	SMSM_POWER_INFO("SMSM Int DSPS->Apps\n");
 	++interrupt_stats[SMD_DSPS].smsm_in_count;
 	return smsm_irq_handler(irq, data);
 }
 
 static irqreturn_t smsm_wcnss_irq_handler(int irq, void *data)
 {
-	SMx_POWER_INFO("SMSM Int WCNSS->Apps\n");
+	SMSM_POWER_INFO("SMSM Int WCNSS->Apps\n");
 	++interrupt_stats[SMD_WCNSS].smsm_in_count;
 	return smsm_irq_handler(irq, data);
 }
@@ -3045,7 +2845,8 @@ int smsm_change_state(uint32_t smsm_entry,
 	old_state = __raw_readl(SMSM_STATE_ADDR(smsm_entry));
 	new_state = (old_state & ~clear_mask) | set_mask;
 	__raw_writel(new_state, SMSM_STATE_ADDR(smsm_entry));
-	SMSM_DBG("smsm_change_state %x\n", new_state);
+	SMSM_POWER_INFO("%s %d:%08x->%08x", __func__, smsm_entry,
+			old_state, new_state);
 	notify_other_smsm(SMSM_APPS_STATE, (old_state ^ new_state));
 
 	spin_unlock_irqrestore(&smem_lock, flags);
@@ -3108,7 +2909,7 @@ void notify_smsm_cb_clients_worker(struct work_struct *work)
 
 			state_changes = state_info->last_value ^ new_state;
 			if (state_changes) {
-				SMx_POWER_INFO("SMSM Change %d: %08x->%08x\n",
+				SMSM_POWER_INFO("SMSM Change %d: %08x->%08x\n",
 						n, state_info->last_value,
 						new_state);
 				list_for_each_entry(cb_info,
@@ -3139,7 +2940,7 @@ void notify_smsm_cb_clients_worker(struct work_struct *work)
 			if (smsm_snapshot_count) {
 				--smsm_snapshot_count;
 				if (smsm_snapshot_count == 0) {
-					SMx_POWER_INFO("SMSM snapshot"
+					SMSM_POWER_INFO("SMSM snapshot"
 						   " wake unlock\n");
 					wake_unlock(&smsm_snapshot_wakelock);
 				}
@@ -3312,17 +3113,6 @@ int smsm_state_cb_deregister(uint32_t smsm_entry, uint32_t mask,
 	return ret;
 }
 EXPORT_SYMBOL(smsm_state_cb_deregister);
-
-/**
- * smem_get_remote_spinlock - Remote spinlock pointer for unit testing.
- *
- * @returns: pointer to SMEM remote spinlock
- */
-remote_spinlock_t *smem_get_remote_spinlock(void)
-{
-	return &remote_spinlock;
-}
-EXPORT_SYMBOL(smem_get_remote_spinlock);
 
 int smd_module_init_notifier_register(struct notifier_block *nb)
 {
@@ -4041,6 +3831,9 @@ static int __devinit msm_smd_probe(struct platform_device *pdev)
 {
 	int ret;
 
+	if (!smem_initialized_check())
+		return -ENODEV;
+
 	SMD_INFO("smd probe\n");
 	INIT_WORK(&probe_work, smd_channel_probe_worker);
 
@@ -4126,23 +3919,6 @@ static int restart_notifier_cb(struct notifier_block *this,
 		remote_spin_release(&remote_spinlock, notifier->processor);
 		remote_spin_release_all(notifier->processor);
 
-		if (smem_ramdump_dev) {
-			int ret;
-
-			SMD_INFO("%s: saving ramdump\n", __func__);
-			/*
-			 * XPU protection does not currently allow the
-			 * auxiliary memory regions to be dumped.  If this
-			 * changes, then num_smem_areas + 1 should be passed
-			 * into do_elf_ramdump() to dump all regions.
-			 */
-			ret = do_elf_ramdump(smem_ramdump_dev,
-					smem_ramdump_segments, 1);
-			if (ret < 0)
-				pr_err("%s: unable to dump smem %d\n", __func__,
-						ret);
-		}
-
 		smd_channel_reset(notifier->processor);
 	}
 
@@ -4154,13 +3930,6 @@ static __init int modem_restart_late_init(void)
 	int i;
 	void *handle;
 	struct restart_notifier_block *nb;
-
-	smem_ramdump_dev = create_ramdump_device("smem-smd", smd_dev);
-	if (IS_ERR_OR_NULL(smem_ramdump_dev)) {
-		pr_err("%s: Unable to create smem ramdump device.\n",
-			__func__);
-		smem_ramdump_dev = NULL;
-	}
 
 	for (i = 0; i < ARRAY_SIZE(restart_notifiers); i++) {
 		nb = &restart_notifiers[i];
@@ -4201,13 +3970,18 @@ int __init msm_smd_init(void)
 		msm_smd_debug_mask = 0;
 	}
 
+	smsm_log_ctx = ipc_log_context_create(NUM_LOG_PAGES, "smsm");
+	if (!smsm_log_ctx) {
+		pr_err("%s: unable to create SMSM logging context\n", __func__);
+		msm_smd_debug_mask = 0;
+	}
+
 	registered = true;
-	rc = remote_spin_lock_init(&remote_spinlock, SMEM_SPINLOCK_SMEM_ALLOC);
+	rc = init_smem_remote_spinlock();
 	if (rc) {
 		pr_err("%s: remote spinlock init failed %d\n", __func__, rc);
 		return rc;
 	}
-	spinlocks_initialized = 1;
 
 	rc = platform_driver_register(&msm_smd_driver);
 	if (rc) {

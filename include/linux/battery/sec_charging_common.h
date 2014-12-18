@@ -148,10 +148,10 @@ enum sec_battery_full_charged {
   * full-charged by absolute-timer only in high voltage
   */
 #define SEC_BATTERY_FULL_CONDITION_NOTIMEFULL	1
-/* SEC_BATTERY_FULL_CONDITION_SLEEPINFULL
-  * change polling time as sleep polling time even in full-charged
+/* SEC_BATTERY_FULL_CONDITION_NOSLEEPINFULL
+  * do not set polling time as sleep polling time in full-charged
   */
-#define SEC_BATTERY_FULL_CONDITION_SLEEPINFULL	2
+#define SEC_BATTERY_FULL_CONDITION_NOSLEEPINFULL	2
 /* SEC_BATTERY_FULL_CONDITION_SOC
   * use capacity for full-charged check
   */
@@ -370,6 +370,7 @@ struct sec_battery_platform_data {
 	/* NO NEED TO BE CHANGED */
 	/* callback functions */
 	void (*initial_check)(void);
+	void (*monitor_additional_check)(void);
 	bool (*bat_gpio_init)(void);
 	bool (*fg_gpio_init)(void);
 	bool (*chg_gpio_init)(void);
@@ -389,6 +390,7 @@ struct sec_battery_platform_data {
 	bool (*get_temperature_callback)(
 			enum power_supply_property,
 			union power_supply_propval*);
+	void (*check_batt_id)(void);
 
 	/* ADC API for each ADC type */
 	sec_bat_adc_api_t adc_api[SEC_BATTERY_ADC_TYPE_NUM];
@@ -413,6 +415,7 @@ struct sec_battery_platform_data {
 	/* 1 : active high, 0 : active low */
 	int bat_polarity_ta_nconnected;
 	int bat_irq;
+	int bat_irq_gpio;
 	unsigned long bat_irq_attr;
 	int jig_irq;
 	unsigned long jig_irq_attr;
@@ -514,8 +517,6 @@ struct sec_battery_platform_data {
 	int capacity_max;
 	int capacity_max_margin;
 	int capacity_min;
-	/* True if fuelgauge provides current data */
-	bool get_fg_current;
 
 	/* charger */
 	char *charger_name;

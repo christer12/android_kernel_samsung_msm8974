@@ -38,9 +38,6 @@
 #ifdef CONFIG_ION_MSM
 #include <mach/ion.h>
 #endif
-#ifdef CONFIG_VIBETONZ
-#include <linux/vibrator.h>
-#endif
 #include <mach/msm_memtypes.h>
 #include <mach/msm_smd.h>
 #include <mach/restart.h>
@@ -58,7 +55,9 @@
 #include "lpm_resources.h"
 #include <linux/module.h>
 #include "platsmp.h"
-
+#if defined(CONFIG_MSM_VIBRATOR) || defined(CONFIG_VIBETONZ)
+#include <linux/vibrator.h>
+#endif
 #ifdef CONFIG_USB_SWITCH_TSU6721
 #include <linux/i2c/tsu6721.h>
 #endif
@@ -74,9 +73,6 @@
 #ifdef CONFIG_BCM2079X_NFC_I2C
 #include <linux/nfc/bcm2079x.h>
 #endif
-#if defined(CONFIG_TDMB) || defined(CONFIG_TDMB_MODULE)
-#include <mach/tdmb_pdata.h>
-#endif
 
 #ifdef CONFIG_PROC_AVC
 #include <linux/proc_avc.h>
@@ -91,25 +87,6 @@
 #include <linux/regulator/lp8720.h>
 #endif
 
-#if defined(CONFIG_TDMB) || defined(CONFIG_TDMB_MODULE)
-#define GPIO_TDMB_SPI_MOSI		8
-#define GPIO_TDMB_SPI_MISO		9
-#define GPIO_TDMB_SPI_CS		10
-#define GPIO_TDMB_SPI_CLK		11
-#define GPIO_TDMB_INT			73
-#define GPIO_TDMB_ANT_DET		18
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-#define GPIO_TDMB_EN			43
-#define GPIO_TDMB_RST			41
-#define GPIO_TDMB_EN_REV02		47
-#define GPIO_TDMB_RST_REV02		48
-#elif defined(CONFIG_MACH_HLTESKT) ||defined(CONFIG_MACH_HLTEKTT)\
-	|| defined(CONFIG_MACH_HLTELGT)
-#define GPIO_TDMB_EN			79
-#endif
-#endif
-
 /* HDMI/MHL */
 #define GPIO_MHL_RST		60
 #define PM_GPIO_MHL_EN		486 /* PM_GIPO = 1(472) */
@@ -121,22 +98,19 @@
 
 #define MSM_FSA9485_I2C_BUS_ID		15
 
-
-
 #ifdef CONFIG_SENSORS_SSP
+#define TEMPERATURE_LDO	130
+
+extern int poweroff_charging;
+extern int system_rev;
+
 static struct regulator *vsensor_2p85, *vsensor_1p8;
 static int __init sensor_hub_init(void)
 {
 	int ret;
 
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-	extern int poweroff_charging;
-
-	if (poweroff_charging) {
-		pr_info("%s : LPM Charging Mode! return 0\n", __func__);
-		return -1;
-	}
-#endif
+	if(poweroff_charging)
+		return 0;
 
 	vsensor_2p85 = regulator_get(NULL, "8941_l18");
 	if (IS_ERR(vsensor_2p85))
@@ -155,6 +129,11 @@ static int __init sensor_hub_init(void)
 	ret = regulator_enable(vsensor_1p8);
 	if (ret)
 		pr_err("%s: error enabling regulator 1p8\n", __func__);
+
+#if !defined(CONFIG_MACH_JACTIVESKT) && !defined(CONFIG_MACH_MONTBLANC) && !defined(CONFIG_MACH_VIKALCU)
+	if(system_rev <4)
+		gpio_direction_output(TEMPERATURE_LDO, 1);
+#endif
 
 	return 0;
 }
@@ -258,7 +237,7 @@ struct i2c_registry {
 #define MSM_LP8720_I2C_BUS_ID   25
 #define GPIO_SUBPMIC_SDA	29
 #define GPIO_SUBPMIC_SCL	30
-#ifdef CONFIG_MACH_MONTBLANC
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
 #define GPIO_SUBPMIC_EN	561  // 535 + 26 = 561
 #else
 #define GPIO_SUBPMIC_EN	26  // for temp, not use, PM_GPIO
@@ -304,18 +283,20 @@ LP8720_VREG_CONSUMERS(LDO4) = {
 
 LP8720_VREG_CONSUMERS(LDO5) = {
 	REGULATOR_SUPPLY("lp8720_ldo5", 	NULL),
+	REGULATOR_SUPPLY("lp8720_vdd", 	NULL),		
 };
 
 LP8720_VREG_CONSUMERS(BUCK1) = {
 	REGULATOR_SUPPLY("lp8720_buck1", 	NULL),
+	REGULATOR_SUPPLY("lp8720_vddio", 	NULL),
 };
 
-LP8720_VREG_INIT(LDO1, 1200000, 3300000, 0);
+LP8720_VREG_INIT(LDO1, 1800000, 1800000, 0);
 LP8720_VREG_INIT(LDO2, 1200000, 3300000, 0);
 LP8720_VREG_INIT(LDO3, 1200000, 3300000, 0);
 LP8720_VREG_INIT(LDO4, 800000, 2850000, 0);
-LP8720_VREG_INIT(LDO5, 3000000, 3000000, 1);
-LP8720_VREG_INIT(BUCK1, 1800000, 1800000, 1);
+LP8720_VREG_INIT(LDO5, 3000000, 3000000, 0);
+LP8720_VREG_INIT(BUCK1, 1800000, 1800000, 0);
 
 static struct lp8720_regulator_subdev lp8720_regulators[]= {
 	{LP8720_LDO1, LP8720_VREG_INIT_DATA(LDO1)},
@@ -409,167 +390,24 @@ static void __init msm8974_early_memory(void)
 	of_scan_flat_dt(dt_scan_for_memory_hole, msm8974_reserve_table);
 }
 
+#if defined(CONFIG_MSM_VIBRATOR)
+static struct platform_device msm_vibrator_device = {
+	.name	= "msm_vibrator",
+	.id		= -1,
+};
+#endif /* CONFIG_MSM_VIBRATOR */
+
 static struct platform_device *common_devices[] __initdata = {
 #ifdef CONFIG_SEC_THERMISTOR
-        &sec_device_thermistor,
+    &sec_device_thermistor,
 #endif
 #ifdef CONFIG_REGULATOR_LP8720
 	&lp8720_i2c_gpio_device,
 #endif
-
+#ifdef CONFIG_MSM_VIBRATOR
+	&msm_vibrator_device,
+#endif
 };
-
-#if defined(CONFIG_TDMB) || defined(CONFIG_TDMB_MODULE)
-static void tdmb_gpio_init(void)
-{
-	unsigned int gpio_tdmb_en;
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	unsigned int gpio_tdmb_rst;
-	if(system_rev < 3) {
-		gpio_tdmb_en = GPIO_TDMB_EN_REV02;
-		gpio_tdmb_rst = GPIO_TDMB_RST_REV02;
-	} else {
-		gpio_tdmb_en = GPIO_TDMB_EN;
-		gpio_tdmb_rst = GPIO_TDMB_RST;
-	}
-#elif defined(CONFIG_MACH_HLTESKT) ||defined(CONFIG_MACH_HLTEKTT)\
-	|| defined(CONFIG_MACH_HLTELGT)
-	gpio_tdmb_en = GPIO_TDMB_EN;
-#endif
-
-	gpio_tlmm_config(GPIO_CFG(gpio_tdmb_en, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	gpio_set_value(gpio_tdmb_en, 0);
-
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	gpio_tlmm_config(GPIO_CFG(gpio_tdmb_rst, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	gpio_set_value(gpio_tdmb_rst, 0);
-#endif
-
-	gpio_tlmm_config(GPIO_CFG(GPIO_TDMB_INT, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-}
-static void tdmb_gpio_on(void)
-{
-	unsigned int gpio_tdmb_en;
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	unsigned int gpio_tdmb_rst;
-	if(system_rev < 3) {
-		gpio_tdmb_en = GPIO_TDMB_EN_REV02;
-		gpio_tdmb_rst = GPIO_TDMB_RST_REV02;
-	} else {
-		gpio_tdmb_en = GPIO_TDMB_EN;
-		gpio_tdmb_rst = GPIO_TDMB_RST;
-	}
-#elif defined(CONFIG_MACH_HLTESKT) ||defined(CONFIG_MACH_HLTEKTT)\
-	|| defined(CONFIG_MACH_HLTELGT)
-	gpio_tdmb_en = GPIO_TDMB_EN;
-#endif
-	printk(KERN_DEBUG "tdmb_gpio_on\n");
-
-	gpio_tlmm_config(GPIO_CFG(gpio_tdmb_en, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	gpio_tlmm_config(GPIO_CFG(gpio_tdmb_rst, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-#endif
-	gpio_tlmm_config(GPIO_CFG(GPIO_TDMB_INT, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	gpio_set_value(gpio_tdmb_en, 1);
-	usleep_range(20000, 20000);
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	gpio_set_value(gpio_tdmb_rst, 0);
-	usleep_range(2000, 2000);
-	gpio_set_value(gpio_tdmb_rst, 1);
-	usleep_range(10000, 10000);
-#endif
-}
-
-static void tdmb_gpio_off(void)
-{
-	unsigned int gpio_tdmb_en;
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	unsigned int gpio_tdmb_rst;
-	if(system_rev < 3) {
-		gpio_tdmb_en = GPIO_TDMB_EN_REV02;
-		gpio_tdmb_rst = GPIO_TDMB_RST_REV02;
-	} else {
-		gpio_tdmb_en = GPIO_TDMB_EN;
-		gpio_tdmb_rst = GPIO_TDMB_RST;
-	}
-#elif defined(CONFIG_MACH_HLTESKT) ||defined(CONFIG_MACH_HLTEKTT)\
-	|| defined(CONFIG_MACH_HLTELGT)
-	gpio_tdmb_en = GPIO_TDMB_EN;
-#endif
-
-	printk(KERN_DEBUG "tdmb_gpio_off\n");
-
-	gpio_set_value(gpio_tdmb_en, 0);
-	usleep_range(1000, 1000);
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	gpio_set_value(gpio_tdmb_rst, 0);
-#endif
-	gpio_tlmm_config(GPIO_CFG(gpio_tdmb_en, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-	gpio_tlmm_config(GPIO_CFG(gpio_tdmb_rst, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-#endif
-	gpio_tlmm_config(GPIO_CFG(GPIO_TDMB_INT, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-}
-
-static struct tdmb_platform_data tdmb_pdata = {
-	.gpio_on = tdmb_gpio_on,
-	.gpio_off = tdmb_gpio_off,
-};
-
-static struct platform_device tdmb_device = {
-	.name			= "tdmb",
-	.id				= -1,
-	.dev			= {
-		.platform_data = &tdmb_pdata,
-	},
-};
-
-static int __init tdmb_dev_init(void)
-{
-#if defined(CONFIG_TDMB_ANT_DET)
-	gpio_tlmm_config(GPIO_CFG(GPIO_TDMB_ANT_DET, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-
-	tdmb_pdata.gpio_ant_det = GPIO_TDMB_ANT_DET;
-	tdmb_pdata.irq_ant_det = gpio_to_irq(GPIO_TDMB_ANT_DET);
-#endif
-
-	tdmb_pdata.irq = gpio_to_irq(GPIO_TDMB_INT);
-	tdmb_pdata.system_rev = system_rev;
-	platform_device_register(&tdmb_device);
-
-	tdmb_gpio_init();
-
-	return 0;
-}
-#endif
 
 struct class *sec_class;
 EXPORT_SYMBOL(sec_class);
@@ -671,8 +509,24 @@ static void __init register_i2c_devices(void)
 	}
 }
 
-#if defined(CONFIG_KEYBOARD_MATRIX) && defined(CONFIG_MACH_MONTBLANC)
+#if defined(CONFIG_KEYBOARD_MATRIX) && (defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU))
 #include "board-montblanc-keypad.c"
+#endif
+
+static void modem_power_off(void)
+{
+	struct regulator *modem_s3;
+
+	modem_s3 = regulator_get(NULL, "8841_s3");
+	if(modem_s3 > 0)
+	{
+		regulator_enable(modem_s3);
+		regulator_disable(modem_s3);
+	}
+}
+
+#ifdef CONFIG_SEC_FACTORY
+extern void samsung_proc_ddrsize_init(void);
 #endif
 
 void __init msm8974_init(void)
@@ -692,10 +546,12 @@ void __init msm8974_init(void)
 
 	msm_8974_init_gpiomux();
 	regulator_has_full_constraints();
-	of_platform_populate(NULL, of_default_bus_match_table, adata, NULL);
+	board_dt_populate(adata);
 
 	samsung_sys_class_init();
-
+#ifdef CONFIG_SEC_FACTORY
+	samsung_proc_ddrsize_init();
+#endif
 	msm8974_add_drivers();
 
 	platform_add_devices(common_devices, ARRAY_SIZE(common_devices));
@@ -704,20 +560,28 @@ void __init msm8974_init(void)
 #ifdef CONFIG_SENSORS_SSP
 	sensor_hub_init();
 #endif
-#if defined(CONFIG_KEYBOARD_MATRIX) && defined(CONFIG_MACH_MONTBLANC)
+#if defined(CONFIG_KEYBOARD_MATRIX) && (defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU))
 	platform_device_register(&folder_keypad_device);
+#ifdef CONFIG_INPUT_FLIP
+	flip_init_hw();
+	platform_device_register(&sec_flip_device);
+#endif	
 #endif
 #if defined(CONFIG_BATTERY_SAMSUNG)
 	samsung_init_battery();
-#endif
-#if defined(CONFIG_TDMB) || defined(CONFIG_TDMB_MODULE)
-	tdmb_dev_init();
 #endif
 #if defined(CONFIG_BT_BCM4335) || defined(CONFIG_BT_BCM4339)
 	msm8974_bt_init();
 #endif
 #if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE)
 	brcm_wlan_init();
+#endif
+
+#if defined(CONFIG_SAMSUNG_LPM_MODE)
+	if(poweroff_charging)
+	{
+		modem_power_off();
+	}
 #endif
 
 #if defined (CONFIG_MOTOR_DRV_ISA1400)

@@ -64,8 +64,10 @@ static int camera_check_event_status(struct v4l2_event *event)
 	struct msm_v4l2_event_data *event_data =
 		(struct msm_v4l2_event_data *)&event->u.data[0];
 
-	if (event_data->status > MSM_CAMERA_ERR_EVT_BASE)
-		return -EFAULT;
+	if (event_data->status > MSM_CAMERA_ERR_EVT_BASE) {
+	    pr_err("%s : event_data->status failed!", __func__);
+	    return -EFAULT;
+	}
 
 	return 0;
 }
@@ -81,8 +83,10 @@ static int camera_v4l2_querycap(struct file *filep, void *fh,
 		MSM_CAMERA_PRIV_QUERY_CAP, -1, &event);
 
 	rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-	if (rc < 0)
-		return rc;
+	if (rc < 0) {
+            pr_err("%s : msm_post_event failed!", __func__);
+            return rc;
+	}
 
 	rc = camera_check_event_status(&event);
 
@@ -101,8 +105,10 @@ static int camera_v4l2_s_crop(struct file *filep, void *fh,
 			MSM_CAMERA_PRIV_S_CROP, -1, &event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			return rc;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    return rc;
+		}
 
 		rc = camera_check_event_status(&event);
 	}
@@ -121,8 +127,10 @@ static int camera_v4l2_g_crop(struct file *filep, void *fh,
 			MSM_CAMERA_PRIV_G_CROP, -1, &event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			return rc;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    return rc;
+		}
 
 		rc = camera_check_event_status(&event);
 	}
@@ -142,8 +150,10 @@ static int camera_v4l2_queryctrl(struct file *filep, void *fh,
 			ctrl->id, -1, &event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			return rc;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    return rc;
+		}
 
 		rc = camera_check_event_status(&event);
 	}
@@ -162,8 +172,10 @@ static int camera_v4l2_g_ctrl(struct file *filep, void *fh,
 			&event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			return rc;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    return rc;
+		}
 
 		rc = camera_check_event_status(&event);
 	}
@@ -182,8 +194,10 @@ static int camera_v4l2_s_ctrl(struct file *filep, void *fh,
 		ctrl->value, &event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			return rc;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    return rc;
+		}
 		event_data = (struct msm_v4l2_event_data *)event.u.data;
 		ctrl->value = event_data->ret_value;
 		rc = camera_check_event_status(&event);
@@ -261,8 +275,10 @@ static int camera_v4l2_streamon(struct file *filep, void *fh,
 		MSM_CAMERA_PRIV_STREAM_ON, -1, &event);
 
 	rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-	if (rc < 0)
-		return rc;
+	if (rc < 0) {
+	    pr_err("%s : msm_post_event failed!", __func__);
+	    return rc;
+	}
 
 	rc = camera_check_event_status(&event);
 	return rc;
@@ -279,8 +295,10 @@ static int camera_v4l2_streamoff(struct file *filep, void *fh,
 		MSM_CAMERA_PRIV_STREAM_OFF, -1, &event);
 
 	rc = msm_post_event(&event, MSM_POST_STREAMOFF_EVT_TIMEOUT);
-	if (rc < 0)
-		return rc;
+	if (rc < 0) {
+	    pr_err("%s : msm_post_event failed!", __func__);
+	    return rc;
+	}
 
 	rc = camera_check_event_status(&event);
 	vb2_streamoff(&sp->vb2_q, buf_type);
@@ -299,8 +317,10 @@ static int camera_v4l2_g_fmt_vid_cap_mplane(struct file *filep, void *fh,
 			MSM_CAMERA_PRIV_G_FMT, -1, &event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			return rc;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    return rc;
+		}
 
 		rc = camera_check_event_status(&event);
 	}
@@ -336,12 +356,16 @@ static int camera_v4l2_s_fmt_vid_cap_mplane(struct file *filep, void *fh,
 			MSM_CAMERA_PRIV_S_FMT, -1, &event);
 
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-		if (rc < 0)
-			goto set_fmt_fail;
+		if (rc < 0) {
+		    pr_err("%s : msm_post_event failed!", __func__);
+		    goto set_fmt_fail;
+		}
 
 		rc = camera_check_event_status(&event);
-		if (rc < 0)
-			goto set_fmt_fail;
+		if (rc < 0) {
+		    pr_err("%s : camera_check_event_status failed!", __func__);
+		    goto set_fmt_fail;
+		}
 		sp->is_vb2_valid = 1;
 	}
 
@@ -380,16 +404,22 @@ static int camera_v4l2_s_parm(struct file *filep, void *fh,
 
 	rc = msm_create_stream(event_data->session_id,
 		event_data->stream_id, &sp->vb2_q);
-	if (rc < 0)
-		return rc;
+	if (rc < 0) {
+	    pr_err("%s : msm_create_stream failed", __func__);
+	    return rc;
+	}
 
 	rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
-	if (rc < 0)
-		goto error;
+	if (rc < 0) {
+	    pr_err("%s : msm_post_event failed!", __func__);
+	    goto error;
+	}
 
 	rc = camera_check_event_status(&event);
-	if (rc < 0)
-		goto error;
+	if (rc < 0) {
+	    pr_err("%s : camera_check_event_status failed!", __func__);
+	    goto error;
+	}
 
 	/* use stream_id as stream index */
 	parm->parm.capture.extendedmode = sp->stream_id;
@@ -456,8 +486,10 @@ static int camera_v4l2_fh_open(struct file *filep)
 	struct camera_v4l2_private *sp;
 
 	sp = kzalloc(sizeof(*sp), GFP_KERNEL);
-	if (!sp)
-		return -ENOMEM;
+	if (!sp) {
+	    pr_err("%s : alloc failed", __func__);
+	    return -ENOMEM;
+	}
 
 	filep->private_data = &sp->fh;
 
@@ -493,8 +525,10 @@ static int camera_v4l2_vb2_q_init(struct file *filep)
 	/* free up this buffer when stream is done */
 	q->drv_priv =
 		kzalloc(sizeof(struct msm_v4l2_format_data), GFP_KERNEL);
-	if (!q->drv_priv)
-		return -ENOMEM;
+	if (!q->drv_priv) {
+	    pr_err("%s : q->drv_priv is NULL", __func__);
+	    return -ENOMEM;
+	}
 
 	q->mem_ops = msm_vb2_get_q_mem_ops();
 	q->ops = msm_vb2_get_q_ops();
@@ -525,39 +559,51 @@ static int camera_v4l2_open(struct file *filep)
 	BUG_ON(!pvdev);
 
 	rc = camera_v4l2_fh_open(filep);
-	if (rc < 0)
-		goto fh_open_fail;
+	if (rc < 0) {
+	    pr_err("%s : camera_v4l2_fh_open", __func__);
+	    goto fh_open_fail;
+	}
 
 	/* every stream has a vb2 queue */
 	rc = camera_v4l2_vb2_q_init(filep);
-	if (rc < 0)
-		goto vb2_q_fail;
+	if (rc < 0) {
+	    pr_err("%s : camera_v4l2_vb2_q_init", __func__);
+	    goto vb2_q_fail;
+	}
 
 	if (!atomic_read(&pvdev->opened)) {
 
 		/* create a new session when first opened */
 		rc = msm_create_session(pvdev->vdev->num, pvdev->vdev);
-		if (rc < 0)
-			goto session_fail;
+		if (rc < 0) {
+		    pr_err("%s : msm_create_session", __func__);
+		    goto session_fail;
+		}
 
 		rc = msm_create_command_ack_q(pvdev->vdev->num, 0);
-		if (rc < 0)
-			goto command_ack_q_fail;
+		if (rc < 0) {
+		    pr_err("%s : msm_create_command_ack_q", __func__);
+		    goto command_ack_q_fail;
+		}
 
 		camera_pack_event(filep, MSM_CAMERA_NEW_SESSION, 0, -1, &event);
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
 		if (rc < 0) {
-			pr_err("%s, __dbg: post fail \n",__func__);
-			goto post_fail;
+		    pr_err("%s, __dbg: post fail \n",__func__);
+		    goto post_fail;
 		}
 		rc = camera_check_event_status(&event);
-		if (rc < 0)
-			goto post_fail;
+		if (rc < 0) {
+		    pr_err("%s : camera_check_event_status", __func__);
+		    goto post_fail;
+		}
 	} else {
 		rc = msm_create_command_ack_q(pvdev->vdev->num,
 			atomic_read(&pvdev->opened));
-		if (rc < 0)
-			goto session_fail;
+		if (rc < 0) {
+		    pr_err("%s : msm_create_command_ack_q", __func__);
+		    goto session_fail;
+		}
 	}
 
 	atomic_add(1, &pvdev->opened);
@@ -723,6 +769,7 @@ int camera_init_v4l2(struct device *dev, unsigned int *session)
 	*session = pvdev->vdev->num;
 	atomic_set(&pvdev->opened, 0);
 	video_set_drvdata(pvdev->vdev, pvdev);
+	pr_warn("%s : Succeed!", __func__);
 	goto init_end;
 
 video_register_fail:

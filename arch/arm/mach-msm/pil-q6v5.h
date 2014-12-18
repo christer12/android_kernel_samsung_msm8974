@@ -39,6 +39,14 @@ struct q6v5_data {
 	struct pil_desc desc;
 };
 
+#if defined(CONFIG_NFC_FELICA) && defined(CONFIG_SEC_LOCALE_JPN)
+struct pil_mss_wait
+{
+	wait_queue_head_t cp_wait_q;
+	int cp_start;
+};
+#endif
+
 int pil_q6v5_make_proxy_votes(struct pil_desc *pil);
 void pil_q6v5_remove_proxy_votes(struct pil_desc *pil);
 void pil_q6v5_halt_axi_port(struct pil_desc *pil, void __iomem *halt_base);

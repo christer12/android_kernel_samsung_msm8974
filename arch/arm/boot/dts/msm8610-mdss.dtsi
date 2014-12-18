@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-/ {
+&soc {
 	qcom,mdss_mdp@fd900000 {
 		compatible = "qcom,mdss_mdp3";
 		reg = <0xfd900000 0x100000>;
@@ -21,7 +21,7 @@
 			cell-index = <0>;
 			compatible = "qcom,mdss-fb";
 			qcom,memory-reservation-type = "EBI1";
-			qcom,memory-reservation-size = <0x800000>;
+			qcom,memory-reservation-size = <0x300000>;
 		};
 	};
 

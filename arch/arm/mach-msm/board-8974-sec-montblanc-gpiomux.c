@@ -52,6 +52,7 @@ static struct gpiomux_setting gpio_spi_cs3_config = {
 	.pull = GPIOMUX_PULL_DOWN,
 };
 
+#if defined(CONFIG_SENSORS_SSP_STM) || defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 static struct gpiomux_setting gpio_spi11_config = {
 	.func = GPIOMUX_FUNC_1,
 	.drv = GPIOMUX_DRV_8MA,
@@ -63,7 +64,7 @@ static struct gpiomux_setting gpio_spi11_config2 = {
 	.drv = GPIOMUX_DRV_8MA,
 	.pull = GPIOMUX_PULL_NONE,
 };
-
+#endif
 
 #ifdef CONFIG_USB_SWITCH_TSU6721
 static struct gpiomux_setting gpio_i2c_func4_config = {
@@ -115,7 +116,7 @@ static struct gpiomux_setting gpio_suspend_config[] = {
 	},
 };
 
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP_STM) && !defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 static struct gpiomux_setting gpio_epm_config = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv  = GPIOMUX_DRV_2MA,
@@ -148,7 +149,7 @@ static struct gpiomux_setting gpio_i2c_config = {
 	.pull = GPIOMUX_PULL_NONE,
 };
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 static struct gpiomux_setting nfc_i2c_config = {
 		.func = GPIOMUX_FUNC_GPIO,
 		.drv = GPIOMUX_DRV_2MA,
@@ -168,7 +169,7 @@ static struct gpiomux_setting lcd_en_sus_cfg = {
 	.pull = GPIOMUX_PULL_DOWN,
 };
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 static struct gpiomux_setting atmel_resout_sus_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv = GPIOMUX_DRV_6MA,
@@ -222,7 +223,7 @@ static struct gpiomux_setting nfc_firmware_cfg = {
 };
 #endif
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 static struct gpiomux_setting hap_lvl_shft_suspended_config = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv = GPIOMUX_DRV_2MA,
@@ -312,7 +313,8 @@ static struct msm_gpiomux_config msm_hsic_hub_configs[] = {
 };
 #endif
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
+
 static struct gpiomux_setting mhl_suspend_cfg = {
 	.func = GPIOMUX_FUNC_4,
 	.drv = GPIOMUX_DRV_2MA,
@@ -612,7 +614,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP_STM) && !defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 	{
 		.gpio      = 83,		/* BLSP11 QUP I2C_DAT */
 		.settings = {
@@ -639,7 +641,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_uart_config,
 		},
 	},
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	{
 		.gpio      = 53,		/* BLSP2 QUP4 SPI_DATA_MOSI */
 		.settings = {
@@ -669,6 +671,22 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
 		},
 	},
+#elif defined(CONFIG_I2C_ACTUATOR)
+//kk0704.park :: FOR MONTBLACT AF I2C PORT
+	{
+		.gpio	   = 55, /* BLSP10 QUP I2C_DAT */
+		.settings = {
+			[GPIOMUX_ACTIVE] = &gpio_i2c_config,
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[0],
+		},
+	},
+	{
+		.gpio	   = 56, /* BLSP10 QUP I2C_CLK */
+		.settings = {
+			[GPIOMUX_ACTIVE] = &gpio_i2c_config,
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[0],
+		},
+	},
 #else
 	{
 		.gpio      = 56,		/* BLSP2 QUP4 SPI_CLK */
@@ -685,7 +703,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if defined(CONFIG_SENSORS_SSP_STM)
+#if defined(CONFIG_SENSORS_SSP_STM) || defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 	{
 		.gpio      = 81,
 		.settings = {
@@ -715,7 +733,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP_STM) && !defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 	{
 		.gpio      = 81,		/* EPM enable */
 		.settings = {
@@ -802,7 +820,7 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &cam_settings[4],
 		},
 	},
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	{
 		.gpio = 16, /* CAM_MCLK1 */
 		.settings = {
@@ -846,7 +864,7 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[2],
 		},
 	},
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT // pje,  !defined(CONFIG_SENSORS_VFS61XX)
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	{
 		.gpio = 23, /* FLASH_LED_EN */
 		.settings = {
@@ -870,7 +888,7 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 		},
 	},
 #endif
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT // pje, !defined(CONFIG_USB_SWITCH_TSU6721)
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	{
 		.gpio = 26, /* CAM_IRQ */
 		.settings = {
@@ -880,7 +898,7 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 	},
 #endif
 #endif
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 #if !defined(CONFIG_MFD_MAX77803)
 	{
 		.gpio = 27, /* OIS_SYNC */
@@ -899,7 +917,7 @@ static struct msm_gpiomux_config msm_sensor_configs[] __initdata = {
 	},
 #endif
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	{
 		.gpio = 77, /* NFC SDA */
 		.settings = {
@@ -993,6 +1011,40 @@ static struct msm_gpiomux_config msm8974_pri_auxpcm_configs[] __initdata = {
 		},
 	},
 };
+
+#ifdef CONFIG_PCM_ROUTE_VOICE_STUB
+static struct msm_gpiomux_config msm8974_sec_auxpcm_configs[] __initdata = {
+	{
+		.gpio = 58,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+	{
+		.gpio = 59,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+	{
+		.gpio = 60,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+	{
+		.gpio = 61,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+};
+#endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
+
 #ifdef CONFIG_MACH_KS01
 static struct msm_gpiomux_config wcnss_5wire_interface[] = {
 	{
@@ -1150,28 +1202,21 @@ static struct msm_gpiomux_config ssp_configs[] __initdata = {
 		},
 	},
 	{
-		.gpio = 67,
+		.gpio = 74,
 		.settings = {
-			[GPIOMUX_ACTIVE] = &ssp_setting[0],
-			[GPIOMUX_SUSPENDED] = &ssp_setting[0],
+			[GPIOMUX_ACTIVE] = &ssp_setting[1],
+			[GPIOMUX_SUSPENDED] = &ssp_setting[1],
 		},
 	},
 	{
-		.gpio = 68,
-		.settings = {
-			[GPIOMUX_ACTIVE] = &ssp_setting[0],
-			[GPIOMUX_SUSPENDED] = &ssp_setting[0],
-		},
-	},
-	{
-		.gpio = 89,
+		.gpio = 86,
 		.settings = {
 			[GPIOMUX_ACTIVE] = &ssp_setting[1],
 			[GPIOMUX_SUSPENDED] = &ssp_setting[1],
 		},
 	},
 		{
-		.gpio = 91,
+		.gpio = 89,
 		.settings = {
 			[GPIOMUX_ACTIVE] = &ssp_setting[1],
 			[GPIOMUX_SUSPENDED] = &ssp_setting[1],
@@ -1183,25 +1228,25 @@ static struct msm_gpiomux_config ssp_configs[] __initdata = {
 #ifdef CONFIG_MMC_MSM_SDC3_SUPPORT
 static struct gpiomux_setting sdc3_clk_actv_cfg = {
 	.func = GPIOMUX_FUNC_2,
-	.drv = GPIOMUX_DRV_8MA,
-	.pull = GPIOMUX_PULL_NONE,
+	.drv = GPIOMUX_DRV_16MA,
+	.pull = GPIOMUX_PULL_UP,
 };
 
 static struct gpiomux_setting sdc3_cmd_data_0_3_actv_cfg = {
 	.func = GPIOMUX_FUNC_2,
-	.drv = GPIOMUX_DRV_8MA,
-	.pull = GPIOMUX_PULL_NONE,
+	.drv = GPIOMUX_DRV_16MA,
+	.pull = GPIOMUX_PULL_UP,
 };
 
 static struct gpiomux_setting sdc3_suspend_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_DOWN,
+	.drv = GPIOMUX_DRV_16MA,
+	.pull = GPIOMUX_PULL_UP,
 };
 
 static struct gpiomux_setting sdc3_data_1_suspend_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_8MA,
+	.drv = GPIOMUX_DRV_16MA,
 	.pull = GPIOMUX_PULL_UP,
 };
 
@@ -1539,6 +1584,47 @@ static void msm_gpiomux_sc6500_spi_install(void)
 
 extern unsigned int system_rev;
 
+#if defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_MACH_VIKALCU)
+static struct gpiomux_setting gpio_nc_config = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_DOWN,
+	.dir = GPIOMUX_IN,
+};
+static struct msm_gpiomux_config nc_gpio_configs[] __initdata = {
+	{
+		.gpio    = 25,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 26,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 91,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 129,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 130,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+};
+#endif
+	
 void __init msm_8974_init_gpiomux(void)
 {
 	int rc;
@@ -1569,7 +1655,7 @@ void __init msm_8974_init_gpiomux(void)
 	msm_gpiomux_install(msm8974_slimbus_config,
 			ARRAY_SIZE(msm8974_slimbus_config));
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	msm_gpiomux_install(msm_touch_configs, ARRAY_SIZE(msm_touch_configs));
 		msm_gpiomux_install(hap_lvl_shft_config,
 				ARRAY_SIZE(hap_lvl_shft_config));
@@ -1602,11 +1688,11 @@ void __init msm_8974_init_gpiomux(void)
 				ARRAY_SIZE(ssp_configs));
 #endif
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)
 	msm_gpiomux_install(msm_hdmi_configs, ARRAY_SIZE(msm_hdmi_configs));
 #endif
 
-#ifndef CONFIG_SEC_MONTBLANC_PROJECT // pje, def CONFIG_VIDEO_MHL_V2
+#if !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_MACH_VIKALCU)// pje, def CONFIG_VIDEO_MHL_V2
 	if(system_rev > 1)
 		msm_gpiomux_install(mhl_configs, ARRAY_SIZE(mhl_configs));
 #endif
@@ -1640,6 +1726,10 @@ void __init msm_8974_init_gpiomux(void)
 
 	msm_gpiomux_install(msm8974_pri_auxpcm_configs,
 				 ARRAY_SIZE(msm8974_pri_auxpcm_configs));
+#ifdef CONFIG_PCM_ROUTE_VOICE_STUB
+	msm_gpiomux_install(msm8974_sec_auxpcm_configs,
+			 ARRAY_SIZE(msm8974_sec_auxpcm_configs));
+#endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
 
 #if !defined(CONFIG_BT_BCM4335) && !defined(CONFIG_BT_BCM4339)
 	if (of_board_is_rumi())
@@ -1665,5 +1755,9 @@ void __init msm_8974_init_gpiomux(void)
 
 #ifdef CONFIG_REGULATOR_LP8720
 	msm_gpiomux_install(lp8720_pmic_configs, ARRAY_SIZE(lp8720_pmic_configs));
+#endif
+
+#if defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_MACH_VIKALCU)
+	msm_gpiomux_install(nc_gpio_configs, ARRAY_SIZE(nc_gpio_configs));
 #endif
 }

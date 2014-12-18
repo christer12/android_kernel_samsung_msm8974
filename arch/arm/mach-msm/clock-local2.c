@@ -644,6 +644,80 @@ static enum handoff local_vote_clk_handoff(struct clk *c)
 	return HANDOFF_ENABLED_CLK;
 }
 
+struct frac_entry {
+	int num;
+	int den;
+};
+
+static struct frac_entry frac_table_675m[] = {	/* link rate of 270M */
+	{52, 295},	/* 119 M */
+	{11, 57},	/* 130.25 M */
+	{63, 307},	/* 138.50 M */
+	{11, 50},	/* 148.50 M */
+	{47, 206},	/* 154 M */
+	{31, 100},	/* 205.25 M */
+	{89, 225},	/* 267.00 M */
+	{107, 269},	/* 268.50 M */
+/*	{55, 136},	 272.977 M */
+	{151, 372},	/* 274 M */
+	{0, 0},
+};
+
+static struct frac_entry frac_table_810m[] = { /* Link rate of 162M */
+	{31, 211},	/* 119 M */
+	{32, 199},	/* 130.25 M */
+	{63, 307},	/* 138.50 M */
+	{11, 60},	/* 148.50 M */
+	{50, 263},	/* 154 M */
+	{31, 120},	/* 205.25 M */
+	{119, 359},	/* 268.50 M */
+	{0, 0},
+};
+
+int set_rate_edp_pixel(struct clk *clk, unsigned long rate)
+{
+	struct rcg_clk *rcg = to_rcg_clk(clk);
+	struct clk_freq_tbl *pixel_freq = rcg->current_freq;
+	struct frac_entry *frac;
+	int delta = 100000;
+		s64 request;
+		s64 src_rate;
+
+		src_rate = clk_get_rate(clk->parent);
+
+	if (src_rate == 810000000)
+		frac = frac_table_810m;
+	else
+		frac = frac_table_675m;
+
+	while (frac->num) {
+		request = rate;
+		request *= frac->den;
+		request = div_s64(request, frac->num);
+		pr_info("%s rate : %lu requet : %llu delta : %d src_rate : %llu", __func__, rate, request, delta, src_rate);
+		if ((src_rate < (request - delta)) ||
+			(src_rate > (request + delta))) {
+			frac++;
+			continue;
+		}
+
+		pixel_freq->div_src_val &= ~BM(4, 0);
+		if (frac->den == frac->num) {
+			pixel_freq->m_val = 0;
+			pixel_freq->n_val = 0;
+		} else {
+			pixel_freq->m_val = frac->num;
+			pixel_freq->n_val = ~(frac->den - frac->num);
+			pixel_freq->d_val = ~frac->den;
+		}
+		set_rate_mnd(rcg, pixel_freq);
+		return 0;
+	}
+
+	pr_info("%s fail", __func__);
+	return -EINVAL;
+}
+
 enum handoff byte_rcg_handoff(struct clk *clk)
 {
 	struct rcg_clk *rcg = to_rcg_clk(clk);
@@ -799,6 +873,37 @@ out:
 	return rc;
 }
 
+static struct clk *edp_clk_get_parent(struct clk *c)
+{
+	struct rcg_clk *rcg = to_rcg_clk(c);
+	struct clk *clk;
+	struct clk_freq_tbl *freq;
+	uint32_t rate;
+	u32 cmd_rcgr_regval;
+
+	/* Is there a pending configuration? */
+	cmd_rcgr_regval = readl_relaxed(CMD_RCGR_REG(rcg));
+	if (cmd_rcgr_regval & CMD_RCGR_CONFIG_DIRTY_MASK)
+		return NULL;
+
+	/* Figure out what rate the rcg is running at */
+	for (freq = rcg->freq_tbl; freq->freq_hz != FREQ_END; freq++) {
+		clk = freq->src_clk;
+		if (clk && clk->ops->get_rate) {
+				rate = clk->ops->get_rate(clk);
+				if (rate == freq->freq_hz)
+					break;
+			}
+	}
+
+	/* No known frequency found */
+	if (freq->freq_hz == FREQ_END)
+		return NULL;
+
+	rcg->current_freq = freq;
+	return freq->src_clk;
+}
+
 
 #define ENABLE_REG(x)	(*(x)->base + (x)->enable_reg)
 #define SELECT_REG(x)	(*(x)->base + (x)->select_reg)
@@ -806,18 +911,18 @@ out:
 /*
  * mux clock functions
  */
-static void mux_clk_halt_check(void)
+static void cam_mux_clk_halt_check(void)
 {
 	/* Ensure that the delay starts after the mux disable/enable. */
 	mb();
 	udelay(HALT_CHECK_DELAY_US);
 }
 
-static int mux_clk_enable(struct clk *c)
+static int cam_mux_clk_enable(struct clk *c)
 {
 	unsigned long flags;
 	u32 regval;
-	struct mux_clk_st *mux = to_mux_clk_st(c);
+	struct cam_mux_clk *mux = to_cam_mux_clk(c);
 
 	spin_lock_irqsave(&local_clock_reg_lock, flags);
 	regval = readl_relaxed(ENABLE_REG(mux));
@@ -826,15 +931,15 @@ static int mux_clk_enable(struct clk *c)
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
 
 	/* Wait for clock to enable before continuing. */
-	mux_clk_halt_check();
+	cam_mux_clk_halt_check();
 
 	return 0;
 }
 
-static void mux_clk_disable(struct clk *c)
+static void cam_mux_clk_disable(struct clk *c)
 {
 	unsigned long flags;
-	struct mux_clk_st *mux = to_mux_clk_st(c);
+	struct cam_mux_clk *mux = to_cam_mux_clk(c);
 	u32 regval;
 
 	spin_lock_irqsave(&local_clock_reg_lock, flags);
@@ -844,10 +949,10 @@ static void mux_clk_disable(struct clk *c)
 	spin_unlock_irqrestore(&local_clock_reg_lock, flags);
 
 	/* Wait for clock to disable before continuing. */
-	mux_clk_halt_check();
+	cam_mux_clk_halt_check();
 }
 
-static int mux_source_switch(struct mux_clk_st *mux, struct mux_source *dest)
+static int mux_source_switch(struct cam_mux_clk *mux, struct mux_source *dest)
 {
 	unsigned long flags;
 	u32 regval;
@@ -870,9 +975,9 @@ out:
 	return ret;
 }
 
-static int mux_clk_set_parent(struct clk *c, struct clk *parent)
+static int cam_mux_clk_set_parent(struct clk *c, struct clk *parent)
 {
-	struct mux_clk_st *mux = to_mux_clk_st(c);
+	struct cam_mux_clk *mux = to_cam_mux_clk(c);
 	struct mux_source *dest = NULL;
 	int ret;
 
@@ -899,9 +1004,9 @@ static int mux_clk_set_parent(struct clk *c, struct clk *parent)
 	return 0;
 }
 
-static enum handoff mux_clk_handoff(struct clk *c)
+static enum handoff cam_mux_clk_handoff(struct clk *c)
 {
-	struct mux_clk_st *mux = to_mux_clk_st(c);
+	struct cam_mux_clk *mux = to_cam_mux_clk(c);
 	u32 mask = mux->enable_mask;
 	u32 regval = readl_relaxed(ENABLE_REG(mux));
 
@@ -913,9 +1018,9 @@ static enum handoff mux_clk_handoff(struct clk *c)
 	return HANDOFF_DISABLED_CLK;
 }
 
-static struct clk *mux_clk_get_parent(struct clk *c)
+static struct clk *cam_mux_clk_get_parent(struct clk *c)
 {
-	struct mux_clk_st *mux = to_mux_clk_st(c);
+	struct cam_mux_clk *mux = to_cam_mux_clk(c);
 	struct mux_source *parent = NULL;
 	u32 regval = readl_relaxed(SELECT_REG(mux));
 
@@ -934,9 +1039,9 @@ static struct clk *mux_clk_get_parent(struct clk *c)
 	return ERR_PTR(-EPERM);
 }
 
-static int mux_clk_list_rate(struct clk *c, unsigned n)
+static int cam_mux_clk_list_rate(struct clk *c, unsigned n)
 {
-	struct mux_clk_st *mux = to_mux_clk_st(c);
+	struct cam_mux_clk *mux = to_cam_mux_clk(c);
 	int i;
 
 	for (i = 0; i < n; i++)
@@ -977,6 +1082,14 @@ struct clk_ops clk_ops_pixel = {
 	.handoff = pixel_rcg_handoff,
 };
 
+struct clk_ops clk_ops_edppixel = {
+	.enable = rcg_clk_prepare,
+	.set_rate = set_rate_edp_pixel,
+	.list_rate = rcg_clk_list_rate,
+	.round_rate = rcg_clk_round_rate,
+	.handoff = pixel_rcg_handoff,
+};
+
 struct clk_ops clk_ops_byte = {
 	.enable = rcg_clk_prepare,
 	.set_rate = set_rate_byte,
@@ -992,6 +1105,15 @@ struct clk_ops clk_ops_rcg_hdmi = {
 	.round_rate = rcg_clk_round_rate,
 	.handoff = rcg_clk_handoff,
 	.get_parent = rcg_clk_get_parent,
+};
+
+struct clk_ops clk_ops_rcg_edp = {
+	.enable = rcg_clk_prepare,
+	.set_rate = rcg_clk_set_rate_hdmi,
+	.list_rate = rcg_clk_list_rate,
+	.round_rate = rcg_clk_round_rate,
+	.handoff = rcg_clk_handoff,
+	.get_parent = edp_clk_get_parent,
 };
 
 struct clk_ops clk_ops_branch = {
@@ -1013,13 +1135,13 @@ struct clk_ops clk_ops_vote = {
 	.handoff = local_vote_clk_handoff,
 };
 
-struct clk_ops clk_ops_mux = {
-	.enable = mux_clk_enable,
-	.disable = mux_clk_disable,
-	.set_parent = mux_clk_set_parent,
-	.get_parent = mux_clk_get_parent,
-	.handoff = mux_clk_handoff,
-	.list_rate = mux_clk_list_rate,
+struct clk_ops clk_ops_cam_mux = {
+	.enable = cam_mux_clk_enable,
+	.disable = cam_mux_clk_disable,
+	.set_parent = cam_mux_clk_set_parent,
+	.get_parent = cam_mux_clk_get_parent,
+	.handoff = cam_mux_clk_handoff,
+	.list_rate = cam_mux_clk_list_rate,
 };
 
 

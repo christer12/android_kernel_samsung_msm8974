@@ -29,6 +29,12 @@ config INPUT_OF_MATRIX_KEYMAP
 	depends on USE_OF
 	bool
 
+config USE_INPUTLOCATION_FOR_ENG
+	bool "Input Pointer Location"
+	help
+	  Say Y here if you want to generate location to debug
+	  input on Android.
+
 config INPUT_FF_MEMLESS
 	tristate "Support for memoryless force-feedback devices"
 	help

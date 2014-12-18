@@ -14,13 +14,16 @@
 
 /include/ "msm8610.dtsi"
 /include/ "dsi-v2-panel-truly-wvga-video.dtsi"
+/include/ "msm8610-camera-sensor-cdp-mtp.dtsi"
 
 / {
 	model = "Qualcomm MSM 8610 MTP";
 	compatible = "qcom,msm8610-mtp", "qcom,msm8610", "qcom,mtp";
 	qcom,msm-id = <147 8 0>, <165 8 0>, <161 8 0>, <162 8 0>,
 		      <163 8 0>, <164 8 0>, <166 8 0>;
+};
 
+&soc {
 	serial@f991e000 {
 		status = "ok";
 	};
@@ -86,6 +89,59 @@
 			};
 		};
 	};
+
+	gen-vkeys {
+		compatible = "qcom,gen-vkeys";
+		label = "atmel_mxt_ts";
+		qcom,disp-maxx = <480>;
+		qcom,disp-maxy = <800>;
+		qcom,panel-maxx = <508>;
+		qcom,panel-maxy = <880>;
+		qcom,key-codes = <158 102 139>;
+		qcom,y-offset = <35>;
+	};
+
+	gpio_keys {
+		compatible = "gpio-keys";
+		input-name = "gpio-keys";
+
+		camera_snapshot {
+			label = "camera_snapshot";
+			gpios = <&msmgpio 73 0x1>;
+			linux,input-type = <1>;
+			linux,code = <0x2fe>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+
+		camera_focus {
+			label = "camera_focus";
+			gpios = <&msmgpio 74 0x1>;
+			linux,input-type = <1>;
+			linux,code = <0x210>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+
+		vol_up {
+			label = "volume_up";
+			gpios = <&msmgpio 72 0x1>;
+			linux,input-type = <1>;
+			linux,code = <115>;
+			gpio-key,wakeup;
+			debounce-interval = <15>;
+		};
+	};
+
+    sound {
+        qcom,audio-routing =
+            "RX_BIAS", "MCLK",
+            "INT_LDO_H", "MCLK",
+            "MIC BIAS External", "Handset Mic",
+            "MIC BIAS Internal2", "Headset Mic",
+            "AMIC1", "MIC BIAS External",
+            "AMIC2", "MIC BIAS Internal2";
+    };
 };
 
 &i2c_cdc  {
@@ -146,6 +202,7 @@
 				qcom,id = <6>;
 				qcom,source-sel = <1>;
 				qcom,mode-ctrl = <0x60>;
+				qcom,mode = "manual";
 			};
 		};
 
@@ -154,45 +211,14 @@
 			qcom,led_mpp_3 {
 				label = "mpp";
 				linux,name = "wled-backlight";
-				linux-default-trigger = "none";
+				linux,default-trigger = "bkl-trigger";
 				qcom,default-state = "on";
 				qcom,max-current = <40>;
 				qcom,id = <6>;
 				qcom,source-sel = <1>;
 				qcom,mode-ctrl = <0x10>;
+				qcom,mode = "manual";
 			};
-		};
-	};
-
-	gpio_keys {
-		compatible = "gpio-keys";
-		input-name = "gpio-keys";
-
-		camera_snapshot {
-			label = "camera_snapshot";
-			gpios = <&msmgpio 73 0x1>;
-			linux,input-type = <1>;
-			linux,code = <0x2fe>;
-			gpio-key,wakeup;
-			debounce-interval = <15>;
-		};
-
-		camera_focus {
-			label = "camera_focus";
-			gpios = <&msmgpio 74 0x1>;
-			linux,input-type = <1>;
-			linux,code = <0x210>;
-			gpio-key,wakeup;
-			debounce-interval = <15>;
-		};
-
-		vol_up {
-			label = "volume_up";
-			gpios = <&msmgpio 72 0x1>;
-			linux,input-type = <1>;
-			linux,code = <115>;
-			gpio-key,wakeup;
-			debounce-interval = <15>;
 		};
 	};
 };
@@ -216,6 +242,7 @@
 
 	vdd-io-supply = <&pm8110_l6>;
 	qcom,vdd-io-always-on;
+	qcom,vdd-io-lpm-sup;
 	qcom,vdd-io-voltage-level = <1800000 1800000>;
 	qcom,vdd-io-current-level = <200 60000>;
 
@@ -237,8 +264,6 @@
 	qcom,vdd-current-level = <15000 400000>;
 
 	vdd-io-supply = <&pm8110_l21>;
-	qcom,vdd-io-always-on;
-	qcom,vdd-io-lpm-sup;
 	qcom,vdd-io-voltage-level = <1800000 2950000>;
 	qcom,vdd-io-current-level = <200 50000>;
 
@@ -315,5 +340,15 @@
 	};
 
 	mpp@a300 { /* MPP 4 */
+		/* PA_THERM config */
+		qcom,mode = <4>; /* AIN input */
+		qcom,invert = <1>; /* Enable MPP */
+		qcom,ain-route = <3>; /* AMUX 8 */
+		qcom,master-en = <1>;
+		qcom,src-sel = <0>; /* Function constant */
 	};
+};
+
+&pm8110_bms {
+	status = "ok";
 };

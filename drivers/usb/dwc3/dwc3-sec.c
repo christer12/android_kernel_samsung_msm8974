@@ -13,6 +13,7 @@
 #ifdef CONFIG_CHARGER_BQ24260
 #include <linux/gpio.h>
 #define GPIO_USB_VBUS_MSM 50
+#include <mach/rpm-regulator-smd.h>
 #endif
 
 struct dwc3_sec {
@@ -22,7 +23,9 @@ struct dwc3_sec {
 static struct dwc3_sec sec_noti;
 
 #ifdef CONFIG_CHARGER_BQ24260
-void bq24260_otg_control(int enable)
+struct delayed_work	bq24260_late_power_work;
+static int booster_enable;
+int bq24260_otg_control(int enable)
 {
 	union power_supply_propval value;
 	int i, ret = 0;
@@ -38,8 +41,10 @@ void bq24260_otg_control(int enable)
 	}
 	if (i == 10) {
 		pr_err("%s: fail to get battery ps\n", __func__);
-		return;
+		schedule_delayed_work(&bq24260_late_power_work, msecs_to_jiffies(5000));
+		return -1;
 	}
+	booster_enable = enable;
 
 	if (enable)
 		current_cable_type = POWER_SUPPLY_TYPE_OTG;
@@ -53,20 +58,84 @@ void bq24260_otg_control(int enable)
 		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
 			__func__, ret);
 	}
+	return ret;
 }
+
+static void bq24260_late_power(struct work_struct *work)
+{
+	struct dwc3_sec *snoti = &sec_noti;
+	struct dwc3_msm *dwcm;
+	
+	if (!snoti) {
+		pr_err("%s: dwc3_otg (snoti) is null\n", __func__);
+		return;
+	}
+
+	dwcm = snoti->dwcm;
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
+		return;
+	}
+	
+	pr_info("%s, ext_xceiv.id=%d\n", __func__, dwcm->ext_xceiv.id);
+
+	if (dwcm->ext_xceiv.id == DWC3_ID_GROUND)
+		bq24260_otg_control(1);
+}
+
+struct booster_data sec_booster = {
+	.name = "bq24260",
+	.boost = bq24260_otg_control,
+};
+
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_VIENNAVZW) || defined(CONFIG_MACH_V2LTEEUR)
+static struct rpm_regulator *s2a_regulator;
+
+static void usb_vbus_s2a_force_pwm(unsigned int en)
+{
+	if (!s2a_regulator) {
+		pr_err("%s, s2a_regulator is not init\n", __func__);
+		return;
+	}
+	pr_info("%s, s2a_regulator %s mode\n", __func__,
+			en ? "HPM" : "AUTO");
+	rpm_regulator_set_mode(s2a_regulator,
+			en ? RPM_REGULATOR_MODE_HPM : RPM_REGULATOR_MODE_AUTO);
+}
+#endif
 
 static irqreturn_t msm_usb_vbus_msm_irq(int irq, void *data)
 {
+	struct dwc3_sec *snoti = &sec_noti;
+	struct dwc3_msm *dwcm;
 	int enable = gpio_get_value(GPIO_USB_VBUS_MSM);
 	pr_info("%s usb_vbus_msm=%d\n", __func__, enable);
+	dwcm = snoti->dwcm;
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
+		return NOTIFY_BAD;
+	}
+	if (dwcm->ext_xceiv.id == DWC3_ID_GROUND && enable == 0 && booster_enable) {
+		pr_info("%s over current\n", __func__);
+		sec_otg_notify(HNOTIFY_OVERCURRENT);
+		return IRQ_HANDLED;
+	}
 	sec_otg_notify(enable ?
 		HNOTIFY_OTG_POWER_ON : HNOTIFY_OTG_POWER_OFF);
+
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_VIENNAVZW) || defined(CONFIG_MACH_V2LTEEUR)
+	usb_vbus_s2a_force_pwm(enable);
+#endif
+
 	return IRQ_HANDLED;
 }
 
 static int usb_vbus_msm_init(struct dwc3_msm *dwcm, struct usb_phy *phy)
 {
 	int ret;
+
+	sec_otg_register_booster(&sec_booster);
+	INIT_DELAYED_WORK(&bq24260_late_power_work, bq24260_late_power);
 
 	ret = gpio_tlmm_config(GPIO_CFG(GPIO_USB_VBUS_MSM, 0, GPIO_CFG_INPUT,
 		GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
@@ -85,6 +154,14 @@ static int usb_vbus_msm_init(struct dwc3_msm *dwcm, struct usb_phy *phy)
 		pr_err("%s request irq failed for usb_vbus_msm\n", __func__);
 	else
 		pr_err("%s request irq succeed for usb_vbus_msm\n", __func__);
+
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_VIENNAVZW) || defined(CONFIG_MACH_V2LTEEUR)
+	s2a_regulator = rpm_regulator_get(NULL, "8941_s2");
+	if (IS_ERR_OR_NULL(s2a_regulator))
+		pr_err("%s, could not get rpm regulator err\n", __func__);
+	usb_vbus_s2a_force_pwm(gpio_get_value(GPIO_USB_VBUS_MSM));
+#endif
+
 	return ret;
 }
 #endif
@@ -112,9 +189,14 @@ int sec_handle_event(int enable)
 
 	pr_info("%s: event %d\n", __func__, enable);
 
+	if (!snoti) {
+		pr_err("%s: dwc3_otg (snoti) is null\n", __func__);
+		return NOTIFY_BAD;
+	}
+
 	dwcm = snoti->dwcm;
-	if (!snoti || !dwcm) {
-		pr_err("%s: dwc3_otg is null\n", __func__);
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
 		return NOTIFY_BAD;
 	}
 
@@ -138,9 +220,14 @@ static int sec_otg_notifications(struct notifier_block *nb,
 
 	pr_info("%s: event %lu\n", __func__, event);
 
+	if (!snoti) {
+		pr_err("%s: dwc3_otg (snoti) is null\n", __func__);
+		return NOTIFY_BAD;
+	}
+
 	dwcm = snoti->dwcm;
-	if (!snoti || !dwcm) {
-		pr_err("%s: dwc3_otg is null\n", __func__);
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
 		return NOTIFY_BAD;
 	}
 

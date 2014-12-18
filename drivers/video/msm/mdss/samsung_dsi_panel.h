@@ -34,6 +34,7 @@
 #define LCD_DEBUG(X, ...) pr_info("[LCD]%s:"X, __func__, ## __VA_ARGS__);
 
 #include "smart_dimming.h"
+#include "smart_mtp_se6e3fa.h"
 
 enum mipi_samsung_cmd_list {
 
@@ -55,7 +56,12 @@ enum mipi_samsung_cmd_list {
 	PANEL_TOUCHSENSING_ON,
 	PANEL_TOUCHSENSING_OFF,
 	PANEL_TEAR_ON,
-	PANEL_TEAR_OFF
+	PANEL_TEAR_OFF,
+	PANEL_LDI_FPS_CHANGE,
+	PANEL_LDI_SET_VDDM_OFFSET, /*LDI_ADJ_VDDM_OFFSET*/
+	PANEL_PARTIAL_ON,
+	PANEL_PARTIAL_OFF,
+	PANEl_FORCE_500CD
 };
 enum {
 	MIPI_RESUME_STATE,
@@ -76,6 +82,7 @@ struct candella_lux_map {
 
 struct display_status {
 	unsigned char acl_on;
+	unsigned char curr_acl_cond;
 	unsigned char is_smart_dim_loaded;
 	unsigned char is_mdnie_loaded;
 	unsigned char auto_brightness;
@@ -87,12 +94,17 @@ struct display_status {
 	int curr_aid_idx;
 	int curr_gamma_idx;
 	int bright_level;
+	int	recent_bright_level;
 
 	int temperature;
 	char temperature_value;
 	int temper_need_update;
 	int siop_status;
 	int hbm_mode;
+
+#if defined(CONFIG_DUAL_LCD)
+	int lcd_sel;
+#endif
 };
 
 struct mipi_samsung_driver_data {
@@ -110,6 +122,8 @@ struct mipi_samsung_driver_data {
 	char panel_name[MAX_PANEL_NAME_SIZE];
 	int panel;
 	unsigned int manufacture_id;
+	unsigned int id3;
+	unsigned int panel_350cd;
 	struct smartdim_conf *sdimconf;
 };
 enum {
@@ -117,6 +131,7 @@ enum {
 	PANEL_1080P_OCTA_S6E8FA0,
 	PANEL_1080P_OCTA_S6E3FA0,
 	PANEL_1080P_OCTA_S6E3FA0_CMD,
+	PANEL_1080P_YOUM_S6E3FA1_CMD,
 #if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
 	PANEL_WVGA_OCTA_S6E88A0,
 #endif
@@ -124,7 +139,7 @@ enum {
 
 struct panel_hrev {
 	char *name;
-	int panel_code;  
+	int panel_code;
 };
 
 #endif

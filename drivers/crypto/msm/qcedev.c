@@ -323,10 +323,10 @@ struct qcedev_stat {
 	u32 qcedev_sha_fail;
 };
 
-static struct qcedev_stat _qcedev_stat[MAX_QCE_DEVICE];
+static struct qcedev_stat _qcedev_stat;
 static struct dentry *_debug_dent;
 static char _debug_read_buf[DEBUG_MAX_RW_BUF];
-static int _debug_qcedev[MAX_QCE_DEVICE];
+static int _debug_qcedev;
 
 static struct qcedev_control *qcedev_minor_to_control(unsigned n)
 {
@@ -693,7 +693,7 @@ static int submit_req(struct qcedev_async_req *qcedev_areq,
 	if (ret)
 		qcedev_areq->err = -EIO;
 
-	pstat = &_qcedev_stat[podev->pdev->id];
+	pstat = &_qcedev_stat;
 	if (qcedev_areq->op_type == QCEDEV_CRYPTO_OPER_CIPHER) {
 		switch (qcedev_areq->cipher_op_req.op) {
 		case QCEDEV_OPER_DEC:
@@ -1650,6 +1650,10 @@ static int qcedev_check_cipher_params(struct qcedev_cipher_op_req *req,
 								 __func__);
 			goto error;
 		}
+		if (req->byteoffset >= AES_CE_BLOCK_SIZE) {
+			pr_err("%s: Invalid byte offset\n", __func__);
+			goto error;
+		}
 	}
 	/* Ensure zer ivlen for ECB  mode  */
 	if (req->ivlen > 0) {
@@ -1739,7 +1743,7 @@ static long qcedev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		return -ENOTTY;
 
 	init_completion(&qcedev_areq.complete);
-	pstat = &_qcedev_stat[podev->pdev->id];
+	pstat = &_qcedev_stat;
 
 	switch (cmd) {
 	case QCEDEV_IOCTL_LOCK_CE:
@@ -1933,19 +1937,18 @@ static int qcedev_probe(struct platform_device *pdev)
 	rc = misc_register(&podev->miscdevice);
 	qce_hw_support(podev->qce, &podev->ce_support);
 	if (podev->ce_support.bam) {
-		podev->platform_support.ce_shared = 0;
+		podev->platform_support.ce_shared = podev->ce_support.is_shared;
 		podev->platform_support.shared_ce_resource = 0;
-		podev->platform_support.hw_key_support = 0;
+		podev->platform_support.hw_key_support =
+						podev->ce_support.hw_key;
 		podev->platform_support.bus_scale_table = NULL;
 		podev->platform_support.sha_hmac = 1;
 
-		if (podev->ce_support.is_shared == false) {
-			podev->platform_support.bus_scale_table =
-				(struct msm_bus_scale_pdata *)
-						msm_bus_cl_get_pdata(pdev);
-			if (!podev->platform_support.bus_scale_table)
-				pr_err("bus_scale_table is NULL\n");
-		}
+		podev->platform_support.bus_scale_table =
+			(struct msm_bus_scale_pdata *)
+					msm_bus_cl_get_pdata(pdev);
+		if (!podev->platform_support.bus_scale_table)
+			pr_err("bus_scale_table is NULL\n");
 	} else {
 		platform_support =
 			(struct msm_ce_hw_support *)pdev->dev.platform_data;
@@ -2026,11 +2029,7 @@ static int _disp_stats(int id)
 	struct qcedev_stat *pstat;
 	int len = 0;
 
-	if (id < 0) {
-		pr_err("Crypto id is %d, cannot be negative\n", id);
-		return len;
-	}
-	pstat = &_qcedev_stat[id];
+	pstat = &_qcedev_stat;
 	len = snprintf(_debug_read_buf, DEBUG_MAX_RW_BUF - 1,
 			"\nQualcomm QCE dev driver %d Statistics:\n",
 				id + 1);
@@ -2076,10 +2075,7 @@ static ssize_t _debug_stats_read(struct file *file, char __user *buf,
 static ssize_t _debug_stats_write(struct file *file, const char __user *buf,
 			size_t count, loff_t *ppos)
 {
-
-	int qcedev = *((int *) file->private_data);
-
-	memset((char *)&_qcedev_stat[qcedev], 0, sizeof(struct qcedev_stat));
+	memset((char *)&_qcedev_stat, 0, sizeof(struct qcedev_stat));
 	return count;
 };
 
@@ -2093,7 +2089,6 @@ static int _qcedev_debug_init(void)
 {
 	int rc;
 	char name[DEBUG_MAX_FNAME];
-	int i;
 	struct dentry *dent;
 
 	_debug_dent = debugfs_create_dir("qcedev", NULL);
@@ -2103,17 +2098,15 @@ static int _qcedev_debug_init(void)
 		return PTR_ERR(_debug_dent);
 	}
 
-	for (i = 0; i < MAX_QCE_DEVICE; i++) {
-		snprintf(name, DEBUG_MAX_FNAME-1, "stats-%d", i+1);
-		_debug_qcedev[i] = i;
-		dent = debugfs_create_file(name, 0644, _debug_dent,
-				&_debug_qcedev[i], &_debug_stats_ops);
-		if (dent == NULL) {
-			pr_err("qcedev debugfs_create_file fail, error %ld\n",
-					PTR_ERR(dent));
-			rc = PTR_ERR(dent);
-			goto err;
-		}
+	snprintf(name, DEBUG_MAX_FNAME-1, "stats-%d", 1);
+	_debug_qcedev = 0;
+	dent = debugfs_create_file(name, 0644, _debug_dent,
+			&_debug_qcedev, &_debug_stats_ops);
+	if (dent == NULL) {
+		pr_err("qcedev debugfs_create_file fail, error %ld\n",
+				PTR_ERR(dent));
+		rc = PTR_ERR(dent);
+		goto err;
 	}
 	return 0;
 err:

@@ -281,7 +281,7 @@ static int msm_slim_post_tx_msgq(struct msm_slim_ctrl *dev, u8 *buf, int len)
 	u32 phys_addr = mem->phys_base + (SLIM_MSGQ_BUF_LEN * ix);
 
 	for (ret = 0; ret < ((len + 3) >> 2); ret++)
-		pr_debug("TX buf[%d]:0x%x", ret, ((u32 *)buf)[ret]);
+		pr_debug("BAM TX buf[%d]:0x%x", ret, ((u32 *)buf)[ret]);
 
 	ret = sps_transfer_one(pipe, phys_addr, ((len + 3) & 0xFC), NULL,
 				SPS_IOVEC_FLAG_EOT);
@@ -313,8 +313,6 @@ static u32 *msm_slim_tx_msgq_return(struct msm_slim_ctrl *dev)
 	/* Calculate buffer index */
 	dev->tx_idx = (iovec.addr - mem->phys_base) / SLIM_MSGQ_BUF_LEN;
 
-	pr_debug("Returning TX buf index:%d\n", dev->tx_idx);
-
 	return (u32 *)((u8 *)mem->base + (dev->tx_idx * SLIM_MSGQ_BUF_LEN));
 }
 
@@ -323,7 +321,7 @@ int msm_send_msg_buf(struct msm_slim_ctrl *dev, u32 *buf, u8 len, u32 tx_reg)
 	if (dev->use_tx_msgqs != MSM_MSGQ_ENABLED) {
 		int i;
 		for (i = 0; i < (len + 3) >> 2; i++) {
-			dev_dbg(dev->dev, "TX data:0x%x\n", buf[i]);
+			dev_dbg(dev->dev, "AHB TX data:0x%x\n", buf[i]);
 			writel_relaxed(buf[i], dev->base + tx_reg + (i * 4));
 		}
 		/* Guarantee that message is sent before returning */
@@ -490,8 +488,11 @@ int msm_slim_connect_endp(struct msm_slim_ctrl *dev,
 				goto sps_transfer_failed;
 			}
 		}
-	} else
+		dev->use_rx_msgqs = MSM_MSGQ_ENABLED;
+	} else {
 		dev->tx_idx = -1;
+		dev->use_tx_msgqs = MSM_MSGQ_ENABLED;
+	}
 
 	return 0;
 sps_transfer_failed:
@@ -501,6 +502,7 @@ sps_reg_event_failed:
 	sps_disconnect(endpoint->sps);
 	return ret;
 }
+
 static int msm_slim_init_rx_msgq(struct msm_slim_ctrl *dev, u32 pipe_reg)
 {
 	int ret;
@@ -550,10 +552,8 @@ static int msm_slim_init_rx_msgq(struct msm_slim_ctrl *dev, u32 pipe_reg)
 
 	ret = msm_slim_connect_endp(dev, endpoint, notify);
 
-	if (!ret) {
-		dev->use_rx_msgqs = MSM_MSGQ_ENABLED;
+	if (!ret)
 		return 0;
-	}
 
 	msm_slim_sps_mem_free(dev, mem);
 alloc_buffer_failed:
@@ -613,10 +613,8 @@ static int msm_slim_init_tx_msgq(struct msm_slim_ctrl *dev, u32 pipe_reg)
 	}
 	ret = msm_slim_connect_endp(dev, endpoint, NULL);
 
-	if (!ret) {
-		dev->use_tx_msgqs = MSM_MSGQ_ENABLED;
+	if (!ret)
 		return 0;
-	}
 
 	msm_slim_sps_mem_free(dev, mem);
 alloc_buffer_failed:
@@ -653,8 +651,10 @@ int msm_slim_sps_init(struct msm_slim_ctrl *dev, struct resource *bam_mem,
 		},
 	};
 
-	if (dev->bam.hdl)
+	if (dev->bam.hdl) {
+		bam_handle = dev->bam.hdl;
 		goto init_msgq;
+	}
 	bam_props.ee = dev->ee;
 	bam_props.virt_addr = dev->bam.base;
 	bam_props.phys_addr = bam_mem->start;
@@ -688,7 +688,7 @@ int msm_slim_sps_init(struct msm_slim_ctrl *dev, struct resource *bam_mem,
 		dev_err(dev->dev, "disabling BAM: reg-bam failed 0x%x\n", ret);
 		dev->use_rx_msgqs = MSM_MSGQ_DISABLED;
 		dev->use_tx_msgqs = MSM_MSGQ_DISABLED;
-		goto init_msgq;
+		return ret;
 	}
 	dev->bam.hdl = bam_handle;
 	dev_dbg(dev->dev, "SLIM BAM registered, handle = 0x%x\n", bam_handle);
@@ -706,10 +706,26 @@ init_msgq:
 	if (ret && bam_handle)
 		dev->use_tx_msgqs = MSM_MSGQ_DISABLED;
 
+	if (dev->use_tx_msgqs == MSM_MSGQ_DISABLED &&
+		dev->use_rx_msgqs == MSM_MSGQ_DISABLED && bam_handle) {
+		sps_deregister_bam_device(bam_handle);
+		dev->bam.hdl = 0L;
+	}
+
 	return ret;
 }
 
-static void msm_slim_disconnect_ep(struct msm_slim_ctrl *dev,
+void msm_slim_disconnect_endp(struct msm_slim_ctrl *dev,
+					struct msm_slim_endp *endpoint,
+					enum msm_slim_msgq *msgq_flag)
+{
+	if (*msgq_flag == MSM_MSGQ_ENABLED) {
+		sps_disconnect(endpoint->sps);
+		*msgq_flag = MSM_MSGQ_RESET;
+	}
+}
+
+static void msm_slim_remove_ep(struct msm_slim_ctrl *dev,
 					struct msm_slim_endp *endpoint,
 					enum msm_slim_msgq *msgq_flag)
 {
@@ -721,9 +737,8 @@ static void msm_slim_disconnect_ep(struct msm_slim_ctrl *dev,
 	msm_slim_sps_mem_free(dev, mem);
 	sps_register_event(endpoint->sps, &sps_event);
 	if (*msgq_flag == MSM_MSGQ_ENABLED) {
-		sps_disconnect(endpoint->sps);
+		msm_slim_disconnect_endp(dev, endpoint, msgq_flag);
 		msm_slim_free_endpoint(endpoint);
-		*msgq_flag = MSM_MSGQ_RESET;
 	}
 	msm_slim_sps_mem_free(dev, descr);
 }
@@ -731,9 +746,9 @@ static void msm_slim_disconnect_ep(struct msm_slim_ctrl *dev,
 void msm_slim_sps_exit(struct msm_slim_ctrl *dev, bool dereg)
 {
 	if (dev->use_rx_msgqs >= MSM_MSGQ_ENABLED)
-		msm_slim_disconnect_ep(dev, &dev->rx_msgq, &dev->use_rx_msgqs);
+		msm_slim_remove_ep(dev, &dev->rx_msgq, &dev->use_rx_msgqs);
 	if (dev->use_tx_msgqs >= MSM_MSGQ_ENABLED)
-		msm_slim_disconnect_ep(dev, &dev->tx_msgq, &dev->use_tx_msgqs);
+		msm_slim_remove_ep(dev, &dev->tx_msgq, &dev->use_tx_msgqs);
 	if (dereg) {
 		sps_deregister_bam_device(dev->bam.hdl);
 		dev->bam.hdl = 0L;

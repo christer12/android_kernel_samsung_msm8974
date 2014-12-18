@@ -23,6 +23,7 @@
 static int multi; /* current configuration */
 static int is_multi; /* Is multi configuration available ? */
 static int stringMode = OTHER_REQUEST;
+static int configMode = OTHER_REQUEST;
 static int interfaceCount;
 
 /* Description  : Set configuration number
@@ -160,12 +161,13 @@ int change_conf(struct usb_function *f,
 	int change_intf = 0;
 	struct usb_descriptor_header **descriptors;
 
-	USB_DBG("f->%s process multi\n", f->name);
-
 	if (!f || !config || !next) {
 		USB_DBG_ESS("one of f, config, next is not valid\n");
 		return -EFAULT;
 	}
+
+	USB_DBG("f->%s process multi\n", f->name);
+
 	if (speed == USB_SPEED_HIGH)
 		descriptors = f->hs_descriptors;
 	else
@@ -257,4 +259,33 @@ void set_string_mode(u16 w_length)
 		USB_DBG("initialize string mode\n");
 		stringMode = OTHER_REQUEST;
 	}
+	printk(KERN_INFO "usb: %s %d \n", __func__, w_length);
+}
+
+/* Description  : Set config mode
+ *		  This mode will be used for deciding other interface.
+ * Parameter    : u16 w_length
+ *		- 4 means MAC request
+ *		- Windows and Linux PC always request Maxconfig size.
+ */
+void set_config_mode(u16 w_length)
+{
+	if (w_length == 4) {
+		USB_DBG("mac request\n");
+		configMode = MAC_REQUEST;
+	} else if (w_length == 0) {
+		USB_DBG("initialize string mode\n");
+		configMode = OTHER_REQUEST;
+	}
+	printk(KERN_INFO "usb: %s %d \n", __func__, w_length);
+}
+
+/* Description  : Get Host OS type
+ * Return value : type - u16
+ *		- 0 : MAC PC
+ *		- 1 : Windows and Linux PC
+ */
+u16 get_host_os_type(void)
+{
+	return (stringMode || configMode);
 }

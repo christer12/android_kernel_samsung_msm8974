@@ -42,12 +42,22 @@ static struct cdev tzic_cdev;
 #define TZIC_IOC_MAGIC          0x9E
 #define TZIC_IOCTL_GET_FUSE_REQ _IO(TZIC_IOC_MAGIC, 0)
 #define TZIC_IOCTL_SET_FUSE_REQ _IO(TZIC_IOC_MAGIC, 1)
+#define TZIC_IOCTL_SET_CERT_INDEX_FUSE_REQ _IO(TZIC_IOC_MAGIC, 2)
 
 #define STATE_IC_BAD    1
 #define STATE_IC_GOOD   0
 
 #define LOG printk
 
+#define TZBSP_SVC_OEM_CERT_INDEX	246
+#define OEM_CERT_INDEX		 0x01
+
+typedef struct {
+	int index;
+	int is_write_req;
+	void *read_val;
+	int qfprom_api_status;
+} qfprom_cert_index_req;
 
 static int set_tamper_fuse_cmd(void)
 {
@@ -67,9 +77,30 @@ static uint8_t get_tamper_fuse_cmd(void)
 	return resp_buf;
 }
 
+static uint8_t  csb_set_cert_index(int index)
+{
+	int ret = -1;
+
+	qfprom_cert_index_req cmd;
+
+	memset(&cmd,0,sizeof(cmd));
+	cmd.index = index;
+	cmd.is_write_req = 1;
+
+	LOG(KERN_INFO "csb_set_cert_index : %d\n", index);	
+	
+	ret = scm_call(TZBSP_SVC_OEM_CERT_INDEX, OEM_CERT_INDEX, &cmd, sizeof(cmd), NULL, 0);
+
+	return ret;
+}
+
+
 static long tzic_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 {
 	int ret = 0;
+	int index = 0;
+	void __user *argp = (void __user *) arg;
+
 	LOG(KERN_INFO "tzic_ioctl called");
 
 	switch (cmd) {
@@ -89,6 +120,24 @@ static long tzic_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		ret = get_tamper_fuse_cmd();
 		LOG(KERN_INFO "tamper_fuse value = %x\n", ret);
 		
+		break;
+	}
+	case TZIC_IOCTL_SET_CERT_INDEX_FUSE_REQ: {
+		ret = copy_from_user((void *)&index, argp, sizeof(int));  
+		if (ret) {
+			LOG(KERN_INFO "copy_from_user failed\n");
+			return ret;
+		}
+
+		mutex_lock(&tzic_mutex);
+		ret = csb_set_cert_index(index);
+		mutex_unlock(&tzic_mutex);
+		
+		if (ret)
+			LOG(KERN_INFO "failed tzic_set_fuse_cmd: %d\n", ret);
+		else
+			LOG(KERN_INFO "succeeded tzic_set_fuse_cmd: %d\n", ret);
+
 		break;
 	}
 	default:

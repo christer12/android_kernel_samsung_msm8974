@@ -430,7 +430,11 @@ module_param_named(boost, enable_boost, bool, S_IRUGO | S_IWUSR);
 
 static int calculate_vdd_core(const struct acpu_level *tgt)
 {
+#ifdef CONFIG_SEC_PM_KRAIT_25MV
+	return tgt->vdd_core - 25000;
+#else
 	return tgt->vdd_core + (enable_boost ? drv.boost_uv : 0);
+#endif
 }
 
 static DEFINE_MUTEX(l2_regulator_lock);

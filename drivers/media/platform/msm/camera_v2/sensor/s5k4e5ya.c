@@ -13,114 +13,14 @@
 #include "msm_sensor.h"
 #define S5K4E5YA_SENSOR_NAME "s5k4e5ya"
 DEFINE_MSM_MUTEX(s5k4e5ya_mut);
-
-#ifdef CONFIG_MACH_VIENNAEUR // Implementation KTD267 flashIC
+// Implementation KTD267 flashIC
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_V2LTEEUR) || defined(CONFIG_MACH_LT03EUR)\
+	|| defined(CONFIG_MACH_LT03SKT)	|| defined(CONFIG_MACH_LT03KTT)\
+	|| defined(CONFIG_MACH_LT03LGT) || defined(CONFIG_MACH_VIENNAVZW)
 struct class *camera_class;
 #endif
 
 static struct msm_sensor_ctrl_t s5k4e5ya_s_ctrl;
-
-static struct msm_sensor_power_setting s5k4e5ya_power_setting[] = {
-	/* 5M_CORE_1.5V */
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_EXT_VIO_POWER,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 0,
-	},
-	/* 5M_CAM_AVDD_2.8V */
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_EXT_VANA_POWER,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 0,
-	},
-	/* CAM_IO_1.8V */
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VIO,
-		.config_val = 0,
-		.delay = 0,
-	},
-	/* 5M_AF_2.8V */
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VAF,
-		.config_val = 0,
-		.delay = 0,
-	},
-	
-	/* 5M_CAM_RESET */
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_RESET,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 0,
-	},
-	{
-		.seq_type = SENSOR_CLK,
-		.seq_val = SENSOR_CAM_MCLK,
-		.config_val = 0,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_I2C_MUX,
-		.seq_val = 0,
-		.config_val = 0,
-		.delay = 5,
-	},
-};
-
-static struct msm_sensor_power_setting s5k4e5ya_power_off_setting[] = {
-	/* 5M_CORE_1.5V */
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_EXT_VIO_POWER,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 0,
-	},
-	/* 5M_CAM_AVDD_2.8V */
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_EXT_VANA_POWER,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 0,
-	},
-	/* CAM_IO_1.8V */
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VIO,
-		.config_val = 0,
-		.delay = 0,
-	},
-	/* 5M_AF_2.8V */
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VAF,
-		.config_val = 0,
-		.delay = 0,
-	},
-	
-	/* 5M_CAM_RESET */
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_RESET,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 0,
-	},
-	{
-		.seq_type = SENSOR_CLK,
-		.seq_val = SENSOR_CAM_MCLK,
-		.config_val = 0,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_I2C_MUX,
-		.seq_val = 0,
-		.config_val = 0,
-		.delay = 5,
-	},
-};
 
 
 static struct v4l2_subdev_info s5k4e5ya_subdev_info[] = {
@@ -137,9 +37,15 @@ static const struct i2c_device_id s5k4e5ya_i2c_id[] = {
 	{ }
 };
 
+
+static int32_t msm_s5k4e5ya_i2c_probe(struct i2c_client *client,
+	const struct i2c_device_id *id)
+{
+	return msm_sensor_i2c_probe(client, id, &imx135_s_ctrl);
+}
 static struct i2c_driver s5k4e5ya_i2c_driver = {
 	.id_table = s5k4e5ya_i2c_id,
-	.probe  = msm_sensor_i2c_probe,
+	.probe  = msm_s5k4e5ya_i2c_probe,
 	.driver = {
 		.name = S5K4E5YA_SENSOR_NAME,
 	},
@@ -170,7 +76,10 @@ static int32_t s5k4e5ya_platform_probe(struct platform_device *pdev)
 	const struct of_device_id *match;
 	match = of_match_device(s5k4e5ya_dt_match, &pdev->dev);
 	rc = msm_sensor_platform_probe(pdev, match->data);
-#ifdef CONFIG_MACH_VIENNAEUR // Implementation KTD267 flashIC
+// Implementation KTD267 flashIC
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_V2LTEEUR) || defined(CONFIG_MACH_LT03EUR)\
+	|| defined(CONFIG_MACH_LT03SKT)	|| defined(CONFIG_MACH_LT03KTT)\
+	|| defined(CONFIG_MACH_LT03LGT) || defined(CONFIG_MACH_VIENNAVZW)
 	camera_class = class_create(THIS_MODULE, "camera");
 	if (IS_ERR(camera_class))
 		pr_err("failed to create device cam_dev_rear!\n");
@@ -203,10 +112,6 @@ static void __exit s5k4e5ya_exit_module(void)
 
 static struct msm_sensor_ctrl_t s5k4e5ya_s_ctrl = {
 	.sensor_i2c_client = &s5k4e5ya_sensor_i2c_client,
-	.power_setting_array.power_setting = s5k4e5ya_power_setting,
-	.power_setting_array.size = ARRAY_SIZE(s5k4e5ya_power_setting),
-	.power_setting_array.power_off_setting = s5k4e5ya_power_off_setting,
-	.power_setting_array.off_size = ARRAY_SIZE(s5k4e5ya_power_off_setting),
 	.msm_sensor_mutex = &s5k4e5ya_mut,
 	.sensor_v4l2_subdev_info = s5k4e5ya_subdev_info,
 	.sensor_v4l2_subdev_info_size = ARRAY_SIZE(s5k4e5ya_subdev_info),

@@ -18,259 +18,245 @@
 #define RECEIVEBUFFERSIZE	12
 #define DEBUG_SHOW_DATA	0
 
-
-static int wakeup_mcu(int int_gpio)
-{
-	gpio_set_value_cansleep(int_gpio, 0);
-	udelay(20);
-	gpio_set_value_cansleep(int_gpio, 1);
-
-	return 0;
+static void clean_msg(struct ssp_msg *msg) {
+	if (msg->free_buffer)
+		kfree(msg->buffer);
+	kfree(msg);
 }
 
-int waiting_wakeup_mcu(struct ssp_data *data)
-{
+static int do_transfer(struct ssp_data *data, struct ssp_msg *msg,
+		struct completion *done, int timeout) {
+	int status = 0;
 	int iDelaycnt = 0;
-	while (!gpio_get_value_cansleep(data->mcu_int1)
-		&& (iDelaycnt++ < LIMIT_DELAY_CNT)
-		&& (data->bSspShutdown == false))
-		mdelay(5);
+	bool msg_dead = false;
+	bool use_no_irq = msg->length == 0;
 
-	if (iDelaycnt >= LIMIT_DELAY_CNT) {
-		pr_err("[SSP]: %s - MCU Irq Timeout!!\n", __func__);
-		data->uBusyCnt++;
-	} else {
-		data->uBusyCnt = 0;
-	}
-
-	iDelaycnt = 0;
-
-	while (!gpio_get_value_cansleep(data->mcu_int2)
-		&& (iDelaycnt++ < LIMIT_DELAY_CNT)
-		&& (data->bSspShutdown == false))
-		mdelay(5);
-
-	if (iDelaycnt >= LIMIT_DELAY_CNT) {
-		pr_err("[SSP]: %s - MCU Wakeup Timeout!!\n", __func__);
-		data->uTimeOutCnt++;
-	} else {
-		data->uTimeOutCnt = 0;
-	}
-
-	wakeup_mcu(data->ap_int);
-	if (data->bSspShutdown == true)
-		return ERROR;
-
-	return SUCCESS;
-}
-
-int waiting_init_mcu(struct ssp_data *data)
-{
-	int iDelaycnt = 0;
-
-	while (!gpio_get_value_cansleep(data->mcu_int1)
-		&& (iDelaycnt++ < LIMIT_DELAY_CNT))
-		mdelay(5);
-
-	if (iDelaycnt >= LIMIT_DELAY_CNT) {
-		pr_err("[SSP]: %s - MCU Irq Timeout!!\n", __func__);
-		data->uBusyCnt++;
-	} else {
-		data->uBusyCnt = 0;
-	}
-
-	iDelaycnt = 0;
-	wakeup_mcu(data->ap_int);
-	while (!gpio_get_value_cansleep(data->mcu_int2)
-		&& (iDelaycnt++ < LIMIT_DELAY_CNT))
-		mdelay(5);
-
-	if (iDelaycnt >= LIMIT_DELAY_CNT) {
-		pr_err("[SSP]: %s - MCU Wakeup Timeout!!\n", __func__);
-		data->uTimeOutCnt++;
-	} else {
-		data->uTimeOutCnt = 0;
-	}
-
-	return SUCCESS;
-}
-
-int ssp_spi_checkrecvstart(char *rxBuf, int len)
-{
-	unsigned int i;
-	for (i = 0; i < len ; i++)	{
-		if (rxBuf[i] == 0x00)
-			continue;
-		break;
-	}
-
-	if (i == len)
-		return -EFAULT;
-	return i;
-}
-
-
-#if DEBUG_SHOW_DATA
-void show_ssp_data(char *buff, int len, int type)
-{
-	unsigned int i;
-	char showdata[len*2+2];
-	memset(showdata, 0, len*2+2);
-	for (i = 0; i < len; i++)
-		sprintf(showdata, "%s%02x", showdata, buff[i]);
-
-	if (type == 1)
-		pr_err("[SSP]hb received len=%d	%s", len, showdata);
-	else if (type == 2)
-		pr_err("[SSP]hb received while send %s", showdata);
-	else
-		pr_err("[SSP]hb sending len=%d  %s", len, showdata);
-}
-
-#endif
-
-
-int ssp_i2c_read(struct ssp_data *data, char *pTxData, u16 uTxLength,
-	char *pRxData, u16 uRxLength, int iRetries)
-{
-	int iRet = 0, iDiffTime = 0, iTimeTemp;
-	struct timeval cur_time;
-
-	do_gettimeofday(&cur_time);
-	iTimeTemp = (int)cur_time.tv_sec;
-
-#if DEBUG_SHOW_DATA
-	show_ssp_data(pTxData, uTxLength, 3);
-#endif
+	msg->dead_hook = &msg_dead;
+	msg->dead = false;
+	msg->done = done;
 
 	mutex_lock(&data->comm_mutex);
 
-
-	do {
-		char* pSyncrxbuf;
-		char* pSynctxbuf;
-		unsigned int uRxsize;
-		int nStartpos;
-		unsigned int uReceivedData;
-		int nRetry = 0;
-
-		uRxsize = uTxLength + RECEIVEBUFFERSIZE + uRxLength;
-
-		pSyncrxbuf = (char*)kzalloc(uRxsize,GFP_KERNEL);
-		if(pSyncrxbuf == NULL) {
-			pr_err("[SSP]: %s - failed to allocate memory\n",
-				__func__);
-			iRet = -ENOMEM;
-			return iRet;
-		}
-		pSynctxbuf = (char*)kzalloc(uRxsize,GFP_KERNEL);
-		if(pSynctxbuf == NULL) {
-			pr_err("[SSP]: %s - failed to allocate memory\n",
-				__func__);
-			iRet = -ENOMEM;
-			kfree(pSyncrxbuf);
-			return iRet;
-		}
-
-		memcpy(pSynctxbuf,pTxData,uTxLength);
-		iRet = ssp_spi_sync(data->spi,pSynctxbuf,uRxsize, pSyncrxbuf);
-		nStartpos = ssp_spi_checkrecvstart(pSyncrxbuf,uRxsize);
-
-/* receiving not started. retry : 122us for 12byte transfer +145us for standby transaction */
-		while(nStartpos < 0 && nRetry < 100)
-		{
-			//retry 100 makes 30ms
-			ssp_spi_sync(data->spi,NULL,uRxsize, pSyncrxbuf);
-
-			nStartpos = ssp_spi_checkrecvstart(pSyncrxbuf,uRxsize);
-			nRetry++;
-		}
-		nRetry=0;
-
-		if(nStartpos<0)
-		{
-			iRet=-1;
-		}
-		else
-		{
-			uReceivedData = uRxsize-nStartpos;
-			if(uReceivedData < uRxLength  )
-			{
-				memcpy(pRxData,pSyncrxbuf+nStartpos,uReceivedData);
-				ssp_spi_sync(data->spi,NULL,uRxLength-uReceivedData, pRxData+uReceivedData);
-
-			}
-			else  // received respected data size
-			{
-				memcpy(pRxData,pSyncrxbuf+nStartpos,uRxLength);
-			}
-
-
-		}
-
-		kfree(pSyncrxbuf);
-		kfree(pSynctxbuf);
-
-		if (iRet < 0) {
-			do_gettimeofday(&cur_time);
-			iDiffTime = (int)cur_time.tv_sec - iTimeTemp;
-			iTimeTemp = (int)cur_time.tv_sec;
-			if (iDiffTime >= 4) {
-				pr_err("[SSP]: %s - i2c time out %d!\n",
-					__func__, iDiffTime);
-				break;
-			}
-			pr_err("[SSP]: %s - i2c transfer error %d! retry...\n",
-				__func__, iRet);
-			mdelay(1);
-		} else {
-#if DEBUG_SHOW_DATA
-			show_ssp_data(pRxData, uRxLength, 1);
-#endif
-
+	gpio_set_value_cansleep(data->ap_int, 0);
+	while (gpio_get_value_cansleep(data->mcu_int2)) {
+		if (data->bSspShutdown == true) {
+			pr_err("[SSP] : %s, device is shutting down", __func__);
 			mutex_unlock(&data->comm_mutex);
-
-			return SUCCESS;
+			return -1;
 		}
-	} while (iRetries--);
+		mdelay(3);
+		if (iDelaycnt++ > 500) { // snamy.jeong_0702 300 -> 500 : flash write timming apply.
+			pr_err("[SSP]: %s exit1 - Time out!!\n", __func__);
+			gpio_set_value_cansleep(data->ap_int, 1);
+			status = -1;
+			goto exit;
+		}
+	}
 
+	status = spi_write(data->spi, msg, 8) >= 0;
+
+	if (status == 0) {
+		pr_err("[SSP]: %s spi_write fail!!\n", __func__);
+		gpio_set_value_cansleep(data->ap_int, 1);
+		status = -1;
+		goto exit;
+	}
+
+	if (!use_no_irq) {
+		mutex_lock(&data->pending_mutex);
+		list_add_tail(&msg->list, &data->pending_list);
+		mutex_unlock(&data->pending_mutex);
+	}
+
+	iDelaycnt = 0;
+	gpio_set_value_cansleep(data->ap_int, 1);
+	while (!gpio_get_value_cansleep(data->mcu_int2)) {
+		if (data->bSspShutdown == true) {
+			pr_err("[SSP] : %s, device is shutting down", __func__);
+			mutex_unlock(&data->comm_mutex);
+			return -1;
+		}
+		mdelay(3);
+		if (iDelaycnt++ > 500) { // snamy.jeong_0702 300 -> 500 : flash write timming apply.
+			pr_err("[SSP]: %s exit2 - Time out!!\n", __func__);
+			status = -2;
+			goto exit;
+		}
+	}
+
+exit:
 	mutex_unlock(&data->comm_mutex);
 
-	return ERROR;
+	if (status == -1) {
+		data->uTimeOutCnt++;
+		clean_msg(msg);
+		return status;
+	}
+
+	if (status == 1 && done != NULL)
+		if (wait_for_completion_timeout(done, msecs_to_jiffies(timeout)) == 0)
+			status = -2;
+
+	mutex_lock(&data->pending_mutex);
+	if (!msg_dead) {
+		msg->done = NULL;
+		msg->dead_hook = NULL;
+
+		if (status != 1)
+			msg->dead = true;
+		if (status == -2)
+			data->uTimeOutCnt++;
+	}
+	mutex_unlock(&data->pending_mutex);
+
+	if (use_no_irq)
+		clean_msg(msg);
+
+	return status;
 }
 
-int ssp_send_cmd(struct ssp_data *data, char command)
-{
-	char chRxBuf = 0;
-	int iRet = 0, iRetries = DEFAULT_RETRIES;
+int ssp_spi_async(struct ssp_data *data, struct ssp_msg *msg) {
+	int status = 0;
 
-	if (waiting_wakeup_mcu(data) < 0)
+	status = do_transfer(data, msg, NULL, 0);
+
+	return status;
+}
+
+int ssp_spi_sync(struct ssp_data *data, struct ssp_msg *msg, int timeout) {
+	DECLARE_COMPLETION_ONSTACK(done);
+	int status = 0;
+
+	if (msg->length == 0) {
+		pr_err("[SSP]: %s length must not be 0\n", __func__);
+		clean_msg(msg);
+		return status;
+	}
+
+	status = do_transfer(data, msg, &done, timeout);
+
+	return status;
+}
+
+int select_irq_msg(struct ssp_data *data) {
+	struct ssp_msg *msg, *n;
+	bool found = false;
+	u16 chLength = 0;
+	u8 msg_type = 0;
+	int iRet = 0;
+	char* buffer;
+
+	char chTempBuf[3] = { -1 };
+	iRet = spi_read(data->spi, chTempBuf, sizeof(chTempBuf));
+	if (iRet < 0) {
+		pr_err("[SSP]: %s spi_read fail!!\n", __func__);
 		return ERROR;
+	}
 
-	iRet = ssp_i2c_read(data, &command, 1, &chRxBuf, 1, DEFAULT_RETRIES);
+	msg_type = chTempBuf[0] & SSP_SPI_MASK;
+	memcpy(&chLength, &chTempBuf[1], 2);
+
+	switch (msg_type) {
+	case AP2HUB_READ:
+	case AP2HUB_WRITE:
+		mutex_lock(&data->pending_mutex);
+		if (!list_empty(&data->pending_list)) {
+			list_for_each_entry_safe(msg, n, &data->pending_list, list)
+			{
+				if ((msg->options & SSP_SPI_MASK)== msg_type) {
+					list_del(&msg->list);
+					found = true;
+					break;
+				}
+			}
+
+			if (!found) {
+				pr_err("[SSP]: %s - Not match error\n", __func__);
+				mutex_unlock(&data->pending_mutex);
+				break;
+			}
+
+			if (msg->dead && !msg->free_buffer) {
+				msg->buffer = (char*) kzalloc(msg->length, GFP_KERNEL);
+				msg->free_buffer = 1;
+			} // For dead msg, make a temporary buffer to read.
+
+			if (msg_type == AP2HUB_READ)
+				iRet = spi_read(data->spi, msg->buffer, msg->length);
+			if (msg_type == AP2HUB_WRITE)
+				iRet = spi_write(data->spi, msg->buffer, msg->length);
+
+			if (msg->done != NULL && !completion_done(msg->done))
+				complete(msg->done);
+			if (msg->dead_hook != NULL)
+				*(msg->dead_hook) = true;
+
+			clean_msg(msg);
+		} else
+			pr_err("[SSP]List empty error(%d)\n", msg_type);
+		mutex_unlock(&data->pending_mutex);
+		break;
+	case HUB2AP_WRITE:
+		buffer = (char*) kzalloc(chLength, GFP_KERNEL);
+		if (buffer == NULL) {
+			pr_err("[SSP] %s, failed to alloc memory for buffer\n", __func__);
+			iRet = -ENOMEM;
+			break;
+		}
+		iRet = spi_read(data->spi, buffer, chLength);
+		parse_dataframe(data, buffer, chLength);
+		kfree(buffer);
+		break;
+	default:
+		pr_err("[SSP]No type error(%d)\n", msg_type);
+		break;
+	}
+
+	if (iRet < 0) {
+		pr_err("[SSP]: %s - MSG2SSP_SSD error %d\n", __func__, iRet);
+		return ERROR;
+	}
+
+	return SUCCESS;
+}
+
+void clean_pending_list(struct ssp_data *data) {
+	struct ssp_msg *msg, *n;
+	mutex_lock(&data->pending_mutex);
+	list_for_each_entry_safe(msg, n, &data->pending_list, list)
+	{
+		list_del(&msg->list);
+		if (msg->done != NULL && !completion_done(msg->done))
+			complete(msg->done);
+		if (msg->dead_hook != NULL)
+			*(msg->dead_hook) = true;
+
+		clean_msg(msg);
+	}
+	mutex_unlock(&data->pending_mutex);
+}
+
+int ssp_send_cmd(struct ssp_data *data, char command, int arg)
+{
+	int iRet = 0;
+
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = command;
+	msg->length = 0;
+	msg->options = AP2HUB_WRITE;
+	msg->data = arg;
+	msg->free_buffer = 0;
+
+	iRet = ssp_spi_async(data, msg);
 
 	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - command 0x%x failed %d\n",
 				__func__, command, iRet);
 		return ERROR;
-	} else if (chRxBuf != MSG_ACK) {
-		while (iRetries--) {
-			mdelay(10);
-			pr_err("[SSP]: %s - command 0x%x retry...\n", __func__, command);
-			iRet = ssp_i2c_read(data, &command, 1, &chRxBuf, 1,
-				DEFAULT_RETRIES);
-			if ((iRet == SUCCESS) && (chRxBuf == MSG_ACK))
-				break;
-		}
-
-		if (iRetries < 0) {
-			data->uInstFailCnt++;
-			return FAIL;
-		}
 	}
 
 	data->uInstFailCnt = 0;
-	ssp_dbg("[SSP]: %s - command 0x%x\n", __func__, command);
+	ssp_dbg("[SSP]: %s - command 0x%x %d\n", __func__, command, arg);
 
 	return SUCCESS;
 }
@@ -278,9 +264,9 @@ int ssp_send_cmd(struct ssp_data *data, char command)
 int send_instruction(struct ssp_data *data, u8 uInst,
 	u8 uSensorType, u8 *uSendBuf, u8 uLength)
 {
-	char chTxbuf[uLength + 4];
-	char chRxbuf = 0;
-	int iRet = 0, iRetries = DEFAULT_RETRIES;
+	char command;
+	int iRet = 0;
+	struct ssp_msg *msg;
 
 	if (data->fw_dl_state == FW_DL_STATE_DOWNLOADING) {
 		pr_err("[SSP] %s - Skip Inst! DL state = %d\n",
@@ -293,114 +279,124 @@ int send_instruction(struct ssp_data *data, u8 uInst,
 		return FAIL;
 	}
 
-	if (waiting_wakeup_mcu(data) < 0)
-		return ERROR;
-
-	chTxbuf[0] = MSG2SSP_SSM;
-	chTxbuf[1] = (char)(uLength + 4);
-
 	switch (uInst) {
 	case REMOVE_SENSOR:
-		chTxbuf[2] = MSG2SSP_INST_BYPASS_SENSOR_REMOVE;
+		command = MSG2SSP_INST_BYPASS_SENSOR_REMOVE;
 		break;
 	case ADD_SENSOR:
-		chTxbuf[2] = MSG2SSP_INST_BYPASS_SENSOR_ADD;
+		command = MSG2SSP_INST_BYPASS_SENSOR_ADD;
 		break;
 	case CHANGE_DELAY:
-		chTxbuf[2] = MSG2SSP_INST_CHANGE_DELAY;
+		command = MSG2SSP_INST_CHANGE_DELAY;
 		break;
 	case GO_SLEEP:
-		chTxbuf[2] = MSG2SSP_AP_STATUS_SLEEP;
-		break;
-	case FACTORY_MODE:
-		chTxbuf[2] = MSG2SSP_INST_SENSOR_SELFTEST;
+		command = MSG2SSP_AP_STATUS_SLEEP;
+		data->uLastAPState = MSG2SSP_AP_STATUS_SLEEP;	
 		break;
 	case REMOVE_LIBRARY:
-		chTxbuf[2] = MSG2SSP_INST_LIBRARY_REMOVE;
+		command = MSG2SSP_INST_LIBRARY_REMOVE;
 		break;
 	case ADD_LIBRARY:
-		chTxbuf[2] = MSG2SSP_INST_LIBRARY_ADD;
+		command = MSG2SSP_INST_LIBRARY_ADD;
 		break;
 	default:
-		chTxbuf[2] = uInst;
+		command = uInst;
 		break;
 	}
 
-	chTxbuf[3] = uSensorType;
-	memcpy(&chTxbuf[4], uSendBuf, uLength);
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = command;
+	msg->length = uLength + 1;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(uLength + 1, GFP_KERNEL);
+	msg->free_buffer = 1;
 
-	iRet = ssp_i2c_read(data, &(chTxbuf[0]), uLength + 4, &chRxbuf, 1,
-		DEFAULT_RETRIES);
+	msg->buffer[0] = uSensorType;
+	memcpy(&msg->buffer[1], uSendBuf, uLength);
+
+	ssp_dbg("[SSP]: %s - Inst = 0x%x, Sensor Type = 0x%x, data = %u\n",
+			__func__, command, uSensorType, msg->buffer[1]);
+
+	iRet = ssp_spi_async(data, msg);
+
 	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Instruction CMD Fail %d\n", __func__, iRet);
 		return ERROR;
-	} else if (chRxbuf != MSG_ACK) {
-		while (iRetries--) {
-			mdelay(10);
-			pr_err("[SSP]: %s - Instruction CMD retry...\n",
-				__func__);
-			if (waiting_wakeup_mcu(data) < 0)
-				return ERROR;
-			iRet = ssp_i2c_read(data, &(chTxbuf[0]),
-				uLength + 4, &chRxbuf, 1, DEFAULT_RETRIES);
-			if ((iRet == SUCCESS) && (chRxbuf == MSG_ACK))
-				break;
-		}
-
-		if (iRetries < 0) {
-			data->uInstFailCnt++;
-			return FAIL;
-		}
 	}
 
 	data->uInstFailCnt = 0;
-	ssp_dbg("[SSP]: %s - Inst = 0x%x, Sensor Type = 0x%x, data = %u\n",
-		__func__, chTxbuf[2], chTxbuf[3], chTxbuf[4]);
+
 	return SUCCESS;
 }
 
 int get_chipid(struct ssp_data *data)
 {
-	int iRet;
-	char sendbuf[2];
-	char recvbuf;
-	sendbuf[0] = MSG2SSP_AP_WHOAMI;
-	sendbuf[1] = '\0';
+	int iRet, iReties = 0;	
+	char buffer = 0;
+	struct ssp_msg *msg;
 
-	if (waiting_init_mcu(data) < 0)
-		return ERROR;
+retries:
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	if (msg == NULL) {
+		pr_err("[SSP] %s, failed to alloc memory for ssp_msg\n", __func__);
+		iRet = -ENOMEM;
+		return iRet;
+	}
+	msg->cmd = MSG2SSP_AP_WHOAMI;
+	msg->length = 1;
+	msg->options = AP2HUB_READ;
+	msg->buffer = &buffer;
+	msg->free_buffer = 0;
 
-	/* read chip id */
-	iRet = ssp_i2c_read(data, sendbuf, 2, &recvbuf, 1, DEFAULT_RETRIES);
-	if (iRet == SUCCESS)
-		return recvbuf;
-	else
-		return ERROR;
+	iRet = ssp_spi_sync(data, msg, 1000);
+	
+	if (buffer != DEVICE_ID && iReties++ < 2) {
+	 mdelay(5);
+	 pr_err("[SSP] %s - get chip ID retry\n", __func__);	
+	 goto retries;
+	}
+	
+	if (iRet == SUCCESS) {
+		return buffer;
+	}
+
+	pr_err("[SSP] %s - get chip ID failed %d\n", __func__, iRet);	
+	return ERROR;	
 }
+
+#if defined(CONFIG_MACH_FLTESKT)
+extern int system_rev;
+#endif
 
 int set_sensor_position(struct ssp_data *data)
 {
-	char chTxBuf[5] = { 0, };
-	char chRxData = 0;
 	int iRet = 0;
 
-	if (waiting_init_mcu(data) < 0)
-		return ERROR;
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_SENSOR_FORMATION;
+	msg->length = 3;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(3, GFP_KERNEL);
+	msg->free_buffer = 1;
 
-	chTxBuf[0] = MSG2SSP_AP_SENSOR_FORMATION;
+#if defined(CONFIG_MACH_FLTESKT)
+	if(system_rev >= 9) {
+		data->mag_position = YAS532_TOP_LEFT_LOWER;
+	} else{
+		data->mag_position = YAS532_BOTTOM_RIGHT_LOWER;
+	}
+	data->accel_position = MPU6500_BOTTOM_RIGHT_UPPER;
+#endif
 
-	/* Please refer to ssp_get_positions on the file
-	 * board-universal_5410-sensor.c */
-	chTxBuf[1] = data->accel_position;
-	chTxBuf[2] = data->accel_position;
-	chTxBuf[3] = data->mag_position;
-	chTxBuf[4] = 0;
+	msg->buffer[0] = data->accel_position;
+	msg->buffer[1] = data->accel_position;
+	msg->buffer[2] = data->mag_position;
 
-	pr_info("[SSP] Sensor Posision A : %u, G : %u, M: %u, P: %u\n",
-		chTxBuf[1], chTxBuf[2], chTxBuf[3], chTxBuf[4]);
+	pr_info("[SSP] Sensor Posision A : %u, G : %u, M: %u\n",
+			data->accel_position, data->accel_position, data->mag_position);
 
-	iRet = ssp_i2c_read(data, chTxBuf, 5, &chRxData, 1, DEFAULT_RETRIES);
-	if ((chRxData != MSG_ACK) || (iRet != SUCCESS)) {
+	iRet = ssp_spi_async(data, msg);
+	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
 		iRet = ERROR;
 	}
@@ -408,50 +404,68 @@ int set_sensor_position(struct ssp_data *data)
 	return iRet;
 }
 
-void set_proximity_threshold(struct ssp_data *data,
-	unsigned char uData1, unsigned char uData2)
+#if defined(CONFIG_SENSORS_SSP_BOUNCE_FIRMWARE)
+int set_sensor_tilt(struct ssp_data *data)
 {
-	char chTxBuf[3] = { 0, };
-	char chRxBuf = 0;
-	int iRet = 0, iRetries = DEFAULT_RETRIES;
+	int iRet = 0;
 
-	if (!(data->uSensorState & 0x20)) {
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_SENSOR_TILT;
+	msg->length = 1;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(1, GFP_KERNEL);
+	msg->free_buffer = 1;
+
+	msg->buffer[0] = data->rot_direction;
+
+	iRet = ssp_spi_async(data, msg);
+
+	pr_info("[SSP] Sensor Position tilt : %u\n",
+        	data->rot_direction);
+
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
+		iRet = ERROR;
+	}
+
+	return iRet;
+}
+#endif
+
+void set_proximity_threshold(struct ssp_data *data,
+	unsigned int uData1, unsigned int uData2)
+{
+	int iRet = 0;
+
+	struct ssp_msg *msg;
+
+	if (!(data->uSensorState & (1<<PROXIMITY_SENSOR))) {
 		pr_info("[SSP]: %s - Skip this function!!!"\
 			", proximity sensor is not connected(0x%x)\n",
 			__func__, data->uSensorState);
 		return;
 	}
-	if (waiting_wakeup_mcu(data) < 0 ||
-		data->fw_dl_state == FW_DL_STATE_DOWNLOADING) {
-		pr_info("[SSP] : %s, skip DL state = %d\n", __func__,
-			data->fw_dl_state);
-		return;
-	}
 
-	chTxBuf[0] = MSG2SSP_AP_SENSOR_PROXTHRESHOLD;
-	chTxBuf[1] = uData1;
-	chTxBuf[2] = uData2;
+	msg= kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_SENSOR_PROXTHRESHOLD;
+	msg->length = 4;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(4, GFP_KERNEL);
+	msg->free_buffer = 1;
 
-	iRet = ssp_i2c_read(data, chTxBuf, 3, &chRxBuf, 1, DEFAULT_RETRIES);
+	pr_err("[SSP]: %s - SENSOR_PROXTHRESHOL",__func__);
+
+	msg->buffer[0] = ((char) (uData1 >> 8) & 0x07);
+	msg->buffer[1] = (char) uData1;
+	msg->buffer[2] = ((char) (uData2 >> 8) & 0x07);
+	msg->buffer[3] = (char) uData2;
+
+	iRet = ssp_spi_async(data, msg);
+
 	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - SENSOR_PROXTHRESHOLD CMD fail %d\n",
 			__func__, iRet);
 		return;
-	} else if (chRxBuf != MSG_ACK) {
-		while (iRetries--) {
-			mdelay(10);
-			pr_err("[SSP]: %s - MSG2SSP_AP_SENSOR_PROXTHRESHOLD "\
-				"CMD retry...\n", __func__);
-			iRet = ssp_i2c_read(data, chTxBuf, 3, &chRxBuf, 1,
-				DEFAULT_RETRIES);
-			if ((iRet == SUCCESS) && (chRxBuf == MSG_ACK))
-				break;
-		}
-
-		if (iRetries < 0) {
-			data->uInstFailCnt++;
-			return;
-		}
 	}
 
 	data->uInstFailCnt = 0;
@@ -460,38 +474,23 @@ void set_proximity_threshold(struct ssp_data *data,
 
 void set_proximity_barcode_enable(struct ssp_data *data, bool bEnable)
 {
-	char chTxBuf[2] = { 0, };
-	char chRxBuf = 0;
-	int iRet = 0, iRetries = DEFAULT_RETRIES;
+	int iRet = 0;
 
-	if (waiting_wakeup_mcu(data) < 0)
-		return;
-
-	chTxBuf[0] = MSG2SSP_AP_SENSOR_BARCODE_EMUL;
-	chTxBuf[1] = bEnable;
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_SENSOR_BARCODE_EMUL;
+	msg->length = 1;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(1, GFP_KERNEL);
+	msg->free_buffer = 1;
 
 	data->bBarcodeEnabled = bEnable;
+	msg->buffer[0] = bEnable;
 
-	iRet = ssp_i2c_read(data, chTxBuf, 2, &chRxBuf, 1, DEFAULT_RETRIES);
+	iRet = ssp_spi_async(data, msg);
 	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - SENSOR_BARCODE_EMUL CMD fail %d\n",
 				__func__, iRet);
 		return;
-	} else if (chRxBuf != MSG_ACK) {
-		while (iRetries--) {
-			mdelay(10);
-			pr_err("[SSP]: %s - MSG2SSP_AP_SENSOR_BARCODE_EMUL "\
-				"CMD retry...\n", __func__);
-			iRet = ssp_i2c_read(data, chTxBuf, 2, &chRxBuf, 1,
-				DEFAULT_RETRIES);
-			if ((iRet == SUCCESS) && (chRxBuf == MSG_ACK))
-				break;
-		}
-
-		if (iRetries < 0) {
-			data->uInstFailCnt++;
-			return;
-		}
 	}
 
 	data->uInstFailCnt = 0;
@@ -500,40 +499,22 @@ void set_proximity_barcode_enable(struct ssp_data *data, bool bEnable)
 
 void set_gesture_current(struct ssp_data *data, unsigned char uData1)
 {
-	char chTxBuf[2] = { 0, };
-	char chRxBuf = 0;
-	int iRet = 0, iRetries = DEFAULT_RETRIES;
+	int iRet = 0;
 
-	if (waiting_wakeup_mcu(data) < 0 ||
-		data->fw_dl_state == FW_DL_STATE_DOWNLOADING) {
-		pr_info("[SSP] : %s, skip DL state = %d\n", __func__,
-			data->fw_dl_state);
-		return;
-	}
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_SENSOR_GESTURE_CURRENT;
+	msg->length = 1;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(1, GFP_KERNEL);
+	msg->free_buffer = 1;
 
-	chTxBuf[0] = MSG2SSP_AP_SENSOR_GESTURE_CURRENT;
-	chTxBuf[1] = uData1;
+	msg->buffer[0] = uData1;
+	iRet = ssp_spi_async(data, msg);
 
-	iRet = ssp_i2c_read(data, chTxBuf, 2, &chRxBuf, 1, DEFAULT_RETRIES);
 	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - SENSOR_GESTURE_CURRENT CMD fail %d\n",
-			__func__, iRet);
+		pr_err("[SSP]: %s - SENSOR_GESTURE_CURRENT CMD fail %d\n", __func__,
+				iRet);
 		return;
-	} else if (chRxBuf != MSG_ACK) {
-		while (iRetries--) {
-			mdelay(10);
-			pr_err("[SSP]: %s - MSG2SSP_AP_SENSOR_GESTURE_CURRENT "\
-				"CMD retry...\n", __func__);
-			iRet = ssp_i2c_read(data, chTxBuf, 2, &chRxBuf, 1,
-				DEFAULT_RETRIES);
-			if ((iRet == SUCCESS) && (chRxBuf == MSG_ACK))
-				break;
-		}
-
-		if (iRetries < 0) {
-			data->uInstFailCnt++;
-			return;
-		}
 	}
 
 	data->uInstFailCnt = 0;
@@ -541,181 +522,170 @@ void set_gesture_current(struct ssp_data *data, unsigned char uData1)
 }
 
 unsigned int get_sensor_scanning_info(struct ssp_data *data)
-{
-	char chTxBuf = MSG2SSP_AP_SENSOR_SCANNING;
-	char chRxData[2] = {0,};
-	int iRet = 0;
+{	
+	int iRet, iReties = 0;	
+	unsigned int iSensorState = 0;
+	char buffer[4] = { 0, };
+	struct ssp_msg *msg;
 
-	if (waiting_init_mcu(data) < 0)
-		return ERROR;
+retries:
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	if (msg == NULL) {
+		pr_err("[SSP] %s, failed to alloc memory for ssp_msg\n", __func__);
+		iRet = -ENOMEM;
+		return iRet;
+	}
+	msg->cmd = MSG2SSP_AP_SENSOR_SCANNING;
+	msg->length = 4;
+	msg->options = AP2HUB_READ;
+	msg->buffer = buffer;
+	msg->free_buffer = 0;
 
-	iRet = ssp_i2c_read(data, &chTxBuf, 1, chRxData, 2, DEFAULT_RETRIES);
+	iRet = ssp_spi_sync(data, msg, 1000);
+	
 	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - i2c failed %d\n", __func__, iRet);
+		pr_err("[SSP] %s -fail to get_sensor_scanning_info %d\n",
+				__func__, iRet);
+
+		if(iReties++ < 2)
+		{	
+			pr_err("[SSP] %s get_sensor_scanning_info fail retry\n",
+				__func__);
+			
+			mdelay(5);
+			goto retries;
+		}
+		
 		return 0;
 	}
-	return ((unsigned int)chRxData[0] << 8) | chRxData[1];
+	else
+	{
+		iSensorState = (unsigned int)(buffer[0] << 24 | buffer[1] << 16 | buffer[2] << 8 | buffer[3] );
+
+		// exception for abnormail sensorstatus
+		if(iReties++ < 2 && (iSensorState < 0x10000 || (iSensorState>>5 & 0x01) != 0x01 || (iSensorState & 0x03) != 0x03))
+		{
+			pr_err("[SSP] %s get_sensor_scanning_info val retry %d\n",
+				__func__, iSensorState);
+			
+			mdelay(5);
+			goto retries;
+		}
+	}
+	
+	pr_err("[SSP]: %s - %d %d %d %d\n", __func__, buffer[0] ,buffer[1],buffer[2],buffer[3]);
+	return iSensorState;
 }
 
 unsigned int get_firmware_rev(struct ssp_data *data)
 {
-	char chTxData = MSG2SSP_AP_FIRMWARE_REV;
-	char chRxBuf[3] = { 0, };
 	unsigned int uRev = 99999;
 	int iRet;
+	char buffer[3] = { 0, };
 
-	if (waiting_wakeup_mcu(data) < 0)
-		return ERROR;
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_FIRMWARE_REV;
+	msg->length = 3;
+	msg->options = AP2HUB_READ;
+	msg->buffer = buffer;
+	msg->free_buffer = 0;
 
-	iRet = ssp_i2c_read(data, &chTxData, 1, chRxBuf, 3, DEFAULT_RETRIES);
+	iRet = ssp_spi_sync(data, msg, 1000);
+
 	if (iRet != SUCCESS)
 		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
 	else
-		uRev = ((unsigned int)chRxBuf[0] << 16)
-			| ((unsigned int)chRxBuf[1] << 8) | chRxBuf[2];
+		uRev = ((unsigned int)buffer[0] << 16)
+			| ((unsigned int)buffer[1] << 8) | buffer[2];
 	return uRev;
 }
 
 int get_fuserom_data(struct ssp_data *data)
 {
-	char chTxBuf[2] = { 0, };
-	char chRxBuf[2] = { 0, };
 	int iRet = 0;
-	unsigned int uLength = 0;
+	char buffer[3] = { 0, };
 
-	if (waiting_init_mcu(data) < 0)
-		return ERROR;
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_FUSEROM;
+	msg->length = 3;
+	msg->options = AP2HUB_READ;
+	msg->buffer = buffer;
+	msg->free_buffer = 0;
 
-	chTxBuf[0] = MSG2SSP_AP_STT;
-	chTxBuf[1] = MSG2SSP_AP_FUSEROM;
+	iRet = ssp_spi_sync(data, msg, 1000);
 
-	/* chRxBuf is Two Byte because msg is large */
-	iRet = ssp_i2c_read(data, chTxBuf, 2, chRxBuf, 2, DEFAULT_RETRIES);
-	uLength = ((unsigned int)chRxBuf[0] << 8) + (unsigned int)chRxBuf[1];
-
-	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - MSG2SSP_AP_STT - i2c fail %d\n",
-				__func__, iRet);
-		goto err_read_fuserom;
-	} else if (uLength <= 0) {
-		pr_err("[SSP]: %s - No ready data. length = %u\n",
-				__func__, uLength);
-		goto err_read_fuserom;
+	if (iRet) {
+		data->uFuseRomData[0] = buffer[0];
+		data->uFuseRomData[1] = buffer[1];
+		data->uFuseRomData[2] = buffer[2];
 	} else {
-		if (data->iLibraryLength != 0)
-			kfree(data->pchLibraryBuf);
-
-		data->iLibraryLength = (int)uLength;
-		data->pchLibraryBuf =
-		    kzalloc((data->iLibraryLength * sizeof(char)), GFP_KERNEL);
-
-		chTxBuf[0] = MSG2SSP_SRM;
-		iRet = ssp_i2c_read(data, chTxBuf, 1, data->pchLibraryBuf,
-			(u16)data->iLibraryLength, DEFAULT_RETRIES);
-		if (iRet != SUCCESS) {
-			pr_err("[SSP]: %s - Fail to receive SSP data %d\n",
-				__func__, iRet);
-			kfree(data->pchLibraryBuf);
-			data->iLibraryLength = 0;
-			goto err_read_fuserom;
-		}
-	}
-
-	data->uFuseRomData[0] = data->pchLibraryBuf[0];
-	data->uFuseRomData[1] = data->pchLibraryBuf[1];
-	data->uFuseRomData[2] = data->pchLibraryBuf[2];
-
-	pr_info("[SSP] FUSE ROM Data %d , %d, %d\n", data->uFuseRomData[0],
-		data->uFuseRomData[1], data->uFuseRomData[2]);
-
-	data->iLibraryLength = 0;
-	kfree(data->pchLibraryBuf);
-	return SUCCESS;
-
-err_read_fuserom:
-	data->uFuseRomData[0] = 0;
-	data->uFuseRomData[1] = 0;
-	data->uFuseRomData[2] = 0;
-
-	return FAIL;
-}
-
-static int ssp_receive_msg(struct ssp_data *data,  u8 uLength)
-{
-	char chTxBuf = 0;
-	char *pchRcvDataFrame = NULL;	/* SSP-AP Massage data buffer */
-	int iRet = 0;
-
-	if (uLength > 0) {
-		pchRcvDataFrame = kzalloc((uLength * sizeof(char)), GFP_KERNEL);
-		if (pchRcvDataFrame == NULL) {
-			pr_err("[SSP]: %s - failed to allocate memory\n",
-				__func__);
-			iRet = -ENOMEM;
-			return iRet;
-		}
-		chTxBuf = MSG2SSP_SRM;
-		iRet = ssp_i2c_read(data, &chTxBuf, 1, pchRcvDataFrame,
-				(u16)uLength, 0);
-		if (iRet != SUCCESS) {
-			pr_err("[SSP]: %s - Fail to receive data %d\n",
-				__func__, iRet);
-			kfree(pchRcvDataFrame);
-			return ERROR;
-		}
-	} else {
-		pr_err("[SSP]: %s - No ready data. length = %d\n",
-			__func__, uLength);
+		data->uFuseRomData[0] = 0;
+		data->uFuseRomData[1] = 0;
+		data->uFuseRomData[2] = 0;
 		return FAIL;
 	}
 
-	parse_dataframe(data, pchRcvDataFrame, uLength);
+	pr_info("[SSP] FUSE ROM Data %d , %d, %d\n", data->uFuseRomData[0],
+			data->uFuseRomData[1], data->uFuseRomData[2]);
 
-	kfree(pchRcvDataFrame);
-	return uLength;
+	return SUCCESS;
 }
 
-int select_irq_msg(struct ssp_data *data)
-{
-	u8 chLength = 0;
-	char chTxBuf = 0;
-	char chRxBuf[2] = { 0, };
+int set_big_data_start(struct ssp_data *data, u8 type, u32 length) {
 	int iRet = 0;
 
-	chTxBuf = MSG2SSP_SSD;
-	iRet = ssp_i2c_read(data, &chTxBuf, 1, chRxBuf, 2, 4);
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_START_BIG_DATA;
+	msg->length = 5;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(5, GFP_KERNEL);
+	msg->free_buffer = 1;
+
+	msg->buffer[0] = type;
+	memcpy(&msg->buffer[1], &length, 4);
+
+	iRet = ssp_spi_async(data, msg);
 
 	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - MSG2SSP_SSD error %d\n", __func__, iRet);
-		return ERROR;
-	} else {
-		if (chRxBuf[0] == MSG2SSP_RTS) {
-			chLength = (u8)chRxBuf[1];
-			ssp_receive_msg(data, chLength);
-			data->uSsdFailCnt = 0;
-		}
-#ifdef CONFIG_SENSORS_SSP_SENSORHUB
-		else if (chRxBuf[0] == MSG2SSP_STT) {
-			pr_info("%s: MSG2SSP_STT irq", __func__);
-			iRet = ssp_sensorhub_handle_large_data(data,
-					(u8)chRxBuf[1]);
-			if (iRet < 0) {
-				pr_err("%s: ssp sensorhub large data err(%d)",
-					__func__, iRet);
-			}
-			data->uSsdFailCnt = 0;
-		}
-#endif
-		else if (chRxBuf[0] == MSG2SSP_NO_DATA) {
-			pr_info("%s: MSG2SSP_NO_DATA irq [0]: 0x%x, [1]: 0x%x\n",
-				__func__, chRxBuf[0], chRxBuf[1]);
-		} else {
-			pr_err("[SSP]: %s - MSG2SSP_SSD Data fail "\
-				"[0]: 0x%x, [1]: 0x%x\n", __func__,
-				chRxBuf[0], chRxBuf[1]);
-			if ((chRxBuf[0] == 0) && (chRxBuf[1] == 0))
-				data->uSsdFailCnt++;
-		}
+		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
+		iRet = ERROR;
 	}
-	return SUCCESS;
+
+	return iRet;
+}
+
+int sanity_check(struct ssp_data *data) {
+	int iRet;
+	char buffer = 0;
+	int returnvalue;
+
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_MCU_SANITY_CHECK;
+	msg->length = 1;
+	msg->options = AP2HUB_READ;
+	msg->buffer = &buffer;
+	msg->free_buffer = 0;
+
+	iRet = ssp_spi_sync(data, msg, 1000);
+
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
+		iRet = ERROR;
+	}
+
+	if (iRet == SUCCESS && buffer != MCU_IS_SANE){
+		if (initialize_mcu(data) > 0) {
+			sync_sensor_state(data);
+			ssp_sensorhub_report_notice(data, MSG2SSP_AP_STATUS_RESET);
+			pr_err("[SSP]: %s %d\n", __func__, iRet);
+			if( data->uLastAPState!=0 ) ssp_send_cmd(data, data->uLastAPState, 0);
+			if( data->uLastResumeState != 0) ssp_send_cmd(data, data->uLastResumeState, 0);
+		}
+		returnvalue = 1;
+	}
+	else
+	{
+		returnvalue = 0;
+	}
+	return returnvalue;
 }

@@ -118,12 +118,9 @@ struct mdss_data_type {
 	int iommu_attached;
 	struct mdss_iommu_map_type *iommu_map;
 
-	int secure_mode;
-	struct kref sec_kref;
-	struct mutex sec_lock;
-
 	struct early_suspend early_suspend;
 	void *debug_data;
+	int current_bus_idx;
 };
 extern struct mdss_data_type *mdss_res;
 
@@ -146,6 +143,19 @@ int mdss_register_irq(struct mdss_hw *hw);
 void mdss_enable_irq(struct mdss_hw *hw);
 void mdss_disable_irq(struct mdss_hw *hw);
 void mdss_disable_irq_nosync(struct mdss_hw *hw);
+void mdss_bus_bandwidth_ctrl(int enable);
+void mdss_mdp_dump_power_clk(void);
+void mdss_mdp_underrun_dump_info(void);
+
+#define MDP_RECOVERY
+#ifdef MDP_RECOVERY
+void mdss_mdp_recover_after_kickoff(void);
+#endif
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+int mdss_mdp_debug_bus(void);
+void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4);
+void xlog_dump(void);
+#endif
 
 static inline struct ion_client *mdss_get_ionclient(void)
 {
@@ -168,13 +178,6 @@ static inline int mdss_get_iommu_domain(u32 type)
 
 	if (!mdss_res)
 		return -ENODEV;
-
-	/*
-	 * When MDP is in special secure mode, all iommu mappings should
-	 * happen on unsecure domain
-	 */
-	if (mdss_res->secure_mode)
-		type = MDSS_IOMMU_DOMAIN_UNSECURE;
 
 	return mdss_res->iommu_map[type].domain_idx;
 }

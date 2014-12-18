@@ -1796,19 +1796,39 @@ static int dvb_dmxdev_set_indexing_params(struct dmxdev_filter *dmxdevfilter,
 	return 0;
 }
 
-static void dvb_dmxdev_ts_insertion_timer(unsigned long data)
+static int dvb_dmxdev_get_scrambling_bits(struct dmxdev_filter *filter,
+	struct dmx_scrambling_bits *scrambling_bits)
 {
-	struct ts_insertion_buffer *ts_buffer =
-		(struct ts_insertion_buffer *)data;
+	struct dmxdev_feed *feed;
 
-	if (ts_buffer && !ts_buffer->abort)
-		schedule_work(&ts_buffer->work);
+	if (!scrambling_bits ||
+		(filter->state != DMXDEV_STATE_GO))
+		return -EINVAL;
+
+	if (filter->type == DMXDEV_TYPE_SEC) {
+		if (filter->feed.sec.feed->get_scrambling_bits)
+			return filter->feed.sec.feed->get_scrambling_bits(
+						filter->feed.sec.feed,
+						&scrambling_bits->value);
+		return -EINVAL;
+	}
+
+	list_for_each_entry(feed, &filter->feed.ts, next) {
+		if (feed->pid == scrambling_bits->pid) {
+			if (feed->ts->get_scrambling_bits)
+				return feed->ts->get_scrambling_bits(feed->ts,
+						&scrambling_bits->value);
+			return -EINVAL;
+		}
+	}
+
+	return -EINVAL;
 }
 
 static void dvb_dmxdev_ts_insertion_work(struct work_struct *worker)
 {
 	struct ts_insertion_buffer *ts_buffer =
-		container_of(worker, struct ts_insertion_buffer, work);
+		container_of(worker, struct ts_insertion_buffer, dwork.work);
 	struct dmxdev_feed *feed;
 	size_t free_bytes;
 	struct dmx_ts_feed *ts;
@@ -1832,8 +1852,8 @@ static void dvb_dmxdev_ts_insertion_work(struct work_struct *worker)
 		ts->ts_insertion_insert_buffer(ts,
 			ts_buffer->buffer, ts_buffer->size);
 
-	if (ts_buffer->repetition_time)
-		mod_timer(&ts_buffer->timer, jiffies +
+	if (ts_buffer->repetition_time && !ts_buffer->abort)
+		schedule_delayed_work(&ts_buffer->dwork,
 				msecs_to_jiffies(ts_buffer->repetition_time));
 }
 
@@ -1854,7 +1874,7 @@ static void dvb_dmxdev_queue_ts_insertion(
 	}
 
 	ts_buffer->abort = 0;
-	schedule_work(&ts_buffer->work);
+	schedule_delayed_work(&ts_buffer->dwork, 0);
 }
 
 static void dvb_dmxdev_cancel_ts_insertion(
@@ -1873,16 +1893,10 @@ static void dvb_dmxdev_cancel_ts_insertion(
 		return;
 	}
 
-	/*
-	 * Work should be stopped first as it might re-trigger the timer
-	 * until it is stopped. Timer would not re-schedule the work
-	 * due to the abort flag.
-	 */
 	ts_buffer->abort = 1;
 
 	mutex_unlock(&ts_buffer->dmxdevfilter->mutex);
-	cancel_work_sync(&ts_buffer->work);
-	del_timer_sync(&ts_buffer->timer);
+	cancel_delayed_work_sync(&ts_buffer->dwork);
 	mutex_lock(&ts_buffer->dmxdevfilter->mutex);
 }
 
@@ -1928,11 +1942,7 @@ static int dvb_dmxdev_set_ts_insertion(struct dmxdev_filter *dmxdevfilter,
 	ts_buffer->identifier = params->identifier;
 	ts_buffer->repetition_time = params->repetition_time;
 	ts_buffer->dmxdevfilter = dmxdevfilter;
-	init_timer(&ts_buffer->timer);
-	ts_buffer->timer.function = dvb_dmxdev_ts_insertion_timer;
-	ts_buffer->timer.data = (unsigned long)ts_buffer;
-	ts_buffer->timer.expires = 0xffffffffL;
-	INIT_WORK(&ts_buffer->work, dvb_dmxdev_ts_insertion_work);
+	INIT_DELAYED_WORK(&ts_buffer->dwork, dvb_dmxdev_ts_insertion_work);
 
 	first_buffer = list_empty(&dmxdevfilter->insertion_buffers);
 	list_add_tail(&ts_buffer->next, &dmxdevfilter->insertion_buffers);
@@ -2538,6 +2548,13 @@ static int dvb_dmxdev_section_event_cb(struct dmx_section_filter *filter,
 			dvb_dmxdev_add_event(&dmxdevfilter->events, &event);
 			spin_unlock(&dmxdevfilter->dev->lock);
 			wake_up_all(&dmxdevfilter->buffer.queue);
+		} else if (dmx_data_ready->status == DMX_OK_SCRAMBLING_STATUS) {
+			event.type = DMX_EVENT_SCRAMBLING_STATUS_CHANGE;
+			event.params.scrambling_status =
+				dmx_data_ready->scrambling_bits;
+			dvb_dmxdev_add_event(&dmxdevfilter->events, &event);
+			spin_unlock(&dmxdevfilter->dev->lock);
+			wake_up_all(&dmxdevfilter->buffer.queue);
 		} else {
 			spin_unlock(&dmxdevfilter->dev->lock);
 		}
@@ -2648,6 +2665,16 @@ static int dvb_dmxdev_ts_event_cb(struct dmx_ts_feed *feed,
 		event.type = DMX_EVENT_NEW_INDEX_ENTRY;
 		event.params.index = dmx_data_ready->idx_event;
 
+		dvb_dmxdev_add_event(events, &event);
+		spin_unlock(&dmxdevfilter->dev->lock);
+		wake_up_all(&buffer->queue);
+		return 0;
+	}
+
+	if (dmx_data_ready->status == DMX_OK_SCRAMBLING_STATUS) {
+		event.type = DMX_EVENT_SCRAMBLING_STATUS_CHANGE;
+		event.params.scrambling_status =
+			dmx_data_ready->scrambling_bits;
 		dvb_dmxdev_add_event(events, &event);
 		spin_unlock(&dmxdevfilter->dev->lock);
 		wake_up_all(&buffer->queue);
@@ -3957,6 +3984,15 @@ static int dvb_demux_do_ioctl(struct file *file,
 		mutex_unlock(&dmxdevfilter->mutex);
 		break;
 
+	case DMX_GET_SCRAMBLING_BITS:
+		if (mutex_lock_interruptible(&dmxdevfilter->mutex)) {
+			mutex_unlock(&dmxdev->mutex);
+			return -ERESTARTSYS;
+		}
+		ret = dvb_dmxdev_get_scrambling_bits(dmxdevfilter, parg);
+		mutex_unlock(&dmxdevfilter->mutex);
+		break;
+
 	default:
 		ret = -EINVAL;
 		break;
@@ -4212,6 +4248,7 @@ static int dvb_dmxdev_dbgfs_print(struct seq_file *s, void *p)
 	struct dmxdev_filter *filter;
 	int active_count = 0;
 	struct dmx_buffer_status buffer_status;
+	struct dmx_scrambling_bits scrambling_bits;
 	const char *pes_feeds[] = {"DEC", "PES", "DVR", "REC"};
 
 	if (!dmxdev)
@@ -4228,12 +4265,17 @@ static int dvb_dmxdev_dbgfs_print(struct seq_file *s, void *p)
 				seq_printf(s, "type: SEC, ");
 				seq_printf(s, "PID %04d ",
 						filter->params.sec.pid);
+				scrambling_bits.pid = filter->params.sec.pid;
 			} else {
 				seq_printf(s, "type: %s, ",
 					pes_feeds[filter->params.pes.output]);
 				seq_printf(s, "PID: %04d ",
 						filter->params.pes.pid);
+				scrambling_bits.pid = filter->params.pes.pid;
 			}
+
+			dvb_dmxdev_get_scrambling_bits(filter,
+				&scrambling_bits);
 
 			if (0 == dvb_dmxdev_get_buffer_status(
 						filter, &buffer_status)) {
@@ -4241,10 +4283,14 @@ static int dvb_dmxdev_dbgfs_print(struct seq_file *s, void *p)
 					buffer_status.size);
 				seq_printf(s, "fullness: %08d, ",
 					buffer_status.fullness);
-				seq_printf(s, "error: %d\n",
+				seq_printf(s, "error: %d, ",
 					buffer_status.error);
+				seq_printf(s, "scramble: %d\n",
+					scrambling_bits.value);
+
 			} else {
-				seq_printf(s, "\n");
+				seq_printf(s, "scramble: %d\n",
+					scrambling_bits.value);
 			}
 		}
 	}

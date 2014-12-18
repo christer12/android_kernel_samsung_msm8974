@@ -108,11 +108,12 @@ static int msm_hdmi_audio_codec_rx_dai_hw_params(
 		return -EINVAL;
 	}
 
-	dev_dbg(dai->dev, "%s() num_ch %u  samplerate %u channel_allocation = %u\n",
+	dev_info(dai->dev, "%s() num_ch %u  samplerate %u channel_allocation = %u\n",
 		__func__, num_channels, params_rate(params),
 		channel_allocation);
 
 	codec_data->hdmi_ops.audio_info_setup(codec_data->hdmi_core_pdev,
+			params_rate(params),
 			num_channels, channel_allocation,
 			level_shift, down_mix);
 

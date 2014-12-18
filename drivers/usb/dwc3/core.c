@@ -69,6 +69,23 @@ MODULE_PARM_DESC(maximum_speed, "Maximum supported speed.");
 
 static DECLARE_BITMAP(dwc3_devs, DWC3_DEVS_POSSIBLE);
 
+#if defined(CONFIG_SEC_H_PROJECT)  || defined(CONFIG_SEC_F_PROJECT)
+static void msm_ss_udc_reconnect_work(struct work_struct *data)
+{
+	struct dwc3 *udc = container_of(data, struct dwc3, reconnect_work);
+
+	usb_gadget_disconnect(&udc->gadget);
+	printk(KERN_ERR"usb: Disconnected in case of Super speed support \n");
+	mdelay(1);
+	usb_gadget_connect(&udc->gadget);
+
+}
+#define WORK_INIT(udc) \
+INIT_WORK(&udc->reconnect_work, msm_ss_udc_reconnect_work);
+#else
+#define WORK_INIT(udc)
+#endif
+
 int dwc3_get_device_id(void)
 {
 	int		id;
@@ -177,7 +194,7 @@ static void dwc3_free_one_event_buffer(struct dwc3 *dwc,
  * Returns a pointer to the allocated event buffer structure on success
  * otherwise ERR_PTR(errno).
  */
-static struct dwc3_event_buffer *__devinit
+static struct dwc3_event_buffer *
 dwc3_alloc_one_event_buffer(struct dwc3 *dwc, unsigned length)
 {
 	struct dwc3_event_buffer	*evt;
@@ -224,7 +241,7 @@ static void dwc3_free_event_buffers(struct dwc3 *dwc)
  * Returns 0 on success otherwise negative errno. In the error case, dwc
  * may contain some buffers allocated but not all which were requested.
  */
-static int __devinit dwc3_alloc_event_buffers(struct dwc3 *dwc, unsigned length)
+static int dwc3_alloc_event_buffers(struct dwc3 *dwc, unsigned length)
 {
 	int			num;
 	int			i;
@@ -241,7 +258,13 @@ static int __devinit dwc3_alloc_event_buffers(struct dwc3 *dwc, unsigned length)
 	for (i = 0; i < num; i++) {
 		struct dwc3_event_buffer	*evt;
 
-		evt = dwc3_alloc_one_event_buffer(dwc, length);
+		/*
+		 * As SW workaround, allocate 8 bytes more than size of event
+		 * buffer given to USB Controller to avoid possible memory
+		 * corruption caused by event buffer overflow when Hw writes
+		 * Vendor Device test event which could be of 12 bytes.
+		 */
+		evt = dwc3_alloc_one_event_buffer(dwc, (length + 8));
 		if (IS_ERR(evt)) {
 			dev_err(dwc->dev, "can't allocate event buffer\n");
 			return PTR_ERR(evt);
@@ -258,7 +281,7 @@ static int __devinit dwc3_alloc_event_buffers(struct dwc3 *dwc, unsigned length)
  *
  * Returns 0 on success otherwise negative errno.
  */
-static int dwc3_event_buffers_setup(struct dwc3 *dwc)
+int dwc3_event_buffers_setup(struct dwc3 *dwc)
 {
 	struct dwc3_event_buffer	*evt;
 	int				n;
@@ -276,7 +299,7 @@ static int dwc3_event_buffers_setup(struct dwc3 *dwc)
 		dwc3_writel(dwc->regs, DWC3_GEVNTADRHI(n),
 				upper_32_bits(evt->dma));
 		dwc3_writel(dwc->regs, DWC3_GEVNTSIZ(n),
-				evt->length & 0xffff);
+				(evt->length - 8) & 0xffff);
 		dwc3_writel(dwc->regs, DWC3_GEVNTCOUNT(n), 0);
 	}
 
@@ -421,6 +444,14 @@ static int dwc3_core_init(struct dwc3 *dwc)
 		reg &= ~DWC3_GUSB3PIPECTL_DIS_RXDET_U3_RXDET;
 		dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
 	}
+	/*
+	 * clear Elastic buffer mode in GUSBPIPE_CTRL(0) register, otherwise
+	 * it results in high link errors and could cause SS mode transfer
+	 * failure.
+	 */
+	reg = dwc3_readl(dwc->regs, DWC3_GUSB3PIPECTL(0));
+	reg &= ~DWC3_GUSB3PIPECTL_ELASTIC_BUF_MODE;
+	dwc3_writel(dwc->regs, DWC3_GUSB3PIPECTL(0), reg);
 
 	if (!dwc->ev_buffs) {
 		ret = dwc3_alloc_event_buffers(dwc, DWC3_EVENT_BUFFERS_SIZE);
@@ -459,6 +490,22 @@ void dwc3_post_host_reset_core_init(struct dwc3 *dwc)
 	dwc3_gadget_restart(dwc);
 }
 
+static void (*notify_event) (struct dwc3 *, unsigned);
+void dwc3_set_notifier(void (*notify)(struct dwc3 *, unsigned))
+{
+	notify_event = notify;
+}
+EXPORT_SYMBOL(dwc3_set_notifier);
+
+void dwc3_notify_event(struct dwc3 *dwc, unsigned event)
+{
+	if (dwc->notify_event)
+		dwc->notify_event(dwc, event);
+}
+EXPORT_SYMBOL(dwc3_notify_event);
+
+
+
 #define DWC3_ALIGN_MASK		(16 - 1)
 
 static u64 dwc3_dma_mask = DMA_BIT_MASK(64);
@@ -490,6 +537,7 @@ static int __devinit dwc3_probe(struct platform_device *pdev)
 	if (!dev->coherent_dma_mask)
 		dev->coherent_dma_mask = DMA_BIT_MASK(64);
 
+	dwc->notify_event = notify_event;
 	res = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (!res) {
 		dev_err(dev, "missing IRQ\n");
@@ -547,6 +595,11 @@ static int __devinit dwc3_probe(struct platform_device *pdev)
 		dwc->maximum_speed = DWC3_DCFG_LOWSPEED;
 	else
 		dwc->maximum_speed = DWC3_DCFG_SUPERSPEED;
+
+#if defined(CONFIG_SEC_H_PROJECT)  || defined(CONFIG_SEC_F_PROJECT)
+	dwc->speed_limit = dwc->maximum_speed;
+	dwc->ss_host_avail = -1;
+#endif
 
 	dwc->needs_fifo_resize = of_property_read_bool(node, "tx-fifo-resize");
 	host_only_mode = of_property_read_bool(node, "host-only-mode");
@@ -620,7 +673,9 @@ static int __devinit dwc3_probe(struct platform_device *pdev)
 		dev_err(dev, "failed to initialize debugfs\n");
 		goto err2;
 	}
-
+#if defined(CONFIG_SEC_H_PROJECT)  || defined(CONFIG_SEC_F_PROJECT)
+	WORK_INIT(dwc);
+#endif
 	return 0;
 
 err2:

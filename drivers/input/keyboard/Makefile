@@ -54,6 +54,9 @@ obj-$(CONFIG_KEYBOARD_TWL4030)		+= twl4030_keypad.o
 obj-$(CONFIG_KEYBOARD_XTKBD)		+= xtkbd.o
 obj-$(CONFIG_KEYBOARD_QCIKBD)       += qci_kbd.o
 obj-$(CONFIG_KEYBOARD_W90P910)		+= w90p910_keypad.o
+obj-$(CONFIG_KEYBOARD_TC360_TOUCHKEY)	+= tc360-touchkey.o
 obj-$(CONFIG_KEYBOARD_CYPRESS_TOUCH)	+= cypress_touchkey/
 obj-$(CONFIG_KEYBOARD_CYPRESS_TOUCHKEY)	+= cypress_touchkey_h/
 obj-$(CONFIG_KEYBOARD_MELFAS_TOUCHKEY)	+= melfas_touchkey/
+obj-$(CONFIG_INPUT_FLIP)  += flip.o
+

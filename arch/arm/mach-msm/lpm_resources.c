@@ -23,11 +23,12 @@
 #include <linux/tick.h>
 #include <mach/mpm.h>
 #include <mach/rpm-smd.h>
+#include <mach/trace_msm_low_power.h>
 #include "spm.h"
 #include "lpm_resources.h"
 #include "rpm-notifier.h"
 #include "idle.h"
-#include "trace_msm_low_power.h"
+
 
 /*Debug Definitions*/
 enum {
@@ -429,7 +430,7 @@ static void msm_lpm_aggregate_l2(struct msm_rpmrs_limits *limits)
 	trace_lpm_resources(rs->sleep_value, rs->name);
 }
 
-static void msm_lpm_set_l2_mode(int sleep_mode, int notify_rpm)
+static void msm_lpm_set_l2_mode(int sleep_mode)
 {
 	int lpm, rc;
 
@@ -453,7 +454,7 @@ static void msm_lpm_set_l2_mode(int sleep_mode, int notify_rpm)
 		break;
 	}
 
-	rc = msm_spm_l2_set_low_power_mode(lpm, notify_rpm);
+	rc = msm_spm_l2_set_low_power_mode(lpm, true);
 
 	if (rc < 0)
 		pr_err("%s: Failed to set L2 low power mode %d",
@@ -474,7 +475,7 @@ static void msm_lpm_flush_l2(int notify_rpm)
 {
 	struct msm_lpm_resource *rs = &msm_lpm_l2;
 
-	msm_lpm_set_l2_mode(rs->sleep_value, notify_rpm);
+	msm_lpm_set_l2_mode(rs->sleep_value);
 }
 
 int msm_lpm_get_l2_cache_value(struct device_node *node,
@@ -765,13 +766,17 @@ int msm_lpmrs_enter_sleep(uint32_t sclk_count, struct msm_rpmrs_limits *limits,
 			rs->aggregate(limits);
 	}
 
-	msm_lpm_get_rpm_notif = false;
+	if (notify_rpm)
+		msm_lpm_get_rpm_notif = false;
+
 	for (i = 0; i < ARRAY_SIZE(msm_lpm_resources); i++) {
 		rs = msm_lpm_resources[i];
 		if (rs->valid && rs->flush)
 			rs->flush(notify_rpm);
 	}
-	msm_lpm_get_rpm_notif = true;
+
+	if (notify_rpm)
+		msm_lpm_get_rpm_notif = true;
 
 	if (notify_rpm)
 		msm_mpm_enter_sleep(sclk_count, from_idle);
@@ -786,7 +791,7 @@ void msm_lpmrs_exit_sleep(struct msm_rpmrs_limits *limits,
 		msm_mpm_exit_sleep(from_idle);
 
 	if (msm_lpm_l2.valid)
-		msm_lpm_set_l2_mode(msm_lpm_l2.rs_data.default_value, false);
+		msm_lpm_set_l2_mode(msm_lpm_l2.rs_data.default_value);
 }
 
 static int msm_lpm_cpu_callback(struct notifier_block *cpu_nb,
@@ -827,6 +832,40 @@ static int __devinit msm_lpm_init_rpm_ctl(void)
 	rs->valid = true;
 	return 0;
 }
+
+#ifdef CONFIG_SAMSUNG_BATTERY_DISALLOW_DEEP_SLEEP
+void msm_lpm_enable_pxo_low_power(void)
+{
+	struct msm_lpm_resource *rs = &msm_lpm_pxo;
+	unsigned long flags;
+
+	spin_lock_irqsave(&msm_lpm_sysfs_lock, flags);
+	rs->enable_low_power = 1;
+
+	if (IS_RPM_CTL(rs)) {
+		rs->flush(false);
+	}
+
+	spin_unlock_irqrestore(&msm_lpm_sysfs_lock, flags);
+}
+EXPORT_SYMBOL(msm_lpm_enable_pxo_low_power);
+
+void msm_lpm_disable_pxo_low_power(void)
+{
+	struct msm_lpm_resource *rs = &msm_lpm_pxo;
+	unsigned long flags;
+
+	spin_lock_irqsave(&msm_lpm_sysfs_lock, flags);
+	rs->enable_low_power = 0;
+
+	if (IS_RPM_CTL(rs)) {
+		rs->flush(false);
+	}
+
+	spin_unlock_irqrestore(&msm_lpm_sysfs_lock, flags);
+}
+EXPORT_SYMBOL(msm_lpm_disable_pxo_low_power);
+#endif
 
 static int __devinit msm_lpm_resource_sysfs_add(void)
 {

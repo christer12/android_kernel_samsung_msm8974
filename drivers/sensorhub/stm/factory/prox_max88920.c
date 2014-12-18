@@ -27,12 +27,27 @@
 #define LDI_GRAY	'1'
 #define LDI_WHITE	'2'
 
-#define DEFUALT_HIGH_THRESHOLD	60
-#define DEFUALT_LOW_THRESHOLD	45
-#define TBD_HIGH_THRESHOLD		60
-#define TBD_LOW_THRESHOLD		45
-#define WHITE_HIGH_THRESHOLD		60
-#define WHITE_LOW_THRESHOLD		45
+#define HIGH_THRESHOLD_88921	60
+#define LOW_THRESHOLD_88921	45
+
+#if defined (CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+#define DEFUALT_HIGH_THRESHOLD	90
+#define DEFUALT_LOW_THRESHOLD	60
+#define TBD_HIGH_THRESHOLD		90
+#define TBD_LOW_THRESHOLD		60
+#define WHITE_HIGH_THRESHOLD	90
+#define WHITE_LOW_THRESHOLD		60
+#else
+
+#define DEFUALT_HIGH_THRESHOLD	120
+#define DEFUALT_LOW_THRESHOLD	80
+#define TBD_HIGH_THRESHOLD		120
+#define TBD_LOW_THRESHOLD		80
+#define WHITE_HIGH_THRESHOLD		120
+#define WHITE_LOW_THRESHOLD		80
+
+#endif
+
 /*************************************************************************/
 /* factory Sysfs                                                         */
 /*************************************************************************/
@@ -84,9 +99,9 @@ static ssize_t proximity_avg_store(struct device *dev,
 	return size;
 }
 
-static unsigned char get_proximity_rawdata(struct ssp_data *data)
+static u16 get_proximity_rawdata(struct ssp_data *data)
 {
-	unsigned char uRowdata = 0;
+	u16 uRowdata = 0;
 	char chTempbuf[2] = { 1, 20};
 
 	if (data->bProximityRawEnabled == false) {
@@ -151,6 +166,15 @@ static void change_proximity_default_threshold(struct ssp_data *data)
 		data->uProxLoThresh_default = DEFUALT_LOW_THRESHOLD;
 		break;
 	}
+#if defined (CONFIG_MACH_VIKALCU)
+	data->uProxHiThresh_default = DEFUALT_HIGH_THRESHOLD;
+	data->uProxLoThresh_default = DEFUALT_LOW_THRESHOLD;
+#else
+	if (data->ap_rev < 4) {
+		data->uProxHiThresh_default = HIGH_THRESHOLD_88921;
+		data->uProxLoThresh_default = LOW_THRESHOLD_88921;
+	}
+#endif
 	data->uProxHiThresh = data->uProxHiThresh_default;
 	data->uProxLoThresh = data->uProxLoThresh_default;
 }
@@ -214,7 +238,7 @@ int proximity_open_calibration(struct ssp_data *data)
 	}
 
 	iRet = cancel_filp->f_op->read(cancel_filp,
-		(u8 *)&data->uProxCanc, sizeof(u8), &cancel_filp->f_pos);
+		(u8 *)&data->uProxCanc, sizeof(unsigned int), &cancel_filp->f_pos);
 	if (iRet != sizeof(u8)) {
 		pr_err("[SSP]: %s - Can't read the cancel data\n", __func__);
 		iRet = -EIO;
@@ -266,8 +290,8 @@ static int proximity_store_cancelation(struct ssp_data *data, int iCalCMD)
 	}
 
 	iRet = cancel_filp->f_op->write(cancel_filp, (u8 *)&data->uProxCanc,
-		sizeof(u8), &cancel_filp->f_pos);
-	if (iRet != sizeof(u8)) {
+		sizeof(unsigned int), &cancel_filp->f_pos);
+	if (iRet != sizeof(unsigned int)) {
 		pr_err("%s: Can't write the cancel data to file\n", __func__);
 		iRet = -EIO;
 	}
@@ -282,7 +306,7 @@ static ssize_t proximity_cancel_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct ssp_data *data = dev_get_drvdata(dev);
-	unsigned char uProxCanc = data->uProxCanc;
+	unsigned int uProxCanc = data->uProxCanc;
 
 	if (uProxCanc > (data->uProxLoThresh_default >> 1))
 		uProxCanc = uProxCanc - (data->uProxLoThresh_default >> 1);
@@ -337,17 +361,22 @@ static ssize_t proximity_thresh_high_show(struct device *dev,
 static ssize_t proximity_thresh_high_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
-	u8 uNewThresh;
+	u16 uNewThresh;
 	int iRet = 0;
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	iRet = kstrtou8(buf, 10, &uNewThresh);
+	iRet = kstrtou16(buf, 10, &uNewThresh);
 	if (iRet < 0)
 		pr_err("[SSP]: %s - kstrtoint failed.(%d)\n", __func__, iRet);
-	else {
-		data->uProxHiThresh = uNewThresh;
-		set_proximity_threshold(data, data->uProxHiThresh,
-			data->uProxLoThresh);
+	else {	
+		if(uNewThresh & 0xfc00)
+			pr_err("[SSP]: %s - allow 10bits.(%d)\n", __func__, uNewThresh);
+		else {
+			uNewThresh &= 0x03ff;
+			data->uProxHiThresh = uNewThresh;
+			set_proximity_threshold(data, data->uProxHiThresh,
+				data->uProxLoThresh);
+		}
 	}
 
 	ssp_dbg("[SSP]: %s - new prox threshold : hi - %u, lo - %u\n",
@@ -371,17 +400,22 @@ static ssize_t proximity_thresh_low_show(struct device *dev,
 static ssize_t proximity_thresh_low_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
-	u8 uNewThresh;
+	u16 uNewThresh;
 	int iRet = 0;
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	iRet = kstrtou8(buf, 10, &uNewThresh);
+	iRet = kstrtou16(buf, 10, &uNewThresh);
 	if (iRet < 0)
 		pr_err("[SSP]: %s - kstrtoint failed.(%d)\n", __func__, iRet);
 	else {
-		data->uProxLoThresh = uNewThresh;
-		set_proximity_threshold(data, data->uProxHiThresh,
-			data->uProxLoThresh);
+		if(uNewThresh & 0xfc00)
+			pr_err("[SSP]: %s - allow 10bits.(%d)\n", __func__, uNewThresh);
+		else {
+			uNewThresh &= 0x03ff;
+			data->uProxLoThresh = uNewThresh;
+			set_proximity_threshold(data, data->uProxHiThresh,
+				data->uProxLoThresh);
+		}
 	}
 
 	ssp_dbg("[SSP]: %s - new prox threshold : hi - %u, lo - %u\n",

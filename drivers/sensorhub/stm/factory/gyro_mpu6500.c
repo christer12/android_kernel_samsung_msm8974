@@ -97,9 +97,9 @@ static int save_gyro_caldata(struct ssp_data *data, s16 *iCalData)
 	struct file *cal_filp = NULL;
 	mm_segment_t old_fs;
 
-	data->gyrocal.x = iCalData[0];
-	data->gyrocal.y = iCalData[1];
-	data->gyrocal.z = iCalData[2];
+	data->gyrocal.x = iCalData[0] << 2;
+	data->gyrocal.y = iCalData[1] << 2;
+	data->gyrocal.z = iCalData[2] << 2;
 
 	ssp_dbg("[SSP]: do gyro calibrate %d, %d, %d\n",
 		data->gyrocal.x, data->gyrocal.y, data->gyrocal.z);
@@ -129,6 +129,36 @@ static int save_gyro_caldata(struct ssp_data *data, s16 *iCalData)
 	return iRet;
 }
 
+int set_gyro_cal(struct ssp_data *data)
+{
+	int iRet = 0;
+	struct ssp_msg *msg;
+	s16 gyro_cal[3];
+
+	gyro_cal[0] = data->gyrocal.x;
+	gyro_cal[1] = data->gyrocal.y;
+	gyro_cal[2] = data->gyrocal.z;
+
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = MSG2SSP_AP_MCU_SET_GYRO_CAL;
+	msg->length = 6;
+	msg->options = AP2HUB_WRITE;
+	msg->buffer = (char*) kzalloc(6, GFP_KERNEL);
+
+	msg->free_buffer = 1;
+	memcpy(msg->buffer, gyro_cal, 6);
+
+	iRet = ssp_spi_async(data, msg);
+
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
+		iRet = ERROR;
+	}
+
+	pr_info("[SSP] Set gyro cal data %d, %d, %d\n", gyro_cal[0], gyro_cal[1], gyro_cal[2]);
+	return iRet;
+}
+
 static ssize_t gyro_power_off(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -147,64 +177,60 @@ static ssize_t gyro_power_on(struct device *dev,
 
 short mpu6500_gyro_get_temp(struct ssp_data *data)
 {
-	char chTempBuf[2] = { 0, 10};
+	char chTempBuf[2] = { 0};
 	unsigned char reg[2];
 	short temperature = 0;
-	int iDelayCnt = 0, iRet = 0;
+	int iRet = 0;
 
-	data->uFactorydataReady = 0;
-	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = GYROSCOPE_TEMP_FACTORY;
+	msg->length = 2;
+	msg->options = AP2HUB_READ;
+	msg->buffer = chTempBuf;
+	msg->free_buffer = 0;
 
-	iRet = send_instruction(data, FACTORY_MODE, GYROSCOPE_TEMP_FACTORY,
-		chTempBuf, 2);
+	iRet = ssp_spi_sync(data, msg, 3000);
 
-	while (!(data->uFactorydataReady & (1 << GYROSCOPE_TEMP_FACTORY))
-		&& (iDelayCnt++ < 150)
-		&& (iRet == SUCCESS))
-		msleep(20);
-
-	if ((iDelayCnt >= 150) || (iRet != SUCCESS)) {
+	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Gyro Temp Timeout!!\n", __func__);
 		goto exit;
 	}
-	reg[0] = data->uFactorydata[1];
-	reg[1] = data->uFactorydata[0];
+
+	reg[0] = chTempBuf[1];
+	reg[1] = chTempBuf[0];
 	temperature = (short) (((reg[0]) << 8) | reg[1]);
-	temperature = (((temperature + 521) / 340) + 35);
 	ssp_dbg("[SSP]: %s - %d\n", __func__, temperature);
-exit:
+
+	exit:
 	return temperature;
 }
 
 char k330_gyro_get_temp(struct ssp_data *data)
 {
-	char chTempBuf[2] = { 0, 10}, chTemp = 0;
-	int iDelayCnt = 0, iRet = 0;
+	char chTemp = 0;
+	int iRet = 0;
+
+	struct ssp_msg *msg;
 
 	if (!(data->uSensorState & (1 << GYROSCOPE_SENSOR)))
 		goto exit;
 
-	data->uFactorydataReady = 0;
-	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = GYROSCOPE_TEMP_FACTORY;
+	msg->length = 1;
+	msg->options = AP2HUB_READ;
+	msg->buffer = &chTemp;
+	msg->free_buffer = 0;
 
-	iRet = send_instruction(data, FACTORY_MODE, GYROSCOPE_TEMP_FACTORY,
-		chTempBuf, 2);
+	iRet = ssp_spi_sync(data, msg, 3000);
 
-	while (!(data->uFactorydataReady & (1 << GYROSCOPE_TEMP_FACTORY))
-		&& (iDelayCnt++ < 150)
-		&& (iRet == SUCCESS))
-		msleep(20);
-
-	if ((iDelayCnt >= 150) || (iRet != SUCCESS)) {
+	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Gyro Temp Timeout!!\n", __func__);
 		goto exit;
 	}
 
-	mdelay(5);
-
-	chTemp = (char)data->uFactorydata[0];
 	ssp_dbg("[SSP]: %s - %d\n", __func__, chTemp);
-exit:
+	exit:
 	return chTemp;
 }
 
@@ -288,78 +314,68 @@ u32 mpu6050_selftest_sqrt(u32 sqsum)
 
 ssize_t k330_gyro_selftest(char *buf, struct ssp_data *data)
 {
-	char chTempBuf[2] = { 3, 200};
+	char chTempBuf[36] = { 0,};
 	u8 uFifoPass = 2;
 	u8 uBypassPass = 2;
 	u8 uCalPass = 0;
 	u8 dummy[2] = {0,};
 	s16 iNOST[3] = {0,}, iST[3] = {0,}, iCalData[3] = {0,};
 	s16 iZeroRateData[3] = {0,}, fifo_data[4] = {0,};
-	int iDelayCnt = 0, iRet = 0;
+	int iRet = 0;
 
-	data->uFactorydataReady = 0;
-	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = GYROSCOPE_FACTORY;
+	msg->length = 36;
+	msg->options = AP2HUB_READ;
+	msg->buffer = chTempBuf;
+	msg->free_buffer = 0;
 
-	iRet = send_instruction(data, FACTORY_MODE, GYROSCOPE_FACTORY,
-		chTempBuf, 2);
+	iRet = ssp_spi_sync(data, msg, 5000);
 
-	while (!(data->uFactorydataReady & (1 << GYROSCOPE_FACTORY))
-		&& (iDelayCnt++ < 250)
-		&& (iRet == SUCCESS))
-		msleep(20);
-
-	if ((iDelayCnt >= 250) || (iRet != SUCCESS)) {
+	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Gyro Selftest Timeout!!\n", __func__);
 		goto exit;
 	}
-	mdelay(5);
 
-	iNOST[0] = (s16)((data->uFactorydata[0] << 8) + data->uFactorydata[1]);
-	iNOST[1] = (s16)((data->uFactorydata[2] << 8) + data->uFactorydata[3]);
-	iNOST[2] = (s16)((data->uFactorydata[4] << 8) + data->uFactorydata[5]);
+	data->uTimeOutCnt = 0;
 
-	iST[0] = (s16)((data->uFactorydata[6] << 8) + data->uFactorydata[7]);
-	iST[1] = (s16)((data->uFactorydata[8] << 8) + data->uFactorydata[9]);
-	iST[2] = (s16)((data->uFactorydata[10] << 8) + data->uFactorydata[11]);
+	iNOST[0] = (s16)((chTempBuf[0] << 8) + chTempBuf[1]);
+	iNOST[1] = (s16)((chTempBuf[2] << 8) + chTempBuf[3]);
+	iNOST[2] = (s16)((chTempBuf[4] << 8) + chTempBuf[5]);
 
-	iCalData[0] =
-		(s16)((data->uFactorydata[12] << 8) + data->uFactorydata[13]);
-	iCalData[1] =
-		(s16)((data->uFactorydata[14] << 8) + data->uFactorydata[15]);
-	iCalData[2] =
-		(s16)((data->uFactorydata[16] << 8) + data->uFactorydata[17]);
+	iST[0] = (s16)((chTempBuf[6] << 8) + chTempBuf[7]);
+	iST[1] = (s16)((chTempBuf[8] << 8) + chTempBuf[9]);
+	iST[2] = (s16)((chTempBuf[10] << 8) + chTempBuf[11]);
 
-	iZeroRateData[0] =
-		(s16)((data->uFactorydata[18] << 8) + data->uFactorydata[19]);
-	iZeroRateData[1] =
-		(s16)((data->uFactorydata[20] << 8) + data->uFactorydata[21]);
-	iZeroRateData[2] =
-		(s16)((data->uFactorydata[22] << 8) + data->uFactorydata[23]);
+	iCalData[0] = (s16)((chTempBuf[12] << 8) + chTempBuf[13]);
+	iCalData[1] =( s16)((chTempBuf[14] << 8) + chTempBuf[15]);
+	iCalData[2] = (s16)((chTempBuf[16] << 8) + chTempBuf[17]);
 
-	fifo_data[0] = data->uFactorydata[24];
-	fifo_data[1] =
-		(s16)((data->uFactorydata[25] << 8) + data->uFactorydata[26]);
-	fifo_data[2] =
-		(s16)((data->uFactorydata[27] << 8) + data->uFactorydata[28]);
-	fifo_data[3] =
-		(s16)((data->uFactorydata[29] << 8) + data->uFactorydata[30]);
+	iZeroRateData[0] = (s16)((chTempBuf[18] << 8) + chTempBuf[19]);
+	iZeroRateData[1] = (s16)((chTempBuf[20] << 8) + chTempBuf[21]);
+	iZeroRateData[2] = (s16)((chTempBuf[22] << 8) + chTempBuf[23]);
 
-	uCalPass = data->uFactorydata[31];
-	uFifoPass = data->uFactorydata[32];
-	uBypassPass = data->uFactorydata[33];
-	dummy[0] = data->uFactorydata[34];
-	dummy[1] = data->uFactorydata[35];
+	fifo_data[0] = chTempBuf[24];
+	fifo_data[1] = (s16)((chTempBuf[25] << 8) + chTempBuf[26]);
+	fifo_data[2] = (s16)((chTempBuf[27] << 8) + chTempBuf[28]);
+	fifo_data[3] = (s16)((chTempBuf[29] << 8) + chTempBuf[30]);
+
+	uCalPass = chTempBuf[31];
+	uFifoPass = chTempBuf[32];
+	uBypassPass = chTempBuf[33];
+	dummy[0] = chTempBuf[34];
+	dummy[1] = chTempBuf[35];
 	pr_info("[SSP] %s dummy = 0x%X, 0x%X\n", __func__, dummy[0], dummy[1]);
 	if (uFifoPass && uBypassPass && uCalPass)
 		save_gyro_caldata(data, iCalData);
 
-exit:
 	ssp_dbg("[SSP]: %s - %d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
 		__func__, iNOST[0], iNOST[1], iNOST[2], iST[0], iST[1], iST[2],
 		iZeroRateData[0], iZeroRateData[1], iZeroRateData[2],
 		fifo_data[0], fifo_data[1], fifo_data[2], fifo_data[3],
 		uFifoPass & uBypassPass & uCalPass, uFifoPass, uCalPass);
 
+	exit:
 	return sprintf(buf, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
 		iNOST[0], iNOST[1], iNOST[2], iST[0], iST[1], iST[2],
 		iZeroRateData[0], iZeroRateData[1], iZeroRateData[2],
@@ -369,7 +385,7 @@ exit:
 
 ssize_t mpu6500_gyro_selftest(char *buf, struct ssp_data *data)
 {
-	char chTempBuf[2] = { 3, 200};
+	char chTempBuf[36] = { 0,};
 	u8 initialized = 0;
 	s8 hw_result = 0;
 	int i = 0, j = 0, total_count = 0, ret_val = 0;
@@ -378,63 +394,68 @@ ssize_t mpu6500_gyro_selftest(char *buf, struct ssp_data *data)
 	s16 shift_ratio[3] = {0,};
 	s16 iCalData[3] = {0,};
 	char a_name[3][2] = { "X", "Y", "Z" };
-	int iDelayCnt = 0, iRet = 0;
+	int iRet = 0;
 	int dps_rms[3] = { 0, };
 	u32 temp = 0;
 	int bias_thresh = DEF_BIAS_LSB_THRESH_SELF_6500;
 
-	data->uFactorydataReady = 0;
-	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = GYROSCOPE_FACTORY;
+	msg->length = 36;
+	msg->options = AP2HUB_READ;
+	msg->buffer = chTempBuf;
+	msg->free_buffer = 0;
 
-	iRet = send_instruction(data, FACTORY_MODE, GYROSCOPE_FACTORY,
-		chTempBuf, 2);
+	iRet = ssp_spi_sync(data, msg, 7000);
 
-	while (!(data->uFactorydataReady & (1 << GYROSCOPE_FACTORY))
-		&& (iDelayCnt++ < 150)
-		&& (iRet == SUCCESS))
-		msleep(20);
-
-	if ((iDelayCnt >= 150) || (iRet != SUCCESS)) {
+	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Gyro Selftest Timeout!!\n", __func__);
+		ret_val = 1;
 		goto exit;
 	}
 
-	initialized = data->uFactorydata[0];
-	shift_ratio[0] = (s16)((data->uFactorydata[2] << 8) +
-				data->uFactorydata[1]);
-	shift_ratio[1] = (s16)((data->uFactorydata[4] << 8) +
-				data->uFactorydata[3]);
-	shift_ratio[2] = (s16)((data->uFactorydata[6] << 8) +
-				data->uFactorydata[5]);
-	hw_result = (s8)data->uFactorydata[7];
-	total_count = (int)((data->uFactorydata[11] << 24) +
-				(data->uFactorydata[10] << 16) +
-				(data->uFactorydata[9] << 8) +
-				data->uFactorydata[8]);
-	avg[0] = (long)((data->uFactorydata[15] << 24) +
-				(data->uFactorydata[14] << 16) +
-				(data->uFactorydata[13] << 8) +
-				data->uFactorydata[12]);
-	avg[1] = (long)((data->uFactorydata[19] << 24) +
-				(data->uFactorydata[18] << 16) +
-				(data->uFactorydata[17] << 8) +
-				data->uFactorydata[16]);
-	avg[2] = (long)((data->uFactorydata[23] << 24) +
-				(data->uFactorydata[22] << 16) +
-				(data->uFactorydata[21] << 8) +
-				data->uFactorydata[20]);
-	rms[0] = (long)((data->uFactorydata[27] << 24) +
-				(data->uFactorydata[26] << 16) +
-				(data->uFactorydata[25] << 8) +
-				data->uFactorydata[24]);
-	rms[1] = (long)((data->uFactorydata[31] << 24) +
-				(data->uFactorydata[30] << 16) +
-				(data->uFactorydata[29] << 8) +
-				data->uFactorydata[28]);
-	rms[2] = (long)((data->uFactorydata[35] << 24) +
-				(data->uFactorydata[34] << 16) +
-				(data->uFactorydata[33] << 8) +
-				data->uFactorydata[32]);
+	data->uTimeOutCnt = 0;
+
+			pr_err("[SSP]%d %d %d %d %d %d %d %d %d %d %d %d", chTempBuf[0], chTempBuf[1],
+					chTempBuf[2], chTempBuf[3], chTempBuf[4], chTempBuf[5], chTempBuf[6],
+					chTempBuf[7], chTempBuf[8], chTempBuf[9], chTempBuf[10], chTempBuf[11]);
+
+	initialized = chTempBuf[0];
+	shift_ratio[0] = (s16)((chTempBuf[2] << 8) +
+				chTempBuf[1]);
+	shift_ratio[1] = (s16)((chTempBuf[4] << 8) +
+				chTempBuf[3]);
+	shift_ratio[2] = (s16)((chTempBuf[6] << 8) +
+				chTempBuf[5]);
+	hw_result = (s8)chTempBuf[7];
+	total_count = (int)((chTempBuf[11] << 24) +
+				(chTempBuf[10] << 16) +
+				(chTempBuf[9] << 8) +
+				chTempBuf[8]);
+	avg[0] = (long)((chTempBuf[15] << 24) +
+				(chTempBuf[14] << 16) +
+				(chTempBuf[13] << 8) +
+				chTempBuf[12]);
+	avg[1] = (long)((chTempBuf[19] << 24) +
+				(chTempBuf[18] << 16) +
+				(chTempBuf[17] << 8) +
+				chTempBuf[16]);
+	avg[2] = (long)((chTempBuf[23] << 24) +
+				(chTempBuf[22] << 16) +
+				(chTempBuf[21] << 8) +
+				chTempBuf[20]);
+	rms[0] = (long)((chTempBuf[27] << 24) +
+				(chTempBuf[26] << 16) +
+				(chTempBuf[25] << 8) +
+				chTempBuf[24]);
+	rms[1] = (long)((chTempBuf[31] << 24) +
+				(chTempBuf[30] << 16) +
+				(chTempBuf[29] << 8) +
+				chTempBuf[28]);
+	rms[2] = (long)((chTempBuf[35] << 24) +
+				(chTempBuf[34] << 16) +
+				(chTempBuf[33] << 8) +
+				chTempBuf[32]);
 	pr_info("[SSP] init: %d, total cnt: %d\n", initialized, total_count);
 	pr_info("[SSP] hw_result: %d, %d, %d, %d\n", hw_result,
 		shift_ratio[0], shift_ratio[1],	shift_ratio[2]);
@@ -598,46 +619,44 @@ static ssize_t gyro_selftest_dps_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	int iNewDps = 0;
-	int iDelayCnt = 0, iRet = 0;
-	char chTempBuf[2] = { 0, 10 };
+	int iRet = 0;
+	char chTempBuf = 0;
 
 	struct ssp_data *data = dev_get_drvdata(dev);
+
+	struct ssp_msg *msg;
 
 	if (!(data->uSensorState & (1 << GYROSCOPE_SENSOR)))
 		goto exit;
 
+	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = GYROSCOPE_DPS_FACTORY;
+	msg->length = 1;
+	msg->options = AP2HUB_READ;
+	msg->buffer = &chTempBuf;
+	msg->free_buffer = 0;
+
 	sscanf(buf, "%d", &iNewDps);
 
 	if (iNewDps == GYROSCOPE_DPS250)
-		chTempBuf[0] = 0;
+		msg->options |= 0 << SSP_GYRO_DPS;
 	else if (iNewDps == GYROSCOPE_DPS500)
-		chTempBuf[0] = 1;
+		msg->options |= 1 << SSP_GYRO_DPS;
 	else if (iNewDps == GYROSCOPE_DPS2000)
-		chTempBuf[0] = 2;
+		msg->options |= 2 << SSP_GYRO_DPS;
 	else {
-		chTempBuf[0] = 1;
+		msg->options |= 1 << SSP_GYRO_DPS;
 		iNewDps = GYROSCOPE_DPS500;
 	}
 
-	data->uFactorydataReady = 0;
-	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
+	iRet = ssp_spi_sync(data, msg, 3000);
 
-	iRet = send_instruction(data, FACTORY_MODE, GYROSCOPE_DPS_FACTORY,
-		chTempBuf, 2);
-
-	while (!(data->uFactorydataReady & (1 << GYROSCOPE_DPS_FACTORY))
-		&& (iDelayCnt++ < 150)
-		&& (iRet == SUCCESS))
-		msleep(20);
-
-	if ((iDelayCnt >= 150) || (iRet != SUCCESS)) {
+	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - Gyro Selftest DPS Timeout!!\n", __func__);
 		goto exit;
 	}
 
-	mdelay(5);
-
-	if (data->uFactorydata[0] != SUCCESS) {
+	if (chTempBuf != SUCCESS) {
 		pr_err("[SSP]: %s - Gyro Selftest DPS Error!!\n", __func__);
 		goto exit;
 	}

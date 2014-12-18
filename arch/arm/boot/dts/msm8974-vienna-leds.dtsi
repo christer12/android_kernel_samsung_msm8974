@@ -18,37 +18,43 @@
 			qcom,rgb_0 {
 				label = "rgb";
 				linux,name = "led:rgb_red";
-				qcom,mode = <0>;
+				qcom,mode = "pwm";
 				qcom,pwm-channel = <6>;
 				qcom,pwm-us = <1000>;
 				qcom,max-current = <12>;
 				qcom,default-state = "off";
+				qcom,turn-off-delay-ms = <0>;
 				qcom,id = <3>;
 				status = "ok";
-				linux,default-trigger =
-					"battery-charging";
+				linux,default-trigger =	"none";
 			};
 
 			qcom,rgb_1 {
 				label = "rgb";
 				linux,name = "led:rgb_green";
-				qcom,mode = <0>;
+				qcom,mode = "pwm";
 				qcom,pwm-channel = <5>;
 				qcom,pwm-us = <1000>;
 				qcom,max-current = <12>;
+				qcom,default-state = "off";
+				qcom,turn-off-delay-ms = <0>;
 				qcom,id = <4>;
 				status = "ok";
+				linux,default-trigger = "none";
 			};
 
 			qcom,rgb_2 {
 				label = "rgb";
 				linux,name = "led:rgb_blue";
-				qcom,mode = <0>;
+				qcom,mode = "pwm";
 				qcom,pwm-channel = <4>;
 				qcom,pwm-us = <1000>;
 				qcom,max-current = <12>;
+				qcom,default-state = "off";
+				qcom,turn-off-delay-ms = <0>;
 				qcom,id = <5>;
 				status = "ok";
+				linux,default-trigger =	"none";
 			};
 		};
 
@@ -92,6 +98,20 @@
 				qcom,id = <2>;
 				linux,name = "led:flash_1";
 				qcom,current = <625>;
+			};
+
+			pm8941_torch: qcom,flash_torch {
+				qcom,max-current = <200>;
+				qcom,default-state = "off";
+				qcom,headroom = <0>;
+				qcom,startup-dly = <1>;
+				linux,default-trigger =
+					"torch_trigger";
+				label = "flash";
+				qcom,id = <2>;
+				linux,name = "led:flash_torch";
+				qcom,current = <200>;
+				qcom,torch-enable;
 			};
 		};
 

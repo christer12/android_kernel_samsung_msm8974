@@ -25,6 +25,10 @@
 #include <linux/input/matrix_keypad.h>
 #include <linux/slab.h>
 
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
+	static int check_key_press;
+#endif
+
 struct matrix_keypad {
 	const struct matrix_keypad_platform_data *pdata;
 	struct input_dev *input_dev;
@@ -153,9 +157,15 @@ static void matrix_keypad_scan(struct work_struct *work)
 			code = MATRIX_SCAN_CODE(row, col, keypad->row_shift);
 			input_event(input_dev, EV_MSC, MSC_SCAN, code);
 
-#if defined(CONFIG_MACH_MONTBLANC)    // jjlee for debug
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)    // jjlee for debug
 			printk("[key] [%d:%d] %x, %s\n", row, col, (new_state[col] & (1 << row)), 
 			     !(!(new_state[col] & (1 << row))) ?	"pressed" : "released");
+
+			if(!(!(new_state[col] & (1 << row)))){
+				check_key_press++;
+			}else{
+				check_key_press--;
+			}
 #endif			
 			input_report_key(input_dev,
 					 keypad->keycodes[code],
@@ -173,6 +183,16 @@ static void matrix_keypad_scan(struct work_struct *work)
 	enable_row_irqs(keypad);
 	mutex_unlock(&keypad->lock);
 }
+
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
+int check_short_key(void)
+{
+	int ret;
+		ret = !(!check_key_press);
+	return ret;
+}
+EXPORT_SYMBOL(check_short_key);
+#endif
 
 static irqreturn_t matrix_keypad_interrupt(int irq, void *id)
 {
@@ -318,7 +338,7 @@ static int __devinit init_matrix_gpio(struct platform_device *pdev,
 			goto err_free_cols;
 		}
 
-#if defined(CONFIG_MACH_MONTBLANC)
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
 		gpio_tlmm_config(GPIO_CFG((pdata->col_gpios[i]), 0,
 			GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);		
 		gpio_set_value((pdata->col_gpios[i]), 0);
@@ -336,7 +356,7 @@ static int __devinit init_matrix_gpio(struct platform_device *pdev,
 			goto err_free_rows;
 		}
 
-#if defined(CONFIG_MACH_MONTBLANC)
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
 		gpio_tlmm_config(GPIO_CFG((pdata->row_gpios[i]), 0,
 			GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 #else
@@ -510,7 +530,11 @@ static struct platform_driver matrix_keypad_driver = {
 	.probe		= matrix_keypad_probe,
 	.remove		= __devexit_p(matrix_keypad_remove),
 	.driver		= {
+#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
+		.name	= "montblanc_3x4_keypad",
+#else		
 		.name	= "matrix-keypad",
+#endif
 		.owner	= THIS_MODULE,
 #ifdef CONFIG_PM
 		.pm	= &matrix_keypad_pm_ops,

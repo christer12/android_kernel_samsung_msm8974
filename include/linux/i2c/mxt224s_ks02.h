@@ -19,14 +19,14 @@
 #define MXT224_MAX_MT_FINGERS	10
 #define MXT_DEV_NAME "Atmel MXT224S"
 #define CHECK_ANTITOUCH		1
+#define TSP_SET_INPUTMETHOD	1
 
 extern int touch_is_pressed;
 
-extern struct tsp_callbacks *charger_callbacks;
+//extern struct tsp_callbacks *charger_callbacks;
 struct tsp_callbacks {
 	void (*inform_charger)(struct tsp_callbacks *, int);	
 };
-extern struct tsp_callbacks *charger_callbacks;
 
 enum { RESERVED_T0 = 0,
 	RESERVED_T1,
@@ -151,6 +151,7 @@ struct mxt224s_platform_data {
 	u8 check_timer;
 	u8 check_autocal;
 	u8 check_calgood;
+	u8 noisechange;
 #endif
 	const u8 *t9_config_batt;
 	const u8 *t9_config_chrg;
@@ -158,6 +159,12 @@ struct mxt224s_platform_data {
 	const u8 *t46_config_chrg;
 	const u8 *t62_config_batt;
 	const u8 *t62_config_chrg;
+#if TSP_SET_INPUTMETHOD	
+	const u8 *t9_config_batt_input;
+	const u8 *t9_config_chrg_input;
+	const u8 *t62_config_batt_input;
+	const u8 *t62_config_chrg_input;
+#endif
 	
 	int (*power_on) (void);
 	int (*power_off) (void);
@@ -171,6 +178,5 @@ typedef enum
     { MXT_PAGE_UP = 0x01, MXT_PAGE_DOWN = 0x02, MXT_DELTA_MODE =
    0x10, MXT_REFERENCE_MODE = 0x11, MXT_CTE_MODE = 0x31
 } diagnostic_debug_command;
-
 
 #endif				/*  */

@@ -174,6 +174,7 @@ def build(target):
         'DEBUG_DEFCONFIG=%s' % debug_defconfig,
 	'SELINUX_DEFCONFIG=selinux_defconfig',
 	'SELINUX_LOG_DEFCONFIG=selinux_log_defconfig',
+	'TIMA_DEFCONFIG=tima_defconfig',
         '%s' % base_defconfig], env=make_env, stdin=devnull)
     devnull.close()
 

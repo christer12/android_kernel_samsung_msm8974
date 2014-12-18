@@ -1,3 +1,4 @@
+
 /* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -10,7 +11,6 @@
  * GNU General Public License for more details.
  *
  */
-
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -21,6 +21,7 @@
 #include <linux/gpio.h>
 #include <linux/err.h>
 #include <linux/regulator/consumer.h>
+#include <linux/clk.h>
 
 #include "mdss.h"
 #include "mdss_fb.h"
@@ -28,11 +29,19 @@
 #include "mdss_dsi.h"
 #include "mdss_debug.h"
 
+#ifdef CONFIG_SAMSUNG_CMC624
+#include <linux/i2c/samsung_cmc624.h>
+#endif
+
 static unsigned char *mdss_dsi_base;
 int contsplash_lkstat;
+unsigned int gv_manufacture_id;
 
 int get_lcd_attached(void);
 
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4);
+#endif
 static int __init mdss_check_contsplash_arg(char *status)
 {
 	contsplash_lkstat = (int)(*status -'0');
@@ -64,6 +73,39 @@ static int mdss_dsi_regulator_init(struct platform_device *pdev)
 				ctrl_pdata->power_data.vreg_config,
 				ctrl_pdata->power_data.num_vreg, 1);
 	} else {
+#if defined(CONFIG_REGULATOR_LP8720)
+		if (get_lcd_attached()) {
+			dsi_drv->vdd_vreg = devm_regulator_get(&pdev->dev, "lp8720_vdd");
+			if (IS_ERR(dsi_drv->vdd_vreg)) {
+				pr_err("%s: could not get lp8720_vdd vreg, rc=%ld\n",
+					__func__, PTR_ERR(dsi_drv->vdd_vreg));
+				return PTR_ERR(dsi_drv->vdd_vreg);
+			}
+
+			ret = regulator_set_voltage(dsi_drv->vdd_vreg, 3000000,
+					3000000);
+			if (ret) {
+				pr_err("%s: set voltage failed on lp8720_vdd vreg, rc=%d\n",
+					__func__, ret);
+				return ret;
+			}			
+
+			dsi_drv->vdd_io_lp8720_vreg = devm_regulator_get(&pdev->dev, "lp8720_vddio");
+			if (IS_ERR(dsi_drv->vdd_io_lp8720_vreg)) {
+				pr_err("%s: could not get lp8720_vddio reg, rc=%ld\n",
+					__func__, PTR_ERR(dsi_drv->vdd_io_lp8720_vreg));
+				return PTR_ERR(dsi_drv->vdd_io_lp8720_vreg);
+			}
+
+			ret = regulator_set_voltage(dsi_drv->vdd_io_lp8720_vreg, 1800000,
+					1800000);
+			if (ret) {
+				pr_err("%s: set voltage failed on lp8720_vddio vreg, rc=%d\n",
+					__func__, ret);
+				return ret;
+			}
+		}
+#else
 		dsi_drv->vdd_vreg = devm_regulator_get(&pdev->dev, "vdd");
 		if (IS_ERR(dsi_drv->vdd_vreg)) {
 			pr_err("%s: could not get vdda vreg, rc=%ld\n",
@@ -78,6 +120,7 @@ static int mdss_dsi_regulator_init(struct platform_device *pdev)
 				__func__, ret);
 			return ret;
 		}
+#endif
 
 		dsi_drv->vdd_io_vreg = devm_regulator_get(&pdev->dev, "vddio");
 		if (IS_ERR(dsi_drv->vdd_io_vreg)) {
@@ -108,6 +151,14 @@ static int mdss_dsi_regulator_init(struct platform_device *pdev)
 				__func__, ret);
 			return ret;
 		}
+#if defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
+		dsi_drv->iovdd_vreg = devm_regulator_get(&pdev->dev, "iovdd");
+		if (IS_ERR(dsi_drv->iovdd_vreg)) {
+			pr_err("%s: could not get iovddreg, rc=%ld\n",
+				__func__, PTR_ERR(dsi_drv->iovdd_vreg));
+			return PTR_ERR(dsi_drv->iovdd_vreg);
+		}
+#endif
 	}
 
 	return 0;
@@ -127,7 +178,36 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				panel_data);
 	pr_debug("%s: enable=%d\n", __func__, enable);
 
+        #ifdef CONFIG_SAMSUNG_CMC624
+	ret = gpio_direction_output((ctrl_pdata->vddi_en), 1);
+	if (ret) {
+		pr_err("[LCD]%s: unable to set_direction for vddi_en [%d]\n", __func__, ctrl_pdata->vddi_en);
+	}
+
+	ret = gpio_direction_output((ctrl_pdata->lcd_en), 1);
+	if (ret) {
+		pr_err("[LCD]%s: unable to set_direction for lcd_en [%d]\n", __func__, ctrl_pdata->lcd_en);
+	}
+        #endif
+
 	if (enable) {
+                #ifdef CONFIG_SAMSUNG_CMC624
+                pr_info("[LCD] %s: VDDI_EN : gpio_set_value : HIGH !!! \n", __func__);
+                gpio_set_value((ctrl_pdata->vddi_en), 1);
+                msleep(10);
+
+                pr_info("[LCD] %s: LCD_EN : gpio_set_value : HIGH !!! \n", __func__);
+                gpio_set_value((ctrl_pdata->lcd_en), 1);
+                #endif
+
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)\
+	|| defined(CONFIG_MIPI_LCD_S6E3FA0_FORCE_VIDEO_MODE)\
+	|| defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+		pr_debug("[LCD] %s: LCD_EN : gpio_set_value : HIGH !!! \n", __func__);
+		gpio_set_value((ctrl_pdata->disp_en_gpio), 1);
+#endif
+
 		if (ctrl_pdata->power_data.num_vreg > 0) {
 			ret = msm_dss_enable_vreg(
 				ctrl_pdata->power_data.vreg_config,
@@ -144,6 +224,10 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 			 */
 			msleep(20);
 		} else {
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+#endif
+		
 			ret = regulator_set_optimum_mode(
 				(ctrl_pdata->shared_pdata).vdd_vreg, 100000);
 			if (ret < 0) {
@@ -152,8 +236,25 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				return ret;
 			}
 
+#if defined(CONFIG_REGULATOR_LP8720)
+			}
+			
+			if (get_lcd_attached()) {
+				ret = regulator_set_optimum_mode(
+					(ctrl_pdata->shared_pdata).vdd_io_lp8720_vreg, 100000);
+				if (ret < 0) {
+					pr_err("%s: vdd_io_lp8720_vreg set opt mode failed.\n",
+						__func__);
+					return ret;
+				}
+			}
+#endif
+
 			ret = regulator_set_optimum_mode(
 				(ctrl_pdata->shared_pdata).vdd_io_vreg, 100000);
+#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
+			xlog(__func__, enable, 0, 0, 0, 0x66666);
+#endif
 			if (ret < 0) {
 				pr_err("%s: vdd_io_vreg set opt mode failed.\n",
 					__func__);
@@ -177,6 +278,53 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 			}
 			msleep(20);
 
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+				ret = regulator_enable(
+					(ctrl_pdata->shared_pdata).vdd_io_lp8720_vreg);
+				if (ret) {
+					pr_err("%s: Failed to enable regulator.\n",
+						__func__);
+					return ret;
+				}
+				msleep(20);
+			}
+#endif
+
+#ifdef CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL
+			gpio_tlmm_config(GPIO_CFG(ctrl_pdata->lcd_en_gpio, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+			gpio_set_value((ctrl_pdata->lcd_en_gpio), 1);
+			pr_info("%s lcd_en on: %d\n", __func__, gpio_get_value(ctrl_pdata->lcd_en_gpio));
+			msleep(20);
+			gpio_set_value((ctrl_pdata->bl_en_gpio), 1);
+			pr_info("%s bl_en on: %d\n", __func__, gpio_get_value(ctrl_pdata->bl_en_gpio));
+			msleep(20);
+#endif
+#if defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
+			ret = regulator_set_optimum_mode
+			  ((ctrl_pdata->shared_pdata).iovdd_vreg, 100000);
+			if (ret < 0) {
+				pr_err("%s: vdda_vreg set opt mode failed.\n",
+					__func__);
+				return ret;
+			}
+			ret = regulator_enable(
+				(ctrl_pdata->shared_pdata).iovdd_vreg);
+			if (ret) {
+				pr_err("%s: Failed to enable regulator.\n",
+					__func__);
+				return ret;
+			}
+			msleep(10);
+			gpio_set_value((ctrl_pdata->lcd_en_p_gpio), 1);
+			pr_info("%s lcd_en_p on: %d\n", __func__, gpio_get_value(ctrl_pdata->lcd_en_p_gpio));
+			mdelay(10);
+#endif
+
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+#endif	
+
 			ret = regulator_enable(
 				(ctrl_pdata->shared_pdata).vdd_vreg);
 			if (ret) {
@@ -186,6 +334,10 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 			}
 			msleep(20);
 
+#if defined(CONFIG_REGULATOR_LP8720)
+			}
+#endif
+
 			ret = regulator_enable(
 				(ctrl_pdata->shared_pdata).vdda_vreg);
 			if (ret) {
@@ -194,30 +346,25 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				return ret;
 			}
 		}
-#ifdef CONFIG_SAMSUNG_CMC624 /* Enable CMC Chip */
-		int retry=0;
-		for(retry=0; retry<3; retry++) {
-			cmc_power(1);
-			if(samsung_cmc624_on(1)) {
-				break;
-			}
-			cmc_power(0);
-			msleep(500);
-		}
-#endif
-#if 0
-
+                #if 0
 		if (pdata->panel_info.panel_power_on == 0)
 			(ctrl_pdata->panel_data).panel_reset_fn(pdata, 1);
-#endif
+                #endif
 	} else {
+                #ifdef CONFIG_SAMSUNG_CMC624
+                {
+                        samsung_cmc624_on(0);
+                        cmc_power(0);
+                }
 
-#ifdef CONFIG_SAMSUNG_CMC624
-		if (samsung_has_cmc624()) {
-			samsung_cmc624_on(0);
-			cmc_power(0);
-		}
-#endif
+                pr_info("[LCD] %s: LCD_EN : gpio_set_value : LOW !!! \n", __func__);
+                gpio_set_value((ctrl_pdata->lcd_en), 0);
+                msleep(10);
+
+                pr_info("[LCD] %s: VDDI_EN : gpio_set_value : LOW !!! \n", __func__);
+                gpio_set_value((ctrl_pdata->vddi_en), 0);
+                #endif
+
 		(ctrl_pdata->panel_data).panel_reset_fn(pdata, 0);
 
 		if (ctrl_pdata->power_data.num_vreg > 0) {
@@ -230,6 +377,10 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				return ret;
 			}
 		} else {
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+#endif
+
 			ret = regulator_disable(
 				(ctrl_pdata->shared_pdata).vdd_vreg);
 			if (ret) {
@@ -237,6 +388,10 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 					__func__);
 				return ret;
 			}
+
+#if defined(CONFIG_REGULATOR_LP8720)
+			}
+#endif
 
 			ret = regulator_disable(
 				(ctrl_pdata->shared_pdata).vdda_vreg);
@@ -246,13 +401,58 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				return ret;
 			}
 
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+				ret = regulator_disable(
+					(ctrl_pdata->shared_pdata).vdd_io_lp8720_vreg);
+				if (ret) {
+					pr_err("%s: Failed to disable regulator.\n",
+						__func__);
+					return ret;
+				}
+			}
+#endif
+
+#ifdef CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL
+			gpio_tlmm_config(GPIO_CFG(ctrl_pdata->lcd_en_gpio, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+			gpio_set_value((ctrl_pdata->lcd_en_gpio), 0);
+			pr_info("%s lcd_en off: %d\n", __func__, gpio_get_value(ctrl_pdata->lcd_en_gpio));
+			gpio_set_value((ctrl_pdata->bl_en_gpio), 0);
+			pr_info("%s led_en off: %d\n", __func__, gpio_get_value(ctrl_pdata->bl_en_gpio));
+#endif
+#if defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
+			gpio_set_value((ctrl_pdata->lcd_en_p_gpio), 0);
+			pr_info("%s lcd_en_p off: %d\n", __func__, gpio_get_value(ctrl_pdata->lcd_en_p_gpio));
+			mdelay(1);
 			ret = regulator_disable(
-				(ctrl_pdata->shared_pdata).vdd_io_vreg);
+				(ctrl_pdata->shared_pdata).iovdd_vreg);
 			if (ret) {
 				pr_err("%s: Failed to disable regulator.\n",
 					__func__);
 				return ret;
 			}
+			ret = regulator_set_optimum_mode(
+				(ctrl_pdata->shared_pdata).iovdd_vreg, 100);
+			if (ret < 0) {
+				pr_err("%s: iovdd_vreg set opt mode failed.\n",
+					 __func__);
+				return ret;
+			}
+#endif
+			ret = regulator_disable(
+				(ctrl_pdata->shared_pdata).vdd_io_vreg);
+#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
+			xlog(__func__, enable, 0, 0, 0, 0x55555);
+#endif
+			if (ret) {
+				pr_err("%s: Failed to disable regulator.\n",
+					__func__);
+				return ret;
+			}
+
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+#endif
 
 			ret = regulator_set_optimum_mode(
 				(ctrl_pdata->shared_pdata).vdd_vreg, 100);
@@ -261,6 +461,22 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 					 __func__);
 				return ret;
 			}
+
+#if defined(CONFIG_REGULATOR_LP8720)
+			}
+#endif
+
+#if defined(CONFIG_REGULATOR_LP8720)
+			if (get_lcd_attached()) {
+				ret = regulator_set_optimum_mode(
+					(ctrl_pdata->shared_pdata).vdd_io_lp8720_vreg, 100);
+				if (ret < 0) {
+					pr_err("%s: vdd_io_vreg set opt mode failed.\n",
+						__func__);
+					return ret;
+				}
+			}
+#endif
 
 			ret = regulator_set_optimum_mode(
 				(ctrl_pdata->shared_pdata).vdd_io_vreg, 100);
@@ -415,6 +631,11 @@ error:
 	return rc;
 }
 
+#if defined(CONFIG_ESD_ERR_FG_RECOVERY)
+extern struct mutex power_state_chagne;
+static struct mdss_panel_data *pdata_for_esd;
+#endif
+
 static int mdss_dsi_off(struct mdss_panel_data *pdata)
 {
 	int ret = 0;
@@ -438,14 +659,40 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 	pr_debug("%s+: ctrl=%p ndx=%d\n", __func__,
 				ctrl_pdata, ctrl_pdata->ndx);
 
-	if (pdata->panel_info.type == MIPI_CMD_PANEL)
-		mdss_dsi_clk_ctrl(ctrl_pdata, 1);
+#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL) \
+        && !defined(CONFIG_MACH_KS01SKT) && !defined(CONFIG_MACH_KS01KTT) && !defined(CONFIG_MACH_KS01LGT)
+	ret = gpio_tlmm_config(GPIO_CFG(
+				ctrl_pdata->disp_te_gpio, 0,
+				GPIO_CFG_INPUT,
+				GPIO_CFG_PULL_DOWN,
+				GPIO_CFG_2MA),
+				GPIO_CFG_ENABLE);
+
+	if (ret) {
+		pr_err("%s: unable to config tlmm = %d\n",
+			__func__, ctrl_pdata->disp_te_gpio);
+		gpio_free(ctrl_pdata->disp_te_gpio);
+		return -ENODEV;
+	}
+#endif
+
+//	if (pdata->panel_info.type == MIPI_CMD_PANEL)
+//		mdss_dsi_clk_ctrl(ctrl_pdata, 1);
 
 	/* disable DSI controller */
 	mdss_dsi_controller_cfg(0, pdata);
 
 	mdss_dsi_clk_ctrl(ctrl_pdata, 0);
 
+	ret = mdss_dsi_enable_bus_clocks(ctrl_pdata);
+	if (ret) {
+		pr_err("%s: failed to enable bus clocks. rc=%d\n", __func__,
+			ret);
+		mdss_dsi_panel_power_on(pdata, 0);
+		return ret;
+	}
 	mdss_dsi_disable_bus_clocks(ctrl_pdata);
 
 	/* disable DSI phy */
@@ -460,56 +707,6 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 
 	return ret;
 }
-
-static int mdss_dsi_unblank(struct mdss_panel_data *pdata);
-
-int mdss_dsi_cont_splash_on(struct mdss_panel_data *pdata)
-{
-	int ret = 0;
-	struct mipi_panel_info *mipi;
-	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-
-	pr_info("%s:%d DSI on for continuous splash.\n", __func__, __LINE__);
-
-	if (pdata == NULL) {
-		pr_err("%s: Invalid input data\n", __func__);
-		return -EINVAL;
-	}
-
-	mipi = &pdata->panel_info.mipi;
-
-	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
-				panel_data);
-
-	pr_debug("%s+: ctrl=%p ndx=%d\n", __func__,
-				ctrl_pdata, ctrl_pdata->ndx);
-
-	WARN(ctrl_pdata->panel_state != UNKNOWN_STATE,
-			"incorrect panel state=%d\n", ctrl_pdata->panel_state);
-
-	if(mipi->mode == DSI_CMD_MODE)
-		mdss_dsi_clk_ctrl(ctrl_pdata, 1);
-
-	mdss_dsi_sw_reset(pdata);
-	mdss_dsi_host_init(mipi, pdata);
-
-	ret = mdss_dsi_unblank(pdata);
-	if (ret) {
-		pr_err("%s: unblank failed\n", __func__);
-		return ret;
-	}
-
-	if(mipi->mode == DSI_CMD_MODE)
-		mdss_dsi_clk_ctrl(ctrl_pdata, 0);
-
-	mdss_dsi_op_mode_config(mipi->mode, pdata);
-
-	ctrl_pdata->panel_state = PANEL_ON;
-
-	pr_debug("%s-:End\n", __func__);
-	return ret;
-}
-
 
 int mdss_dsi_on(struct mdss_panel_data *pdata)
 {
@@ -527,13 +724,13 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 		return -EINVAL;
 	}
 
-//	if (get_lcd_attached() == 0)
-//		return -ENODEV;
-
 	if (pdata->panel_info.panel_power_on) {
 		pr_warn("%s:%d Panel already on.\n", __func__, __LINE__);
 		return 0;
 	}
+#if defined(CONFIG_ESD_ERR_FG_RECOVERY)
+	pdata_for_esd = pdata;
+#endif
 
 	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
@@ -542,25 +739,55 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 				__func__, ctrl_pdata, ctrl_pdata->ndx);
 
 	pinfo = &pdata->panel_info;
+#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL) \
+        && !defined(CONFIG_MACH_KS01SKT) && !defined(CONFIG_MACH_KS01KTT) && !defined(CONFIG_MACH_KS01LGT)
+	ret = gpio_tlmm_config(GPIO_CFG(
+			ctrl_pdata->disp_te_gpio, 1,
+			GPIO_CFG_INPUT,
+			GPIO_CFG_PULL_DOWN,
+			GPIO_CFG_2MA),
+			GPIO_CFG_ENABLE);
 
+	if (ret) {
+		pr_err("%s: unable to config tlmm = %d\n",
+			__func__, ctrl_pdata->disp_te_gpio);
+		gpio_free(ctrl_pdata->disp_te_gpio);
+		return -ENODEV;
+	}
+#endif
 	ret = mdss_dsi_panel_power_on(pdata, 1);
 	if (ret) {
 		pr_err("%s: Panel power on failed\n", __func__);
 		return ret;
 	}
 
-
 	pdata->panel_info.panel_power_on = 1;
+
+#if !(defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM))
+	if (get_lcd_attached() == 0) {
+		pr_err("%s : lcd is not attached..\n",__func__);
+	
+		mdss_dsi_panel_power_on(pdata, 0);
+		pdata->panel_info.panel_power_on = 0;
+
+		return -ENODEV;
+	}
+#endif
 
 	ret = mdss_dsi_enable_bus_clocks(ctrl_pdata);
 	if (ret) {
 		pr_err("%s: failed to enable bus clocks. rc=%d\n", __func__,
 			ret);
+		mdss_dsi_panel_power_on(pdata, 0);
 		return ret;
 	}
 
 	mdss_dsi_phy_sw_reset((ctrl_pdata->ctrl_base));
 	mdss_dsi_phy_init(pdata);
+	mdss_dsi_disable_bus_clocks(ctrl_pdata);
 
 	mdss_dsi_clk_ctrl(ctrl_pdata, 1);
 
@@ -674,15 +901,19 @@ static int mdss_dsi_unblank(struct mdss_panel_data *pdata)
 				panel_data);
 	mipi  = &pdata->panel_info.mipi;
 
-	if (ctrl_pdata->panel_state != PANEL_ON) {
+#if  !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+	if (!(ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_INIT)) {
 		ret = ctrl_pdata->on(pdata);
 		if (ret) {
 			pr_err("%s: unable to initialize the panel\n",
 							__func__);
 			return ret;
 		}
-		ctrl_pdata->panel_state = PANEL_ON;
+		ctrl_pdata->ctrl_state |= CTRL_STATE_PANEL_INIT;
 	}
+#endif
+
 	mdss_dsi_op_mode_config(mipi->mode, pdata);
 
 	pr_debug("%s-:\n", __func__);
@@ -707,14 +938,87 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 
 	mdss_dsi_op_mode_config(DSI_CMD_MODE, pdata);
 
-	if (ctrl_pdata->panel_state == PANEL_ON) {
+	if (ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_INIT) {
 		ret = ctrl_pdata->off(pdata);
 		if (ret) {
 			pr_err("%s: Panel OFF failed\n", __func__);
 			return ret;
 		}
-		ctrl_pdata->panel_state = PANEL_OFF;
+		ctrl_pdata->ctrl_state &= ~CTRL_STATE_PANEL_INIT;
 	}
+	pr_debug("%s-:End\n", __func__);
+	return ret;
+}
+int mdss_dsi_cont_splash_on(struct mdss_panel_data *pdata)
+{
+	int ret = 0;
+	struct mipi_panel_info *mipi;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+
+	pr_info("%s:%d DSI on for continuous splash.\n", __func__, __LINE__);
+
+	if (pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	mipi = &pdata->panel_info.mipi;
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+				panel_data);
+
+	pr_debug("%s+: ctrl=%p ndx=%d\n", __func__,
+				ctrl_pdata, ctrl_pdata->ndx);
+
+	WARN((ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_INIT),
+		"Incorrect Ctrl state=0x%x\n", ctrl_pdata->ctrl_state);
+
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)\
+	|| defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
+	// need to control power to complete panel off (JDI recommendation)
+	ret = mdss_dsi_panel_power_on(pdata, 0);
+	msleep(20);
+	ret = mdss_dsi_panel_power_on(pdata, 1);
+#endif
+	mdss_dsi_sw_reset(pdata);
+	mdss_dsi_host_init(mipi, pdata);
+
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)\
+	|| defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)\
+	// LP11
+	{
+		u32 tmp;
+		tmp = MIPI_INP((ctrl_pdata->ctrl_base) + 0xac);
+		tmp &= ~(1<<28);
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0xac, tmp);
+		wmb();
+	}
+	// LP11
+	(ctrl_pdata->panel_data).panel_reset_fn(pdata, 1);
+#endif
+
+	if (1) /* (ctrl_pdata->on_cmds.link_state == DSI_LP_MODE)*/{
+		mdss_dsi_op_mode_config(DSI_CMD_MODE, pdata);
+		ret = mdss_dsi_unblank(pdata);
+#if defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)\
+	|| defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+		if (!(ctrl_pdata->ctrl_state & CTRL_STATE_PANEL_INIT)) {
+			ret = ctrl_pdata->on(pdata);
+			if (ret) {
+				pr_err("%s: unable to initialize the panel\n",
+							__func__);
+				return ret;
+			}
+		ctrl_pdata->ctrl_state |= CTRL_STATE_PANEL_INIT;
+		}
+#endif
+
+		if (ret) {
+			pr_err("%s: unblank failed\n", __func__);
+			return ret;
+		}
+	}
+
 	pr_debug("%s-:End\n", __func__);
 	return ret;
 }
@@ -757,10 +1061,12 @@ static int mdss_dsi_dfps_config(struct mdss_panel_data *pdata, char *new_fps)
 		mdss_dsi_sw_reset(pdata);
 		mdss_dsi_host_init(&pdata->panel_info.mipi, pdata);
 		mdss_dsi_controller_cfg(true, pdata);
-		mdss_dsi_clk_disable(ctrl_pdata);
+#if 0
+		mdss_dsi_clk_ctrl(ctrl_pdata, 0);
 		mdss_dsi_unprepare_clocks(ctrl_pdata);
 		mdss_dsi_prepare_clocks(ctrl_pdata);
-		mdss_dsi_clk_enable(ctrl_pdata);
+		mdss_dsi_clk_ctrl(ctrl_pdata, 1);
+#endif
 		wmb();
 		dsi_ctrl |= 0x2;
 		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x0004, dsi_ctrl);
@@ -792,6 +1098,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 			rc = mdss_dsi_unblank(pdata);
 		break;
 	case MDSS_EVENT_PANEL_ON:
+		ctrl_pdata->ctrl_state |= CTRL_STATE_MDP_ACTIVE;
 		ctrl_pdata->mdp_tg_on = 1;
 		if (ctrl_pdata->dsi_on_state == DSI_HS_MODE)
 			rc = mdss_dsi_unblank(pdata);
@@ -801,6 +1108,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 			rc = mdss_dsi_blank(pdata);
 		break;
 	case MDSS_EVENT_PANEL_OFF:
+		ctrl_pdata->ctrl_state &= ~CTRL_STATE_MDP_ACTIVE;
 		ctrl_pdata->mdp_tg_on = 0;
 		if (ctrl_pdata->dsi_off_state == DSI_LP_MODE)
 			rc = mdss_dsi_blank(pdata);
@@ -814,16 +1122,19 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 
 			/*
 			 *  Okay, since framebuffer is registered, display the kernel logo if needed
-			 */
+			*/
+#if !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 			if ((!ctrl_pdata->panel_data.panel_info.cont_splash_enabled)
 					&& (ctrl_pdata->panel_data.panel_info.early_lcd_on))
-				load_samsung_boot_logo();
-		}
+				load_samsung_boot_logo(); 
+	
+#endif
+			}
 		break;
 	case MDSS_EVENT_CONT_SPLASH_FINISH:
+		ctrl_pdata->ctrl_state &= ~CTRL_STATE_MDP_ACTIVE;
 		ctrl_pdata->mdp_tg_on = 0;
 		if (1){ //(ctrl_pdata->on_cmds.link_state == DSI_LP_MODE) {
-
 			rc = mdss_dsi_cont_splash_on(pdata);
 		} else {
 			pr_debug("%s:event=%d, Dsi On not called: ctrl_state: %d\n",
@@ -838,13 +1149,19 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	case MDSS_EVENT_DSI_CMDLIST_KOFF:
 		mdss_dsi_cmdlist_commit(ctrl_pdata, 1);
 		break;
+	case MDSS_EVENT_CONT_SPLASH_BEGIN:
+		if (ctrl_pdata->dsi_on_state == DSI_HS_MODE) {
+			/* Panel is Enabled in Bootloader */
+			rc = mdss_dsi_blank(pdata);
+		}
+		break;
 	case MDSS_EVENT_FIRST_FRAME_UPDATE:
 		pr_debug("MDSS_FIRST_FRAME_UPDATE\n");
 		ctrl_pdata->mdp_tg_on = 1;
 	/*Event is send only if cont_splash feature is enabled */
 		if (ctrl_pdata->dsi_off_state == DSI_HS_MODE) {
 			/* Panel is Enabled in Bootloader */
-			ctrl_pdata->panel_state |= PANEL_ON;
+			ctrl_pdata->ctrl_state |= CTRL_STATE_PANEL_INIT;
 			rc = mdss_dsi_blank(pdata);
 		}
 		break;
@@ -860,13 +1177,46 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 			rc = ctrl_pdata->vendor_event_handler(event);
 		else
 			pr_debug("%s: unhandled event=%d\n", __func__, event);
-		
+
 		break;
 	}
 	pr_debug("%s-:event=%d, rc=%d\n", __func__, event, rc);
 	return rc;
 }
 
+#if defined(CONFIG_ESD_ERR_FG_RECOVERY)
+void esd_recovery()
+{
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+
+	if (pdata_for_esd == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+	}
+
+	ctrl_pdata = container_of(pdata_for_esd, struct mdss_dsi_ctrl_pdata,
+				panel_data);
+
+	pr_info("%s+: ctrl=%p ndx=%d\n",
+				__func__, ctrl_pdata, ctrl_pdata->ndx);
+
+	if (pdata_for_esd) {
+		if (pdata_for_esd->panel_info.panel_power_on) {
+			mutex_lock(&power_state_chagne);
+			pr_info("%s In ESD_RECOVERY",__func__);
+
+			ctrl_pdata->panel_data.event_handler(pdata_for_esd, MDSS_EVENT_PANEL_OFF, NULL);
+
+			mdelay(20);
+			ctrl_pdata->panel_data.event_handler(pdata_for_esd, MDSS_EVENT_UNBLANK, NULL);
+
+#if defined(CONFIG_MDNIE_LITE_TUNING)
+			//is_negative_on();
+#endif
+			mutex_unlock(&power_state_chagne);
+		}
+	}
+}
+#endif
 static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1040,6 +1390,69 @@ int mdss_dsi_retrieve_ctrl_resources(struct platform_device *pdev, int mode,
 	return 0;
 }
 
+#ifdef DEBUG_LDI_STATUS
+int read_ldi_status(void);
+#endif
+void mdss_dsi_dump_power_clk(struct mdss_panel_data *pdata, int flag) {
+#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
+	u8 rc, te_count = 0;
+	u8 te_max = 250;
+#endif
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	if (pdata == NULL)
+		return;
+
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
+	pr_info(" ============ waiting for TE ============\n");
+	for (te_count = 0 ; te_count < te_max ; te_count++)
+	{
+		rc = gpio_get_value(ctrl_pdata->disp_te_gpio);
+		if(rc != 0)
+		{
+			pr_info("%s: gpio_get_value(ctrl_pdata->disp_te_gpio) =%d\n",
+				__func__, rc);
+			break;
+		}
+		
+		udelay(80);
+	}		
+#endif
+
+	pr_info(" ============ dump power & clk start ============\n");
+	if ((ctrl_pdata->shared_pdata).vdd_vreg)
+		pr_info("vdd_vreg : %d\n", regulator_is_enabled((ctrl_pdata->shared_pdata).vdd_vreg));
+	if ((ctrl_pdata->shared_pdata).vdd_io_vreg)
+		pr_info("vdd_io_vreg : %d\n", regulator_is_enabled((ctrl_pdata->shared_pdata).vdd_io_vreg));
+	if ((ctrl_pdata->shared_pdata).vdda_vreg)
+		pr_info("vdda_vreg : %d\n", regulator_is_enabled((ctrl_pdata->shared_pdata).vdda_vreg));
+	clock_debug_print_clock2(ctrl_pdata->pixel_clk);
+	clock_debug_print_clock2(ctrl_pdata->byte_clk);
+	clock_debug_print_clock2(ctrl_pdata->esc_clk);
+	pr_info("%s: ctrl ndx=%d clk_cnt=%d\n",
+			__func__, ctrl_pdata->ndx, ctrl_pdata->clk_cnt);
+	pr_info(" ============ dump power & clk end ============\n");
+	pr_info(" === check manufacture ID cf) EVT0 0xXXXX0X / EVT1 0xXXXX2X ===\n");
+	pr_info(" Current LDI manufacture ID = 0x%x	\n", gv_manufacture_id);	
+#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
+	if(te_count == te_max)
+	{
+		pr_info("LDI doesn't generate TE/ manufacture ID = 0x%x", gv_manufacture_id);
+#ifdef DEBUG_LDI_STATUS	
+		if(flag)
+		{
+			if(read_ldi_status())
+			pr_err("%s : Can not read LDI status\n",__func__);
+		}
+#endif		
+		panic("LDI doesn't generate TE/ manufacture ID = 0x%x", gv_manufacture_id);
+	}
+
+#endif
+}
 
 int dsi_panel_device_register(struct platform_device *pdev,
 			      struct mdss_panel_common_pdata *panel_data)
@@ -1101,7 +1514,7 @@ int dsi_panel_device_register(struct platform_device *pdev,
 	} else {
 		rc = gpio_request(ctrl_pdata->disp_en_gpio, "disp_enable");
 		if (rc) {
-			pr_err("request reset gpio failed, rc=%d\n",
+			pr_err("request disp_en gpio failed, rc=%d\n",
 			       rc);
 			gpio_free(ctrl_pdata->disp_en_gpio);
 			return -ENODEV;
@@ -1134,7 +1547,7 @@ int dsi_panel_device_register(struct platform_device *pdev,
 			gpio_free(ctrl_pdata->disp_te_gpio);
 			return -ENODEV;
 		}
-
+		
 		rc = gpio_direction_input(ctrl_pdata->disp_te_gpio);
 		if (rc) {
 			pr_err("set_direction for disp_en gpio failed, rc=%d\n",
@@ -1171,13 +1584,113 @@ int dsi_panel_device_register(struct platform_device *pdev,
 		pr_err("%s:%d, booster gpio not specified\n",
 						__func__, __LINE__);
 	} else {
-		rc = gpio_request(ctrl_pdata->boost_gpio, "disp_rst_n");
+		rc = gpio_request(ctrl_pdata->boost_gpio, "boost_gpio");
 		if (rc) {
-			pr_err("request booster gpio failed, rc=%d\n",
-				rc);
+			pr_err("request booster gpio failed, rc=%d\n",rc);
 			gpio_free(ctrl_pdata->boost_gpio);
-			if (gpio_is_valid(ctrl_pdata->boost_gpio))
-				gpio_free(ctrl_pdata->boost_gpio);
+			return -ENODEV;
+		}
+	}
+	ctrl_pdata->vddi_en = of_get_named_gpio(pdev->dev.of_node, "qcom,vddi_en", 0);
+	if (!gpio_is_valid(ctrl_pdata->vddi_en)) {
+		pr_err("%s:%d, vddi_en gpio not specified\n", __func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->vddi_en, "vddi_en");
+		if (rc) {
+			pr_err("request vddi_en gpio failed, rc=%d\n",rc);
+			gpio_free(ctrl_pdata->vddi_en);
+			return -ENODEV;
+		}
+	}
+
+	ctrl_pdata->lcd_en = of_get_named_gpio(pdev->dev.of_node, "qcom,lcd_en", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_en)) {
+		pr_err("%s:%d, lcd_en gpio not specified\n", __func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->lcd_en, "lcd_en");
+		if (rc) {
+			pr_err("request vddi_en gpio failed, rc=%d\n",rc);
+			gpio_free(ctrl_pdata->lcd_en);
+			return -ENODEV;
+		}
+	}
+#endif
+
+#if defined(CONFIG_DUAL_LCD)
+	ctrl_pdata->lcd_sel_gpio = of_get_named_gpio(pdev->dev.of_node, "samsung,lcd-sel-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_sel_gpio)) {
+		pr_err("%s:%d, reset gpio not specified\n", __func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->lcd_sel_gpio, "lcd_sel");
+		if (rc) {
+			pr_err("request lcd_sel gpio failed, rc=%d\n", rc);
+			gpio_free(ctrl_pdata->lcd_sel_gpio);
+			return -ENODEV;
+		}
+	}
+#endif
+
+#ifdef CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL
+	ctrl_pdata->lcd_en_gpio = of_get_named_gpio(pdev->dev.of_node,
+						 "qcom,lcd-en-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_en_gpio)) {
+		pr_err("%s:%d, lcd_en_gpio not specified\n",
+						__func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->lcd_en_gpio, "lcd_en_gpio");
+		if (rc) {
+			pr_err("request lcd_en_gpio failed, rc=%d\n",
+			       rc);
+			gpio_free(ctrl_pdata->lcd_en_gpio);
+			return -ENODEV;
+		}
+		rc = gpio_tlmm_config(GPIO_CFG(ctrl_pdata->lcd_en_gpio, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+
+		if (rc) {
+			pr_err("%s: unable to config tlmm = %d\n",
+				__func__, ctrl_pdata->lcd_en_gpio);
+			gpio_free(ctrl_pdata->lcd_en_gpio);
+			return -ENODEV;
+		}
+
+		rc = gpio_direction_output(ctrl_pdata->lcd_en_gpio,1);
+		if (rc) {
+			pr_err("set_direction for lcd_en_gpio gpio failed, rc=%d\n",
+			       rc);
+			gpio_free(ctrl_pdata->lcd_en_gpio);
+			return -ENODEV;
+		}
+		pr_info("%s: lcd_en_gpio=%d\n", __func__,
+					ctrl_pdata->lcd_en_gpio);
+	}
+
+	ctrl_pdata->bl_en_gpio = of_get_named_gpio(pdev->dev.of_node,
+						 "qcom,bl-en-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->bl_en_gpio)) {
+		pr_err("%s:%d, bl_en gpio not specified\n",
+						__func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->bl_en_gpio, "bl_en_gpio");
+		if (rc) {
+			pr_err("request bl_en gpio failed, rc=%d\n",
+				rc);
+			gpio_free(ctrl_pdata->bl_en_gpio);
+			return -ENODEV;
+		}
+	}
+#endif
+#if defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
+	ctrl_pdata->lcd_en_p_gpio = of_get_named_gpio(pdev->dev.of_node,
+						 "qcom,lcd-en-p-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_en_p_gpio)) {
+		pr_err("%s:%d, lcd_en_p gpio not specified\n",
+						__func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->lcd_en_p_gpio, "lcd_en_p_gpio");
+		if (rc) {
+			pr_err("request lcd_en_p gpio failed, rc=%d\n",
+				rc);
+			gpio_free(ctrl_pdata->lcd_en_p_gpio);
 			return -ENODEV;
 		}
 	}
@@ -1226,18 +1739,26 @@ int dsi_panel_device_register(struct platform_device *pdev,
 	/*
 	 * register in mdp driver
 	 */
-#if 0
-	cont_splash_enabled = of_property_read_bool(pdev->dev.of_node,
-			"qcom,cont-splash-enabled");
-	if (!cont_splash_enabled) {
+
+	ctrl_pdata->pclk_rate = mipi->dsi_pclk_rate;
+	ctrl_pdata->byte_clk_rate = panel_data->panel_info.clk_rate / 8;
+	pr_debug("%s: pclk=%d, bclk=%d\n", __func__,
+			ctrl_pdata->pclk_rate, ctrl_pdata->byte_clk_rate);
+
+	ctrl_pdata->ctrl_state = CTRL_STATE_UNKNOWN;
+
+	if(!contsplash_lkstat)
+	{
 		pr_info("%s:%d Continuous splash flag not found.\n",
-				__func__, __LINE__);
+			__func__, __LINE__);
 		ctrl_pdata->panel_data.panel_info.cont_splash_enabled = 0;
 		ctrl_pdata->panel_data.panel_info.panel_power_on = 0;
-	} else {
+	}
+	else
+	{
 		pr_info("%s:%d Continuous splash flag enabled.\n",
 				__func__, __LINE__);
-
+		
 		ctrl_pdata->panel_data.panel_info.cont_splash_enabled = 1;
 		ctrl_pdata->panel_data.panel_info.panel_power_on = 1;
 		rc = mdss_dsi_panel_power_on(&(ctrl_pdata->panel_data), 1);
@@ -1245,35 +1766,11 @@ int dsi_panel_device_register(struct platform_device *pdev,
 			pr_err("%s: Panel power on failed\n", __func__);
 			return rc;
 		}
-	}
-#else
-	ctrl_pdata->panel_data.panel_info.cont_splash_enabled = contsplash_lkstat;
-	ctrl_pdata->panel_data.panel_info.panel_power_on = contsplash_lkstat;
-#endif
-
-	ctrl_pdata->pclk_rate = mipi->dsi_pclk_rate;
-	ctrl_pdata->byte_clk_rate = panel_data->panel_info.clk_rate / 8;
-	pr_debug("%s: pclk=%d, bclk=%d\n", __func__,
-			ctrl_pdata->pclk_rate, ctrl_pdata->byte_clk_rate);
-
-	if (ctrl_pdata->panel_data.panel_info.cont_splash_enabled) {
 		mdss_dsi_clk_ctrl(ctrl_pdata, 1);
-				
-		rc = mdss_dsi_enable_bus_clocks(ctrl_pdata);
-		if (rc) {
-			pr_err("%s: failed to enable bus clocks. rc=%d\n", __func__,
-				rc);
-			return rc;
-		}
-		rc = mdss_dsi_panel_power_on(&(ctrl_pdata->panel_data), 1);
-		if (rc) {
-			pr_err("%s: Panel power on failed\n", __func__);
-			return rc;
-		}
-		if (mipi->mode == DSI_CMD_MODE)
-			mdss_dsi_clk_ctrl(ctrl_pdata, 0);
-	}
+		ctrl_pdata->ctrl_state |=
+			(CTRL_STATE_MDP_ACTIVE);
 
+	}
 	rc = mdss_register_panel(ctrl_pdev, &(ctrl_pdata->panel_data));
 	if (rc) {
 		dev_err(&pdev->dev, "unable to register MIPI DSI panel\n");
@@ -1281,6 +1778,12 @@ int dsi_panel_device_register(struct platform_device *pdev,
 			gpio_free(ctrl_pdata->rst_gpio);
 		if (gpio_is_valid(ctrl_pdata->disp_en_gpio))
 			gpio_free(ctrl_pdata->disp_en_gpio);
+#ifdef CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL
+		if (gpio_is_valid(ctrl_pdata->lcd_en_gpio))
+			gpio_free(ctrl_pdata->lcd_en_gpio);
+		if (gpio_is_valid(ctrl_pdata->bl_en_gpio))
+			gpio_free(ctrl_pdata->bl_en_gpio);
+#endif
 		return rc;
 	}
 
@@ -1306,7 +1809,6 @@ int dsi_panel_device_register(struct platform_device *pdev,
 		ctrl_pdata->ndx = 1;
 	}
 
-	ctrl_pdata->panel_state = UNKNOWN_STATE;
 	pr_debug("%s: Panal data initialized\n", __func__);
 	return 0;
 }

@@ -72,6 +72,5 @@ int mdss_mdp_rotator_queue(struct mdss_mdp_rotator_session *rot,
 
 int mdss_mdp_rotator_release(struct mdss_mdp_rotator_session *rot);
 int mdss_mdp_rotator_release_all(void);
-void mdss_mdp_rotator_wait4idle(void);
 
 #endif /* MDSS_MDP_ROTATOR_H */

@@ -125,6 +125,14 @@ int change_conf(struct usb_function *f,
 void set_interface_count(struct usb_configuration *config,
 	struct usb_config_descriptor *c);
 
+/* Description  : Set config mode
+ *		  This mode will be used for deciding other interface.
+ * Parameter    : u16 w_length
+ *	  - 4 means MAC request.
+ *	  - Windows and Linux PC always request 9 or maxpconfig size.
+ */
+void set_config_mode(u16 w_length);
+
 /* Description  : Set string mode
  *		  This mode will be used for deciding other interface.
  * Parameter    : u16 w_length
@@ -132,4 +140,11 @@ void set_interface_count(struct usb_configuration *config,
  *		  - Windows and Linux PC always request 255 size.
  */
 void set_string_mode(u16 w_length);
+
+/* Description  : Get Host OS type
+ * Return value : type - u16
+ *		- 0 : MAC PC
+ *		- 1 : Windows and Linux PC
+ */
+u16 get_host_os_type(void);
 #endif /* __MULTI_CONFIG_H */

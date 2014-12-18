@@ -11,14 +11,23 @@
  */
 
 /include/ "skeleton.dtsi"
-/include/ "mpq8092-iommu.dtsi"
-/include/ "msm-gdsc.dtsi"
-/include/ "mpq8092-ion.dtsi"
 
 / {
 	model = "Qualcomm MPQ8092";
 	compatible = "qcom,mpq8092";
 	interrupt-parent = <&intc>;
+
+	soc: soc { };
+};
+
+/include/ "mpq8092-iommu.dtsi"
+/include/ "msm-gdsc.dtsi"
+/include/ "mpq8092-ion.dtsi"
+
+&soc {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	ranges;
 
 	intc: interrupt-controller@f9000000 {
 		compatible = "qcom,msm-qgic2";
@@ -58,6 +67,11 @@
 		reg = <0xf995e000 0x1000>;
 		interrupts = <0 114 0>;
 		status = "disabled";
+	};
+
+	qcom,msm-imem@fe805000 {
+                compatible = "qcom,msm-imem";
+                reg = <0xfe805000 0x1000>; /* Address and size of IMEM */
 	};
 
 	spmi_bus: qcom,spmi@fc4c0000 {
@@ -121,6 +135,15 @@
 		reg = <0xfc580000 0x17c>;
 		interrupts = <0 243 0>;
 	};
+
+	qcom,wdt@f9017000 {
+		compatible = "qcom,msm-watchdog";
+		reg = <0xf9017000 0x1000>;
+		interrupts = <0 3 0>, <0 4 0>;
+		qcom,bark-time = <11000>;
+		qcom,pet-time = <10000>;
+		qcom,ipi-ping;
+	};
 };
 
 &gdsc_venus {
@@ -132,10 +155,6 @@
 };
 
 &gdsc_jpeg {
-	status = "ok";
-};
-
-&gdsc_vfe {
 	status = "ok";
 };
 

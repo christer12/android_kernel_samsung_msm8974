@@ -18,6 +18,7 @@
 #include <linux/mmc/card.h>
 #include <linux/mmc/mmc.h>
 #include <linux/pm_runtime.h>
+#include <linux/reboot.h>
 
 #include "core.h"
 #include "bus.h"
@@ -468,6 +469,15 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 	}
 
 	if (card->ext_csd.rev >= 5) {
+		/* enable BKOPS configuration for Toshiba eMMC */
+		if (card->cid.manfid == 0x11) {
+			pr_info("Enabling BKOPS for the Toshiba eMMC\n");
+			card->host->caps2 |= MMC_CAP2_INIT_BKOPS;
+			card->host->caps2 |= MMC_CAP2_PACKED_WR;
+			card->host->caps2 |= MMC_CAP2_PACKED_WR_CONTROL;
+			card->host->caps2 |= MMC_CAP2_STOP_REQUEST;
+		}
+
 		/* check whether the eMMC card supports BKOPS */
 		if (ext_csd[EXT_CSD_BKOPS_SUPPORT] & 0x1) {
 			card->ext_csd.bkops = 1;
@@ -489,8 +499,9 @@ static int mmc_read_ext_csd(struct mmc_card *card, u8 *ext_csd)
 		pr_info("%s: BKOPS_EN bit = %d\n",
 			mmc_hostname(card->host), card->ext_csd.bkops_en);
 
-		/* check whether the eMMC card supports HPI */
-		if (ext_csd[EXT_CSD_HPI_FEATURES] & 0x1) {
+		/* enable HPI mode only for Toshiba eMMC */
+		if (card->cid.manfid == 0x11 &&
+				(ext_csd[EXT_CSD_HPI_FEATURES] & 0x1)) {
 			card->ext_csd.hpi = 1;
 			if (ext_csd[EXT_CSD_HPI_FEATURES] & 0x2)
 				card->ext_csd.hpi_cmd =	MMC_STOP_TRANSMISSION;
@@ -916,6 +927,20 @@ out:
 	return err;
 }
 
+static int mmc_reboot_notify(struct notifier_block *notify_block,
+		unsigned long event, void *unused)
+{
+	struct mmc_card *card = container_of(
+			notify_block, struct mmc_card, reboot_notify);
+
+	if (event != SYS_RESTART)
+		card->issue_long_pon = true;
+	else
+		card->issue_long_pon = false;
+
+	return NOTIFY_OK;
+}
+
 /*
  * Handle the detection and initialisation of a card.
  *
@@ -995,6 +1020,7 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		card->type = MMC_TYPE_MMC;
 		card->rca = 1;
 		memcpy(card->raw_cid, cid, sizeof(card->raw_cid));
+		card->reboot_notify.notifier_call = mmc_reboot_notify;
 	}
 
 	/*
@@ -1416,8 +1442,6 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		if (card->ext_csd.bkops_en) {
 			INIT_DELAYED_WORK(&card->bkops_info.dw,
 					  mmc_start_idle_time_bkops);
-			INIT_WORK(&card->bkops_info.poll_for_completion,
-				  mmc_bkops_completion_polling);
 
 			/*
 			 * Calculate the time to start the BKOPs checking.
@@ -1489,6 +1513,22 @@ static int mmc_poweroff_notify(struct mmc_card *card, unsigned int notify_type)
 	return err;
 }
 
+int mmc_send_long_pon(struct mmc_card *card)
+{
+	int err = 0;
+	struct mmc_host *host = card->host;
+
+	mmc_claim_host(host);
+	if (card->issue_long_pon && mmc_can_poweroff_notify(card)) {
+		err = mmc_poweroff_notify(host->card, EXT_CSD_POWER_OFF_LONG);
+		if (err)
+			pr_warning("%s: error %d sending Long PON",
+					mmc_hostname(host), err);
+	}
+	mmc_release_host(host);
+	return err;
+}
+
 /*
  * Host is being removed. Free up the current card.
  */
@@ -1497,6 +1537,7 @@ static void mmc_remove(struct mmc_host *host)
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
+	unregister_reboot_notifier(&host->card->reboot_notify);
 	mmc_remove_card(host->card);
 
 	mmc_claim_host(host);
@@ -1762,6 +1803,8 @@ int mmc_attach_mmc(struct mmc_host *host)
 		goto remove_card;
 
 	mmc_init_clk_scaling(host);
+
+	register_reboot_notifier(&host->card->reboot_notify);
 
 	return 0;
 

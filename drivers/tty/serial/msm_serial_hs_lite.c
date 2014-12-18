@@ -64,6 +64,21 @@ enum uart_core_type {
 	BLSP_HSUART,
 };
 
+#if defined(CONFIG_MACH_LT03EUR)
+enum uart_gpio_type {
+	FUNC_GPIO,
+	FUNC_UART,
+};
+#endif
+
+#define DUMP_UART_PACKET 1
+#define FULL_DUMP_UART_PACKET 0
+
+#if DUMP_UART_PACKET
+static char rx_buf[64]; /* 64 is rx fifo size */
+static char tx_buf[64]; /* 64 is tx fifo size */
+#endif
+
 /*
  * UART can be used in 2-wire or 4-wire mode.
  * Use uart_func_mode to set 2-wire or 4-wire mode.
@@ -547,6 +562,11 @@ static void handle_rx(struct uart_port *port, unsigned int misr)
 	unsigned int sr;
 	int count = 0;
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
+#if DUMP_UART_PACKET
+	int rx_buf_count = 0;
+
+	memset(rx_buf, 0xFF, 64);
+#endif
 
 	vid = msm_hsl_port->ver_id;
 	/*
@@ -599,12 +619,41 @@ static void handle_rx(struct uart_port *port, unsigned int misr)
 		else if (sr & UARTDM_SR_PAR_FRAME_BMSK)
 			flag = TTY_FRAME;
 
+#if DUMP_UART_PACKET
+		if (count < 4) {
+			if (rx_buf_count <= (sizeof(rx_buf) - count)) {
+				memcpy(rx_buf+rx_buf_count, &c, count);
+				rx_buf_count += count;
+			}
+		} else {
+			if (rx_buf_count <= (sizeof(rx_buf) - sizeof(int))) {
+				memcpy(rx_buf+rx_buf_count, &c, sizeof(int));
+				rx_buf_count += sizeof(int);
+			}
+		}
+#endif
+
 		/* TODO: handle sysrq */
 		/* if (!uart_handle_sysrq_char(port, c)) */
 		tty_insert_flip_string(tty, (char *) &c,
 				       (count > 4) ? 4 : count);
 		count -= 4;
 	}
+#if DUMP_UART_PACKET
+	/* skip insignificanty packet */
+#if FULL_DUMP_UART_PACKET
+	print_hex_dump(KERN_DEBUG, "RX UART: ",
+					16, 1, DUMP_PREFIX_ADDRESS,
+					rx_buf, rx_buf_count, 1);
+#else
+	if (rx_buf_count > 4) {
+		if (!is_console(port))
+			print_hex_dump(KERN_DEBUG, "RX UART: ", 16,
+				1, DUMP_PREFIX_ADDRESS, rx_buf,
+				rx_buf_count > 16 ? 16 : rx_buf_count, 1);
+	}
+#endif
+#endif
 
 	tty_flip_buffer_push(tty);
 }
@@ -618,6 +667,11 @@ static void handle_tx(struct uart_port *port)
 	unsigned int tf_pointer = 0;
 	unsigned int vid;
 
+#if DUMP_UART_PACKET
+	int tx_buf_count = 0;
+
+	memset(tx_buf, 0xFF, 64);
+#endif
 	vid = UART_TO_MSM(port)->ver_id;
 	tx_count = uart_circ_chars_pending(xmit);
 
@@ -673,6 +727,21 @@ static void handle_tx(struct uart_port *port)
 			break;
 		}
 		}
+
+#if DUMP_UART_PACKET
+		if ((tx_count - tf_pointer) < 4) {
+			if (tx_buf_count <= (sizeof(tx_buf) - (tx_count - tf_pointer))) {
+				memcpy(tx_buf+tx_buf_count, &x, tx_count - tf_pointer);
+				tx_buf_count += (tx_count - tf_pointer);
+			}
+		} else {
+			if (tx_buf_count <= (sizeof(tx_buf) - sizeof(int))) {
+				memcpy(tx_buf+tx_buf_count, &x, sizeof(int));
+				tx_buf_count += sizeof(int);
+			}
+		}
+#endif
+
 		msm_hsl_write(port, x, regmap[vid][UARTDM_TF]);
 		xmit->tail = ((tx_count - tf_pointer < 4) ?
 			      (tx_count - tf_pointer + xmit->tail) :
@@ -681,6 +750,21 @@ static void handle_tx(struct uart_port *port)
 		sent_tx = 1;
 	}
 
+#if DUMP_UART_PACKET
+	/* skip echo packet */
+#if FULL_DUMP_UART_PACKET
+	print_hex_dump(KERN_DEBUG, "TX UART: ",
+				16, 1, DUMP_PREFIX_ADDRESS,
+				tx_buf, tx_count, 1);
+#else
+	if (tx_count > 4) {
+		if (!is_console(port))
+			print_hex_dump(KERN_DEBUG, "TX UART: ",
+				16, 1, DUMP_PREFIX_ADDRESS,
+				tx_buf, tx_count > 16 ? 16 : tx_count, 1);
+	}
+#endif
+#endif
 	if (uart_circ_empty(xmit))
 		msm_hsl_stop_tx(port);
 
@@ -1862,6 +1946,30 @@ static int __devexit msm_serial_hsl_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#if defined(CONFIG_MACH_LT03EUR)
+static void msm_serial_hsl_set_gpios(struct device *dev, enum uart_gpio_type type)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	struct msm_serial_hslite_platform_data *pdata;
+	pdata = pdev->dev.platform_data;
+	
+	if (pdata->config_gpio) {
+		switch (type) {
+		case FUNC_GPIO:
+			pr_err("set uart as gpio\n");
+			gpio_tlmm_config(GPIO_CFG(pdata->uart_tx_gpio, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
+			gpio_tlmm_config(GPIO_CFG(pdata->uart_rx_gpio, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
+			break;
+		case FUNC_UART:
+			pr_err("restore to uart\n");
+			gpio_tlmm_config(GPIO_CFG(pdata->uart_tx_gpio, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
+			gpio_tlmm_config(GPIO_CFG(pdata->uart_rx_gpio, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);		
+			break;
+		}
+	}	
+}
+#endif
+	
 #ifdef CONFIG_PM
 static int msm_serial_hsl_suspend(struct device *dev)
 {
@@ -1879,6 +1987,9 @@ static int msm_serial_hsl_suspend(struct device *dev)
 			enable_irq_wake(port->irq);
 	}
 
+#if defined(CONFIG_MACH_LT03EUR)
+	msm_serial_hsl_set_gpios(dev, FUNC_GPIO);
+#endif
 	return 0;
 }
 
@@ -1897,6 +2008,10 @@ static int msm_serial_hsl_resume(struct device *dev)
 		if (is_console(port))
 			msm_hsl_init_clock(port);
 	}
+
+#if defined(CONFIG_MACH_LT03EUR)
+	msm_serial_hsl_set_gpios(dev, FUNC_UART);
+#endif
 
 	return 0;
 }

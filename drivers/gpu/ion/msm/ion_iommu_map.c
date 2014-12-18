@@ -434,9 +434,14 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 	mutex_lock(&msm_iommu_map_mutex);
 	iommu_meta = ion_iommu_meta_lookup(table);
 
-	if (!iommu_meta)
+	if (!iommu_meta) {
 		iommu_meta = ion_iommu_meta_create(client, handle, table, size);
-	else
+		if (IS_ERR_OR_NULL(iommu_meta)) {
+			mutex_unlock(&msm_iommu_map_mutex);
+			ret = PTR_ERR(iommu_meta);
+			goto out;
+		}
+	} else
 		kref_get(&iommu_meta->ref);
 	BUG_ON(iommu_meta->size != size);
 	mutex_unlock(&msm_iommu_map_mutex);
@@ -452,7 +457,7 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 			ret = 0;
 		} else {
 			ret = PTR_ERR(iommu_map);
-			goto out_unlock;
+			goto meta_put_out;
 		}
 	} else {
 		if (iommu_map->flags != iommu_flags) {
@@ -460,13 +465,13 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 				__func__, handle,
 				iommu_map->flags, iommu_flags);
 			ret = -EINVAL;
-			goto out_unlock;
+			goto meta_put_out;
 		} else if (iommu_map->mapped_size != iova_length) {
 			pr_err("%s: handle %p is already mapped with length %x, trying to map with length %lx\n",
 				__func__, handle, iommu_map->mapped_size,
 				iova_length);
 			ret = -EINVAL;
-			goto out_unlock;
+			goto meta_put_out;
 		} else {
 			kref_get(&iommu_map->ref);
 			*iova = iommu_map->iova_addr;
@@ -476,14 +481,15 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 	*buffer_size = size;
 	return ret;
 
-out_unlock:
-	mutex_unlock(&iommu_meta->lock);
-out:
 
+meta_put_out:
+	mutex_unlock(&iommu_meta->lock);
 	ion_iommu_meta_put(iommu_meta);
+out:	
 	return ret;
 }
 EXPORT_SYMBOL(ion_map_iommu);
+
 
 static void ion_iommu_map_release(struct kref *kref)
 {

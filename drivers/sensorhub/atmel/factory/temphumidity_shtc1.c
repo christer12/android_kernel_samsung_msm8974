@@ -31,6 +31,8 @@
 #define MODEL_NAME	"SHV-E330K"
 #elif defined(CONFIG_MACH_KS01LGT)
 #define MODEL_NAME	"SHV-E330L"
+#elif defined(CONFIG_MACH_JACTIVESKT)
+#define MODEL_NAME	"SHV-E470S"
 #else
 #define MODEL_NAME	"SGH-I337"
 #endif
@@ -38,7 +40,7 @@
 #define CP_THM_ADC_SAMPLING_CNT 7
 
 #if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
+	|| defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 /* {adc, temp*10}, -20 to +70 */
 static struct cp_thm_adc_table temp_table_cp[] = {
 	{27279, 700}, {27367, 690}, {27455, 680}, {27543, 670}, {27631, 660},
@@ -81,7 +83,7 @@ static int get_cp_thm_value(struct ssp_data *data)
 static int convert_adc_to_temp(struct ssp_data *data, unsigned int adc)
 {
 #if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
+	|| defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 	int low = 0;
 	int high = 0;
 	int mid = 0;

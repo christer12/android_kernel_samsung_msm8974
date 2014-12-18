@@ -47,18 +47,6 @@
 			compatible = "sec-fuelgauge,i2c";
 			reg = <0x36>;
 			fuelgauge,fuel_int = <&msmgpio 42 0x1>;
-			fuelgauge,capacity_max = <1000>;
-			fuelgauge,capacity_max_margin = <50>;
-			fuelgauge,capacity_min = <0>;
-			fuelgauge,capacity_calculation_type = <7>;
-			fuelgauge,fuel_alert_soc = <2>;
-
-			fuelgauge,rcomp0 = <0x70>;
-			fuelgauge,rcomp_charging = <0x75>;
-			fuelgauge,temp_cohot = <0xFFFFFCAE>; /* -850 */
-			fuelgauge,temp_cocold = <0xFFFFEF98>;/* -4200 */
-			fuelgauge,is_using_model_data;
-			fuelgauge,type_str = "SDI";
 		};
 	};
 };

@@ -98,14 +98,13 @@ enum mDNIe_mode_CABC_type {
 };
 
 struct cmc624_platform_data {  // JUN_0523
-    int gpio_sda;           // <&msmgpio 29 0x00>;
-    int gpio_scl;           // <&msmgpio 30 0x00>;
+    u32 gpio_sda;           // <&msmgpio 29 0x00>;
+    u32 gpio_scl;           // <&msmgpio 30 0x00>;
     int ima_int;
     int ima_sleep;
-    int cmc_en;		  //  <&pm8941_gpios 07 0>;
+    int cmc_en;		    //  <&pm8941_gpios 07 0>;
     int ima_nRst;           //  <&pm8941_gpios 14 0>;
     int booster;            //  <&pm8941_gpios 16 0>;
-    int lcd_en;             //  <&pm8941_gpios 17 0>;
     int lcd_esd_det;        //  <&pm8941_gpios 18 0>;
     int mlcd_rst;           //  <&pm8941_gpios 19 0>;
     int ima_pwr_en;         //  <&pm8941_gpios 20 0>;

@@ -20,7 +20,9 @@
 #include "mdss_fb.h"
 #include "mdss_mdp.h"
 #include "mdss_dsi.h"
+#include "mdss_edp.h"
 
+int count_wait_for_timeout = 0;
 int get_lcd_attached(void);
 
 /* wait for at least 2 vsyncs for lowest refresh rate (24hz) */
@@ -286,12 +288,17 @@ static int mdss_mdp_video_remove_vsync_handler(struct mdss_mdp_ctl *ctl,
 	return 0;
 }
 
+#if defined(CONFIG_DUAL_LCD)
+extern struct mutex mdss_switching_mutex;
+#endif
+
 static int mdss_mdp_video_stop(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_video_ctx *ctx;
 	struct mdss_mdp_vsync_handler *tmp, *handle;
 	int rc;
 
+	pr_info("%s() count_wait_for_timeout=%d\n", __func__, count_wait_for_timeout);
 	pr_debug("stop ctl=%d\n", ctl->num);
 
 	ctx = (struct mdss_mdp_video_ctx *) ctl->priv_data;
@@ -301,6 +308,10 @@ static int mdss_mdp_video_stop(struct mdss_mdp_ctl *ctl)
 	}
 
 	if (ctx->timegen_en) {
+#if defined(CONFIG_DUAL_LCD)
+		mutex_lock(&mdss_switching_mutex);
+#endif
+		
 		rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_BLANK, NULL);
 		if (rc == -EBUSY) {
 			pr_debug("intf #%d busy don't turn off\n",
@@ -318,6 +329,10 @@ static int mdss_mdp_video_stop(struct mdss_mdp_ctl *ctl)
 
 		mdss_mdp_irq_disable(MDSS_MDP_IRQ_INTF_UNDER_RUN,
 			ctl->intf_num);
+
+#if defined(CONFIG_DUAL_LCD)
+		mutex_unlock(&mdss_switching_mutex);
+#endif
 	}
 
 	list_for_each_entry_safe(handle, tmp, &ctx->vsync_handlers, list)
@@ -360,7 +375,7 @@ static void mdss_mdp_video_vsync_intr_done(void *arg)
 	}
 	spin_unlock(&ctx->vsync_lock);
 }
-
+extern void mdp5_dump_regs(void);
 static int mdss_mdp_video_pollwait(struct mdss_mdp_ctl *ctl)
 {
 	struct mdss_mdp_video_ctx *ctx = ctl->priv_data;
@@ -394,6 +409,9 @@ static int mdss_mdp_video_pollwait(struct mdss_mdp_ctl *ctl)
 	} else {
 		pr_warn("vsync poll timed out! rc=%d status=0x%x mask=0x%x\n",
 				rc, status, mask);
+		count_wait_for_timeout++;
+/*		mdp5_dump_regs();
+		panic("MULTIPLE POLL TIME OUT FB%d !!!", ctl->mfd->index);*/
 	}
 
 	return rc;
@@ -444,8 +462,9 @@ static void mdss_mdp_video_underrun_intr_done(void *arg)
 		return;
 
 	ctl->underrun_cnt++;
-	pr_debug("display underrun detected for ctl=%d count=%d\n", ctl->num,
+	pr_info("display underrun detected for ctl=%d count=%d\n", ctl->num,
 			ctl->underrun_cnt);
+	mdss_mdp_underrun_dump_info();
 }
 
 static int mdss_mdp_video_config_fps(struct mdss_mdp_ctl *ctl, int new_fps)
@@ -595,6 +614,10 @@ static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 
 	pr_debug("%s: ctx->timegen_en: %d\n", __func__, ctx->timegen_en);
 	if (!ctx->timegen_en) {
+#if defined(CONFIG_DUAL_LCD)
+		mutex_lock(&mdss_switching_mutex);
+#endif
+		
 		rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_UNBLANK, NULL);
 		if (rc) {
 			pr_warn("intf #%d unblank error (%d)\n",
@@ -609,18 +632,24 @@ static int mdss_mdp_video_display(struct mdss_mdp_ctl *ctl, void *arg)
 		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 
 		mdss_mdp_irq_enable(MDSS_MDP_IRQ_INTF_UNDER_RUN, ctl->intf_num);
-pr_info("%s: TG_ON\n", __func__);
+		pr_info("%s: TG_ON\n", __func__);
 		mdp_video_write(ctx, MDSS_MDP_REG_INTF_TIMING_ENGINE_EN, 1);
 		wmb();
 
-		rc = wait_for_completion_interruptible_timeout(&ctx->vsync_comp,
+		rc = wait_for_completion_timeout(&ctx->vsync_comp,
 				usecs_to_jiffies(VSYNC_TIMEOUT_US));
-		WARN(rc <= 0, "timeout (%d) enabling timegen on ctl=%d\n",
+		WARN(rc == 0, "timeout (%d) enabling timegen on ctl=%d\n",
 				rc, ctl->num);
 
 		ctx->timegen_en = true;
 		rc = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_PANEL_ON, NULL);
 		WARN(rc, "intf %d panel on error (%d)\n", ctl->intf_num, rc);
+#if defined(CONFIG_DUAL_LCD)
+		mutex_unlock(&mdss_switching_mutex);
+#endif
+#if defined(CONFIG_FB_MSM_EDP_SAMSUNG)
+		set_backlight_first_kick_off();
+#endif
 	}
 
 	return 0;
@@ -695,7 +724,17 @@ int mdss_mdp_video_reconfigure_splash_done(struct mdss_mdp_ctl *ctl)
 	ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_FIRST_FRAME_UPDATE, NULL);
 
 	pdata->panel_info.cont_splash_enabled = 0;
-
+	
+/* unnessary code - edp cont_splash */	
+#ifndef CONFIG_FB_MSM_EDP_SAMSUNG
+	ret = mdss_mdp_ctl_intf_event(ctl, MDSS_EVENT_CONT_SPLASH_BEGIN,
+				      NULL);
+#endif					  
+	if (ret) {
+		pr_err("%s: Failed to handle 'CONT_SPLASH_BEGIN' event\n",
+					__func__);
+		return ret;
+	}
 
 	mdss_mdp_ctl_write(ctl, 0, MDSS_MDP_LM_BORDER_COLOR);
 	off = MDSS_MDP_REG_INTF_OFFSET(ctl->intf_num);
@@ -724,6 +763,8 @@ int mdss_mdp_video_start(struct mdss_mdp_ctl *ctl)
 	struct intf_timing_params itp = {0};
 	u32 dst_bpp;
 	int i;
+
+	pr_info("%s() count_wait_for_timeout=%d\n", __func__, count_wait_for_timeout);
 
 	mdata = ctl->mdata;
 	pinfo = &ctl->panel_data->panel_info;

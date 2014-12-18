@@ -81,7 +81,6 @@ struct kgsl_device_platform_data {
 	int (*set_grp_async)(void);
 	unsigned int idle_timeout;
 	bool strtstp_sleepwake;
-	unsigned int nap_allowed;
 	unsigned int clk_map;
 	unsigned int idle_needed;
 	unsigned int step_mul;
@@ -89,6 +88,8 @@ struct kgsl_device_platform_data {
 	struct kgsl_device_iommu_data *iommu_data;
 	int iommu_count;
 	struct msm_dcvs_core_info *core_info;
+	struct coresight_device *csdev;
+	struct coresight_platform_data *coresight_pdata;
 	unsigned int chipid;
 };
 

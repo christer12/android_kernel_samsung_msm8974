@@ -361,7 +361,7 @@ static int mhl_sii_wait_for_rgnd(struct mhl_tx_ctrl *mhl_ctrl)
 	pr_debug("%s:%u\n", __func__, __LINE__);
 	INIT_COMPLETION(mhl_ctrl->rgnd_done);
 	timeout = wait_for_completion_interruptible_timeout
-		(&mhl_ctrl->rgnd_done, HZ/2);
+		(&mhl_ctrl->rgnd_done, HZ * 3);
 	if (!timeout) {
 		/* most likely nothing plugged in USB */
 		/* USB HOST connected or already in USB mode */
@@ -377,6 +377,28 @@ static int mhl_sii_device_discovery(void *data, int id,
 {
 	int rc;
 	struct mhl_tx_ctrl *mhl_ctrl = data;
+	struct i2c_client *client = mhl_ctrl->i2c_handle;
+	unsigned long flags;
+
+	if (!mhl_ctrl->irq_req_done) {
+		rc = request_threaded_irq(mhl_ctrl->i2c_handle->irq, NULL,
+					  &mhl_tx_isr,
+					  IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+					  client->dev.driver->name, mhl_ctrl);
+		if (rc) {
+			pr_err("request_threaded_irq failed, status: %d\n",
+			       rc);
+			return -EINVAL;
+		} else {
+			pr_debug("request_threaded_irq succeeded\n");
+			mhl_ctrl->irq_req_done = true;
+		}
+	} else {
+		enable_irq(client->irq);
+	}
+
+	/* wait for i2c interrupt line to be activated */
+	msleep(100);
 
 	if (id) {
 		/* When MHL cable is disconnected we get a sii8334
@@ -396,12 +418,18 @@ static int mhl_sii_device_discovery(void *data, int id,
 		mhl_ctrl->notify_usb_online = usb_notify_cb;
 
 	if (!mhl_ctrl->disc_enabled) {
+		spin_lock_irqsave(&mhl_ctrl->lock, flags);
+		mhl_ctrl->tx_powered_off = false;
+		spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
 		mhl_sii_reset_pin(mhl_ctrl, 0);
 		msleep(50);
 		mhl_sii_reset_pin(mhl_ctrl, 1);
-		/* TX PR-guide requires a 100 ms wait here */
+		/* chipset PR recommends waiting for at least 100 ms
+		 * the chipset needs longer to come out of D3 state.
+		 */
 		msleep(100);
 		mhl_init_reg_settings(mhl_ctrl, true);
+		msleep(100);
 		rc = mhl_sii_wait_for_rgnd(mhl_ctrl);
 	} else {
 		if (mhl_ctrl->cur_state == POWER_STATE_D3) {
@@ -479,6 +507,10 @@ static void cbus_reset(struct mhl_tx_ctrl *mhl_ctrl)
 {
 	uint8_t i;
 	struct i2c_client *client = mhl_ctrl->i2c_handle;
+
+	/* Read the chip rev ID */
+	mhl_ctrl->chip_rev_id = MHL_SII_PAGE0_RD(0x04);
+	pr_debug("MHL: chip rev ID read=[%x]\n", mhl_ctrl->chip_rev_id);
 
 	/*
 	 * REG_SRST
@@ -690,8 +722,8 @@ static void mhl_init_reg_settings(struct mhl_tx_ctrl *mhl_ctrl,
 
 	MHL_SII_PAGE3_WR(0x3C, 0x80);
 
-	if (mhl_ctrl->cur_state != POWER_STATE_D3)
-		MHL_SII_REG_NAME_MOD(REG_INT_CTRL, BIT6 | BIT5 | BIT4, BIT4);
+	MHL_SII_REG_NAME_MOD(REG_INT_CTRL,
+			     (BIT6 | BIT5 | BIT4), (BIT6 | BIT4));
 
 	/* Enable Auto Soft RESET */
 	MHL_SII_REG_NAME_WR(REG_SRST, 0x084);
@@ -781,11 +813,13 @@ static bool is_mhl_powered(void *mhl_ctx)
 void mhl_tmds_ctrl(struct mhl_tx_ctrl *mhl_ctrl, uint8_t on)
 {
 	struct i2c_client *client = mhl_ctrl->i2c_handle;
+
 	if (on) {
 		MHL_SII_REG_NAME_MOD(REG_TMDS_CCTRL, BIT4, BIT4);
-		mhl_drive_hpd(mhl_ctrl, HPD_UP);
+		mhl_ctrl->tmds_en_state = true;
 	} else {
 		MHL_SII_REG_NAME_MOD(REG_TMDS_CCTRL, BIT4, 0x00);
+		mhl_ctrl->tmds_en_state = false;
 	}
 }
 
@@ -858,18 +892,14 @@ static void mhl_msm_connection(struct mhl_tx_ctrl *mhl_ctrl)
 static void mhl_msm_disconnection(struct mhl_tx_ctrl *mhl_ctrl)
 {
 	struct i2c_client *client = mhl_ctrl->i2c_handle;
-	unsigned long flags;
-
-	spin_lock_irqsave(&mhl_ctrl->lock, flags);
-	mhl_ctrl->dwnstream_hpd &= ~BIT6;
-	spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
 
 	/* disabling Tx termination */
 	MHL_SII_REG_NAME_WR(REG_MHLTX_CTL1, 0xD0);
 	switch_mode(mhl_ctrl, POWER_STATE_D3, true);
+	mhl_msc_clear(mhl_ctrl);
 }
 
-static int  mhl_msm_read_rgnd_int(struct mhl_tx_ctrl *mhl_ctrl)
+static int mhl_msm_read_rgnd_int(struct mhl_tx_ctrl *mhl_ctrl)
 {
 	uint8_t rgnd_imp;
 	struct i2c_client *client = mhl_ctrl->i2c_handle;
@@ -966,12 +996,12 @@ static int dev_detect_isr(struct mhl_tx_ctrl *mhl_ctrl)
 
 	if ((0x00 == status) &&\
 	    (mhl_ctrl->cur_state == POWER_STATE_D3)) {
-		pr_err("%s: invalid intr\n", __func__);
+		pr_warn("%s: invalid intr\n", __func__);
 		return 0;
 	}
 
 	if (0xFF == status) {
-		pr_debug("%s: invalid intr 0xff\n", __func__);
+		pr_warn("%s: invalid intr 0xff\n", __func__);
 		MHL_SII_REG_NAME_WR(REG_INTR4, status);
 		return 0;
 	}
@@ -998,13 +1028,14 @@ static int dev_detect_isr(struct mhl_tx_ctrl *mhl_ctrl)
 		power_supply_changed(&mhl_ctrl->mhl_psy);
 		if (mhl_ctrl->notify_usb_online)
 			mhl_ctrl->notify_usb_online(0);
-		return -EACCES;
+		return 0;
 	}
 
 	if (status & BIT5) {
 		/* clr intr - reg int4 */
 		pr_debug("%s: mhl discon: int4 st=%02X\n", __func__,
 			 (int)status);
+		mhl_ctrl->mhl_det_discon = true;
 
 		reg = MHL_SII_REG_NAME_RD(REG_INTR4);
 		MHL_SII_REG_NAME_WR(REG_INTR4, reg);
@@ -1012,7 +1043,7 @@ static int dev_detect_isr(struct mhl_tx_ctrl *mhl_ctrl)
 		power_supply_changed(&mhl_ctrl->mhl_psy);
 		if (mhl_ctrl->notify_usb_online)
 			mhl_ctrl->notify_usb_online(0);
-		return -EACCES;
+		return 0;
 	}
 
 	if ((mhl_ctrl->cur_state != POWER_STATE_D0_NO_MHL) &&\
@@ -1053,6 +1084,32 @@ static void mhl_misc_isr(struct mhl_tx_ctrl *mhl_ctrl)
 	MHL_SII_REG_NAME_WR(REG_INTR5,  intr_5_stat);
 }
 
+static void mhl_tx_down(struct mhl_tx_ctrl *mhl_ctrl)
+{
+	struct i2c_client *client = mhl_ctrl->i2c_handle;
+	unsigned long flags;
+	uint8_t reg;
+
+	switch_mode(mhl_ctrl, POWER_STATE_D3, true);
+
+	reg = MHL_SII_REG_NAME_RD(REG_INTR1);
+	MHL_SII_REG_NAME_WR(REG_INTR1, reg);
+
+	reg = MHL_SII_REG_NAME_RD(REG_INTR4);
+	MHL_SII_REG_NAME_WR(REG_INTR4, reg);
+
+	/* disable INTR1 and INTR4 */
+	MHL_SII_REG_NAME_MOD(REG_INTR1_MASK, BIT6, 0x0);
+	MHL_SII_REG_NAME_MOD(REG_INTR4_MASK,
+		(BIT0 | BIT1 | BIT2 | BIT3 | BIT4 | BIT5 | BIT6), 0x0);
+
+	MHL_SII_PAGE1_MOD(0x003D, BIT0, 0x00);
+	spin_lock_irqsave(&mhl_ctrl->lock, flags);
+	mhl_ctrl->tx_powered_off = true;
+	spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
+	pr_debug("%s: disabled\n", __func__);
+	disable_irq_nosync(client->irq);
+}
 
 static void mhl_hpd_stat_isr(struct mhl_tx_ctrl *mhl_ctrl)
 {
@@ -1084,20 +1141,24 @@ static void mhl_hpd_stat_isr(struct mhl_tx_ctrl *mhl_ctrl)
 
 		spin_lock_irqsave(&mhl_ctrl->lock, flags);
 		t = mhl_ctrl->dwnstream_hpd;
+		pr_debug("%s: %u: dwnstrm_hpd=0x%02x\n",
+			 __func__, __LINE__, mhl_ctrl->dwnstream_hpd);
 		spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
 
 		if (BIT6 & (cbus_stat ^ t)) {
 			u8 status = cbus_stat & BIT6;
 			mhl_drive_hpd(mhl_ctrl, status ? HPD_UP : HPD_DOWN);
-			if (!status) {
-				MHL_SII_PAGE1_MOD(0x003D, BIT0, 0x00);
-				spin_lock_irqsave(&mhl_ctrl->lock, flags);
-				mhl_ctrl->tx_powered_off = true;
-				spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
+			if (!status && mhl_ctrl->mhl_det_discon) {
+				pr_debug("%s:%u: power_down\n",
+					 __func__, __LINE__);
+				mhl_tx_down(mhl_ctrl);
 			}
 			spin_lock_irqsave(&mhl_ctrl->lock, flags);
 			mhl_ctrl->dwnstream_hpd = cbus_stat;
+			pr_debug("%s: %u: dwnstrm_hpd=0x%02x\n",
+				 __func__, __LINE__, mhl_ctrl->dwnstream_hpd);
 			spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
+			mhl_ctrl->mhl_det_discon = false;
 		}
 	}
 }
@@ -1251,6 +1312,7 @@ static void mhl_cbus_isr(struct mhl_tx_ctrl *mhl_ctrl)
 	uint8_t cmd_data = 0x0;
 	int msc_msg_recved = 0;
 	int rc = -1;
+	unsigned long flags;
 	struct i2c_client *client = mhl_ctrl->i2c_handle;
 
 	regval = MHL_SII_REG_NAME_RD(REG_CBUS_INTR_STATUS);
@@ -1291,6 +1353,14 @@ static void mhl_cbus_isr(struct mhl_tx_ctrl *mhl_ctrl)
 		intr = MHL_SII_REG_NAME_RD(REG_CBUS_SET_INT_0);
 		MHL_SII_REG_NAME_WR(REG_CBUS_SET_INT_0, intr);
 		mhl_msc_recv_set_int(mhl_ctrl, 0, intr);
+		if (intr & MHL_INT_DCAP_CHG) {
+			/* No need to go to low power mode */
+			spin_lock_irqsave(&mhl_ctrl->lock, flags);
+			mhl_ctrl->dwnstream_hpd = 0x00;
+			pr_debug("%s: %u: dwnstrm_hpd=0x%02x\n",
+				 __func__, __LINE__, mhl_ctrl->dwnstream_hpd);
+			spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
+		}
 
 		pr_debug("%s: MHL_INT_0 = %02x\n", __func__, intr);
 		intr = MHL_SII_REG_NAME_RD(REG_CBUS_SET_INT_1);
@@ -1336,7 +1406,17 @@ static irqreturn_t mhl_tx_isr(int irq, void *data)
 {
 	int rc;
 	struct mhl_tx_ctrl *mhl_ctrl = (struct mhl_tx_ctrl *)data;
+	unsigned long flags;
+
 	pr_debug("%s: Getting Interrupts\n", __func__);
+
+	spin_lock_irqsave(&mhl_ctrl->lock, flags);
+	if (mhl_ctrl->tx_powered_off) {
+		pr_warn("%s: powered off\n", __func__);
+		spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
+		return IRQ_HANDLED;
+	}
+	spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
 
 	/*
 	 * Check RGND, MHL_EST, CBUS_LOCKOUT, SCDT
@@ -1367,38 +1447,6 @@ static irqreturn_t mhl_tx_isr(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int mhl_tx_chip_init(struct mhl_tx_ctrl *mhl_ctrl)
-{
-	uint8_t chip_rev_id = 0x00;
-	struct i2c_client *client = mhl_ctrl->i2c_handle;
-	unsigned long flags;
-
-
-	spin_lock_irqsave(&mhl_ctrl->lock, flags);
-	mhl_ctrl->dwnstream_hpd = 0;
-	mhl_ctrl->tx_powered_off = false;
-	spin_unlock_irqrestore(&mhl_ctrl->lock, flags);
-
-	/* Reset the TX chip */
-	mhl_sii_reset_pin(mhl_ctrl, 0);
-	msleep(20);
-	mhl_sii_reset_pin(mhl_ctrl, 1);
-	/* TX PR-guide requires a 100 ms wait here */
-	msleep(100);
-
-	/* Read the chip rev ID */
-	chip_rev_id = MHL_SII_PAGE0_RD(0x04);
-	pr_debug("MHL: chip rev ID read=[%x]\n", chip_rev_id);
-	mhl_ctrl->chip_rev_id = chip_rev_id;
-
-	/*
-	 * Need to disable MHL discovery if
-	 * MHL-USB handshake is implemented
-	 */
-	mhl_init_reg_settings(mhl_ctrl, true);
-	switch_mode(mhl_ctrl, POWER_STATE_D3, true);
-	return 0;
-}
 
 static int mhl_sii_reg_config(struct i2c_client *client, bool enable)
 {
@@ -1728,30 +1776,12 @@ static int mhl_i2c_probe(struct i2c_client *client,
 		}
 	}
 
-	rc = mhl_tx_chip_init(mhl_ctrl);
-	if (rc) {
-		pr_err("%s: tx chip init failed [%d]\n",
-			__func__, rc);
-		goto failed_probe;
-	}
+	mhl_ctrl->dwnstream_hpd = 0;
+	mhl_ctrl->tx_powered_off = false;
+
 
 	init_completion(&mhl_ctrl->rgnd_done);
 
-	pr_debug("%s: IRQ from GPIO INTR = %d\n",
-		__func__, mhl_ctrl->i2c_handle->irq);
-	pr_debug("%s: Driver name = [%s]\n", __func__,
-		client->dev.driver->name);
-	rc = request_threaded_irq(mhl_ctrl->i2c_handle->irq, NULL,
-				   &mhl_tx_isr,
-				  IRQF_TRIGGER_LOW | IRQF_ONESHOT,
-				 client->dev.driver->name, mhl_ctrl);
-	if (rc) {
-		pr_err("request_threaded_irq failed, status: %d\n",
-		       rc);
-		goto failed_probe;
-	} else {
-		pr_debug("request_threaded_irq succeeded\n");
-	}
 
 	mhl_ctrl->mhl_psy.name = "ext-vbus";
 	mhl_ctrl->mhl_psy.type = POWER_SUPPLY_TYPE_USB_DCP;
@@ -1874,6 +1904,72 @@ static struct i2c_device_id mhl_sii_i2c_id[] = {
 
 MODULE_DEVICE_TABLE(i2c, mhl_sii_i2c_id);
 
+#if defined(CONFIG_PM) || defined(CONFIG_PM_SLEEP)
+static int mhl_i2c_suspend_sub(struct i2c_client *client)
+{
+	enable_irq_wake(client->irq);
+	disable_irq(client->irq);
+	return 0;
+}
+
+static int mhl_i2c_resume_sub(struct i2c_client *client)
+{
+	disable_irq_wake(client->irq);
+	enable_irq(client->irq);
+	return 0;
+}
+#endif /* defined(CONFIG_PM) || defined(CONFIG_PM_SLEEP) */
+
+#if defined(CONFIG_PM) && !defined(CONFIG_PM_SLEEP)
+static int mhl_i2c_suspend(struct i2c_client *client, pm_message_t state)
+{
+	if (!client)
+		return -ENODEV;
+	pr_debug("%s: mhl suspend\n", __func__);
+	return mhl_i2c_suspend_sub(client);
+}
+
+static int mhl_i2c_resume(struct i2c_client *client)
+{
+	if (!client)
+		return -ENODEV;
+	pr_debug("%s: mhl resume\n", __func__);
+	return mhl_i2c_resume_sub(client);
+}
+#else
+#define mhl_i2c_suspend NULL
+#define mhl_i2c_resume NULL
+#endif /* defined(CONFIG_PM) && !defined(CONFIG_PM_SLEEP) */
+
+#ifdef CONFIG_PM_SLEEP
+static int mhl_i2c_pm_suspend(struct device *dev)
+{
+	struct i2c_client *client =
+		container_of(dev, struct i2c_client, dev);
+
+	if (!client)
+		return -ENODEV;
+	pr_debug("%s: mhl pm suspend\n", __func__);
+	return mhl_i2c_suspend_sub(client);
+
+}
+
+static int mhl_i2c_pm_resume(struct device *dev)
+{
+	struct i2c_client *client =
+		container_of(dev, struct i2c_client, dev);
+
+	if (!client)
+		return -ENODEV;
+	pr_debug("%s: mhl pm resume\n", __func__);
+	return mhl_i2c_resume_sub(client);
+}
+
+static const struct dev_pm_ops mhl_i2c_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(mhl_i2c_pm_suspend, mhl_i2c_pm_resume)
+};
+#endif /* CONFIG_PM_SLEEP */
+
 static struct of_device_id mhl_match_table[] = {
 	{.compatible = COMPATIBLE_NAME,},
 	{ },
@@ -1884,9 +1980,16 @@ static struct i2c_driver mhl_sii_i2c_driver = {
 		.name = MHL_DRIVER_NAME,
 		.owner = THIS_MODULE,
 		.of_match_table = mhl_match_table,
+#ifdef CONFIG_PM_SLEEP
+		.pm = &mhl_i2c_pm_ops,
+#endif /* CONFIG_PM_SLEEP */
 	},
 	.probe = mhl_i2c_probe,
 	.remove =  mhl_i2c_remove,
+#if defined(CONFIG_PM) && !defined(CONFIG_PM_SLEEP)
+	.suspend = mhl_i2c_suspend,
+	.resume = mhl_i2c_resume,
+#endif /* defined(CONFIG_PM) && !defined(CONFIG_PM_SLEEP) */
 	.id_table = mhl_sii_i2c_id,
 };
 

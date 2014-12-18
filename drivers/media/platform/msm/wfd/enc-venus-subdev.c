@@ -31,7 +31,6 @@
 
 #define BUF_TYPE_OUTPUT V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE
 #define BUF_TYPE_INPUT V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE
-#define EXCLUSIVITY_HACK
 
 static struct ion_client *venc_ion_client;
 static long venc_secure(struct v4l2_subdev *sd);
@@ -82,6 +81,26 @@ int venc_init(struct v4l2_subdev *sd, u32 val)
 	return venc_ion_client ? 0 : -ENOMEM;
 }
 
+static int invalidate_cache(struct ion_client *client,
+		struct mem_region *mregion)
+{
+	if (!client || !mregion) {
+		WFD_MSG_ERR(
+			"Failed to flush ion buffer: invalid client or region\n");
+		return -EINVAL;
+	} else if (!mregion->ion_handle) {
+		WFD_MSG_ERR(
+			"Failed to flush ion buffer: not an ion buffer\n");
+		return -EINVAL;
+	}
+
+	return msm_ion_do_cache_op(client,
+			mregion->ion_handle,
+			mregion->kvaddr,
+			mregion->size,
+			ION_IOC_INV_CACHES);
+
+}
 static int next_free_index(struct index_bitmap *index_bitmap)
 {
 	int index = find_first_zero_bit(index_bitmap->bitmap,
@@ -240,6 +259,16 @@ static int venc_vidc_callback_thread(void *data)
 				vb->v4l2_buf.timestamp = buffer.timestamp;
 				vb->v4l2_planes[0].bytesused =
 					buffer.m.planes[0].bytesused;
+
+				/* Buffer is on its way to userspace, so
+				 * invalidate the cache */
+				rc = invalidate_cache(venc_ion_client, mregion);
+				if (rc) {
+					WFD_MSG_WARN(
+						"Failed to invalidate cache %d\n",
+						rc);
+					/* Not fatal, move on */
+				}
 
 				inst->vmops.op_buffer_done(
 					inst->vmops.cbdata, 0, vb);
@@ -529,31 +558,6 @@ venc_buf_req_fail:
 	return rc;
 }
 
-#ifdef EXCLUSIVITY_HACK
-static int check_exclusivity(struct venc_inst *inst)
-{
-	int rc = 0;
-	struct v4l2_control ctrl;
-
-	if (inst->secure)
-		return true;
-
-	ctrl.id = V4L2_CID_MPEG_VIDC_ONGOING_SECURE_SESSIONS;
-	rc = msm_vidc_g_ctrl(inst->vidc_context, &ctrl);
-	if (rc || ctrl.value) {
-		WFD_MSG_ERR("Refusing to start non-secure session");
-		return false;
-	}
-
-	return true;
-}
-#else
-static int check_exclusivity(struct venc_inst *inst)
-{
-	return true;
-}
-#endif
-
 static long venc_start(struct v4l2_subdev *sd)
 {
 	struct venc_inst *inst = NULL;
@@ -566,11 +570,6 @@ static long venc_start(struct v4l2_subdev *sd)
 	}
 
 	inst = (struct venc_inst *)sd->dev_priv;
-
-	if (!check_exclusivity(inst)) {
-		rc = -ENOTSUPP;
-		goto venc_start_fail;
-	}
 
 	if (set_default_properties(inst))
 		WFD_MSG_WARN("Couldn't set default properties\n");
@@ -700,6 +699,33 @@ set_input_buffer_fail:
 	return rc;
 }
 
+#ifdef CONFIG_MSM_WFD_DEBUG
+static void *venc_map_kernel(struct ion_client *client,
+		struct ion_handle *handle)
+{
+	return ion_map_kernel(client, handle);
+}
+
+static void venc_unmap_kernel(struct ion_client *client,
+		struct ion_handle *handle)
+{
+	ion_unmap_kernel(client, handle);
+}
+#else
+
+static void *venc_map_kernel(struct ion_client *client,
+		struct ion_handle *handle)
+{
+	return NULL;
+}
+
+static void venc_unmap_kernel(struct ion_client *client,
+		struct ion_handle *handle)
+{
+	return;
+}
+#endif
+
 static int venc_map_user_to_kernel(struct venc_inst *inst,
 		struct mem_region *mregion)
 {
@@ -734,18 +760,8 @@ static int venc_map_user_to_kernel(struct venc_inst *inst,
 		goto venc_map_fail;
 	}
 
-	if (!inst->secure) {
-		mregion->kvaddr = ion_map_kernel(venc_ion_client,
-				mregion->ion_handle);
-		if (IS_ERR_OR_NULL(mregion->kvaddr)) {
-			WFD_MSG_ERR("Failed to map buffer into kernel\n");
-			rc = PTR_ERR(mregion->kvaddr);
-			mregion->kvaddr = NULL;
-			goto venc_map_fail;
-		}
-	} else {
-		mregion->kvaddr = NULL;
-	}
+	mregion->kvaddr = inst->secure ? NULL :
+		venc_map_kernel(venc_ion_client, mregion->ion_handle);
 
 	if (inst->secure) {
 		rc = msm_ion_secure_buffer(venc_ion_client,
@@ -782,8 +798,8 @@ venc_domain_fail:
 	if (inst->secure)
 		msm_ion_unsecure_buffer(venc_ion_client, mregion->ion_handle);
 venc_map_iommu_map_fail:
-	if (!inst->secure)
-		ion_unmap_kernel(venc_ion_client, mregion->ion_handle);
+	if (!inst->secure && !IS_ERR_OR_NULL(mregion->kvaddr))
+		venc_unmap_kernel(venc_ion_client, mregion->ion_handle);
 venc_map_fail:
 	return rc;
 }
@@ -816,8 +832,8 @@ static int venc_unmap_user_to_kernel(struct venc_inst *inst,
 		mregion->paddr = NULL;
 	}
 
-	if (mregion->kvaddr) {
-		ion_unmap_kernel(venc_ion_client, mregion->ion_handle);
+	if (!IS_ERR_OR_NULL(mregion->kvaddr)) {
+		venc_unmap_kernel(venc_ion_client, mregion->ion_handle);
 		mregion->kvaddr = NULL;
 	}
 

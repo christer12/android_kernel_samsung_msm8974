@@ -42,6 +42,9 @@
 #include <mach/msm_xo.h>
 #include <linux/workqueue.h>
 #endif
+#ifdef CONFIG_NFC_PN547_8941_CLOCK_REQUEST
+#include <linux/clk.h>
+#endif
 
 #define MAX_BUFFER_SIZE		512
 
@@ -64,7 +67,9 @@ struct pn547_dev {
 	atomic_t read_flag;
 	bool cancel_read;
 	struct wake_lock nfc_wake_lock;
-
+#ifdef CONFIG_NFC_PN547_8941_CLOCK_REQUEST
+	struct clk *nfc_clk;
+#endif
 #ifdef CONFIG_NFC_PN547_CLOCK_REQUEST
 	unsigned int clk_req_gpio;
 	unsigned int clk_req_irq;
@@ -174,9 +179,9 @@ wait_irq:
 #if NFC_DEBUG
 		pr_info("pn547: wait_event_interruptible : in\n");
 #endif
-
-		ret = wait_event_interruptible(pn547_dev->read_wq,
-			atomic_read(&pn547_dev->read_flag));
+		if(!gpio_get_value(pn547_dev->irq_gpio))
+			ret = wait_event_interruptible(pn547_dev->read_wq,
+				atomic_read(&pn547_dev->read_flag));
 
 #if NFC_DEBUG
 		pr_info("pn547 :   h\n");
@@ -461,6 +466,18 @@ static int pn547_probe(struct i2c_client *client,
 	}
 	pn547_dev->clock_state = false;
 #endif
+#ifdef CONFIG_NFC_PN547_8941_CLOCK_REQUEST
+	pn547_dev->nfc_clk = clk_get(NULL, "nfc_clk");
+	if (IS_ERR(pn547_dev->nfc_clk)) {
+		ret = PTR_ERR(pn547_dev->nfc_clk);
+		printk(KERN_ERR "%s: Couldn't get D1 (%d)\n",
+					__func__, ret);
+	} else {
+		if (clk_prepare_enable(pn547_dev->nfc_clk))
+			printk(KERN_ERR "%s: Couldn't prepare D1\n",
+					__func__);
+	}
+#endif
 	pr_info("%s : IRQ num %d\n", __func__, client->irq);
 
 	pn547_dev->irq_gpio = platform_data->irq_gpio;
@@ -569,6 +586,10 @@ static int pn547_remove(struct i2c_client *client)
 	struct pn547_dev *pn547_dev;
 
 	pn547_dev = i2c_get_clientdata(client);
+#ifdef CONFIG_NFC_PN547_8941_CLOCK_REQUEST
+	if(pn547_dev->nfc_clk)
+		clk_unprepare(pn547_dev->nfc_clk);
+#endif
 	wake_lock_destroy(&pn547_dev->nfc_wake_lock);
 	free_irq(client->irq, pn547_dev);
 	misc_deregister(&pn547_dev->pn547_device);

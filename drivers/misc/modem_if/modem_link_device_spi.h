@@ -159,6 +159,7 @@ struct spi_link_device {
 	unsigned int gpio_ipc_srdy;
 	unsigned int gpio_ipc_sub_mrdy;
 	unsigned int gpio_ipc_sub_srdy;
+	unsigned int gpio_cp_dump_int;
 
 	unsigned int gpio_modem_bin_srdy;
 
@@ -212,6 +213,7 @@ struct spi_platform_data {
 	unsigned gpio_ipc_srdy;
 	unsigned gpio_ipc_sub_mrdy;
 	unsigned gpio_ipc_sub_srdy;
+	unsigned gpio_cp_dump_int;
 
 	void (*cfg_gpio)(void);
 };

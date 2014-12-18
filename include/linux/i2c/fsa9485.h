@@ -72,6 +72,7 @@
 #define DEV_T1_CHARGER_MASK	(DEV_DEDICATED_CHG | DEV_CAR_KIT)
 
 /* Device Type 2 */
+#define DEV_LANHUB		(1 << 9)
 #define DEV_AUDIO_DOCK		(1 << 8)
 #define DEV_SMARTDOCK		(1 << 7)
 #define DEV_AV			(1 << 6)
@@ -111,6 +112,7 @@
 #define	ADC_DOCK_VOL_DN		0x0a
 #define	ADC_DOCK_VOL_UP		0x0b
 #define	ADC_DOCK_PLAY_PAUSE_KEY 0x0d
+#define ADC_LANHUB		0x13
 #define	ADC_CEA936ATYPE1_CHG	0x17
 #define	ADC_JIG_USB_OFF		0x18
 #define	ADC_JIG_USB_ON		0x19
@@ -128,6 +130,7 @@ enum cable_type_t {
 	CABLE_TYPE_AC,
 	CABLE_TYPE_MISC,
 	CABLE_TYPE_CARDOCK,
+	CABLE_TYPE_LANHUB,
 	CABLE_TYPE_UARTOFF,
 	CABLE_TYPE_JIG,
 	CABLE_TYPE_UNKNOWN,
@@ -192,6 +195,7 @@ struct fsa9485_platform_data {
 	void (*dock_cb) (int attached);
 	int  (*dock_init) (void);
 	void (*usb_cdp_cb) (bool attached);
+	void (*lanhub_cb) (bool attached);
 	void (*smartdock_cb) (bool attached);
 	void (*audio_dock_cb) (bool attached);
 };

@@ -94,6 +94,8 @@
 #define CORE_TESTBUS_SEL2	(1 << 4)
 #define CORE_TESTBUS_SEL2_STATE_MACHINE (2 << 4)
 #define CORE_SEL_TESTBUS1 (1 << 0)
+#define CORE_TESTBUS_MASK      0xF
+#define CORE_TESTBUS_SEL2_BIT  4
 
 /*
  * Waiting until end of potential AHB access for data:
@@ -522,19 +524,25 @@ static int msm_init_cm_dll(struct sdhci_host *host)
 	int rc = 0;
 	unsigned long flags;
 	u32 wait_cnt;
+	bool prev_pwrsave, curr_pwrsave;
 
 	pr_debug("%s: Enter %s\n", mmc_hostname(mmc), __func__);
 	spin_lock_irqsave(&host->lock, flags);
-
+	prev_pwrsave = !!(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) &
+			  CORE_CLK_PWRSAVE);
+	curr_pwrsave = prev_pwrsave;
 	/*
 	 * Make sure that clock is always enabled when DLL
 	 * tuning is in progress. Keeping PWRSAVE ON may
 	 * turn off the clock. So let's disable the PWRSAVE
 	 * here and re-enable it once tuning is completed.
 	 */
-	writel_relaxed((readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
-			& ~CORE_CLK_PWRSAVE),
-			host->ioaddr + CORE_VENDOR_SPEC);
+	if (prev_pwrsave) {
+		writel_relaxed((readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
+				& ~CORE_CLK_PWRSAVE),
+				host->ioaddr + CORE_VENDOR_SPEC);
+		curr_pwrsave = false;
+	}
 
 	/* Write 1 to DLL_RST bit of DLL_CONFIG register */
 	writel_relaxed((readl_relaxed(host->ioaddr + CORE_DLL_CONFIG)
@@ -577,10 +585,18 @@ static int msm_init_cm_dll(struct sdhci_host *host)
 	}
 
 out:
-	/* re-enable PWRSAVE */
-	writel_relaxed((readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) |
-			CORE_CLK_PWRSAVE),
-			host->ioaddr + CORE_VENDOR_SPEC);
+	/* Restore the correct PWRSAVE state */
+	if (prev_pwrsave ^ curr_pwrsave) {
+		u32 reg = readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC);
+
+		if (prev_pwrsave)
+			reg |= CORE_CLK_PWRSAVE;
+		else
+			reg &= ~CORE_CLK_PWRSAVE;
+
+		writel_relaxed(reg, host->ioaddr + CORE_VENDOR_SPEC);
+	}
+
 	spin_unlock_irqrestore(&host->lock, flags);
 	pr_debug("%s: Exit %s\n", mmc_hostname(mmc), __func__);
 	return rc;
@@ -1129,6 +1145,7 @@ static struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev)
 	int len, i;
 	int clk_table_len;
 	u32 *clk_table = NULL;
+	enum of_gpio_flags flags = OF_GPIO_ACTIVE_LOW;
 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata) {
@@ -1136,7 +1153,9 @@ static struct sdhci_msm_pltfm_data *sdhci_msm_populate_pdata(struct device *dev)
 		goto out;
 	}
 
-	pdata->status_gpio = of_get_named_gpio_flags(np, "cd-gpios", 0, 0);
+	pdata->status_gpio = of_get_named_gpio_flags(np, "cd-gpios", 0, &flags);
+	if (gpio_is_valid(pdata->status_gpio) & !(flags & OF_GPIO_ACTIVE_LOW))
+		pdata->caps2 |= MMC_CAP2_CD_ACTIVE_HIGH;
 	pdata->ls_gpio = of_get_named_gpio_flags(np, "ls-gpios", 0, 0);
 
 	of_property_read_u32(np, "qcom,bus-width", &bus_width);
@@ -1592,6 +1611,17 @@ static int sdhci_msm_setup_vreg(struct sdhci_msm_pltfm_data *pdata,
 		goto out;
 	}
 
+#ifdef CONFIG_MACH_VIKALCU
+	if(pdata->ls_gpio > 0 && gpio_is_valid(pdata->ls_gpio)) {
+		if(enable) {
+			gpio_set_value(pdata->ls_gpio, 1);
+			mdelay(10);
+		} else {
+			gpio_set_value(pdata->ls_gpio, 0);
+		}
+	}
+#endif
+
 	vreg_table[0] = curr_slot->vdd_data;
 	vreg_table[1] = curr_slot->vdd_io_data;
 
@@ -1606,6 +1636,7 @@ static int sdhci_msm_setup_vreg(struct sdhci_msm_pltfm_data *pdata,
 		}
 	}
 
+#ifndef CONFIG_MACH_VIKALCU
 	if(pdata->ls_gpio > 0 && gpio_is_valid(pdata->ls_gpio)) {
 		if(enable) {
 			gpio_set_value(pdata->ls_gpio, 1);
@@ -1614,6 +1645,7 @@ static int sdhci_msm_setup_vreg(struct sdhci_msm_pltfm_data *pdata,
 			gpio_set_value(pdata->ls_gpio, 0);
 		}
 	}
+#endif
 
 out:
 	return ret;
@@ -1918,7 +1950,7 @@ static void sdhci_msm_toggle_cdr(struct sdhci_host *host, bool enable)
 
 static unsigned int sdhci_msm_max_segs(void)
 {
-	return SDHCI_MSM_MAX_SEGMENTS;
+	return SDHCI_MSM_MAX_SEGMENTS / 16;
 }
 
 static unsigned int sdhci_msm_get_min_clock(struct sdhci_host *host)
@@ -2035,6 +2067,7 @@ static void sdhci_msm_set_clock(struct sdhci_host *host, unsigned int clock)
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
 	struct mmc_ios	curr_ios = host->mmc->ios;
 	u32 sup_clock, ddr_clock;
+	bool curr_pwrsave;
 
 	if (!clock) {
 		sdhci_msm_prepare_clocks(host, false);
@@ -2045,6 +2078,24 @@ static void sdhci_msm_set_clock(struct sdhci_host *host, unsigned int clock)
 	rc = sdhci_msm_prepare_clocks(host, true);
 	if (rc)
 		return;
+
+	if (msm_host->id == 1) { /* power save mode : eMMC only */
+		curr_pwrsave = !!(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC) &
+				CORE_CLK_PWRSAVE);
+		if ((msm_host->clk_rate > 400000) &&
+				!curr_pwrsave && mmc_host_may_gate_card(host->mmc->card))
+			writel_relaxed(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
+					| CORE_CLK_PWRSAVE,
+					host->ioaddr + CORE_VENDOR_SPEC);
+		/*
+		 * Disable pwrsave for a newly added card if doesn't allow clock
+		 * gating.
+		 */
+		else if (curr_pwrsave && !mmc_host_may_gate_card(host->mmc->card))
+			writel_relaxed(readl_relaxed(host->ioaddr + CORE_VENDOR_SPEC)
+					& ~CORE_CLK_PWRSAVE,
+					host->ioaddr + CORE_VENDOR_SPEC);
+	}
 
 	sup_clock = sdhci_msm_get_sup_clk_rate(host, clock);
 	if (curr_ios.timing == MMC_TIMING_UHS_DDR50) {
@@ -2159,27 +2210,40 @@ static void sdhci_msm_disable_data_xfer(struct sdhci_host *host)
 	udelay(CORE_AHB_DESC_DELAY_US);
 }
 
-void sdhci_msm_dump_vendor_registers(struct sdhci_host *host)
+void sdhci_msm_dump_vendor_regs(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
-	
-	pr_info("=========== VENDOR REGISTER DUMP ===============\n");
-	pr_info("Data cnt:    0x%08x | Fifo cnt:     0x%08x\n",
-		readl_relaxed(msm_host->core_mem + CORE_MCI_DATA_CNT),
-		readl_relaxed(msm_host->core_mem + CORE_MCI_FIFO_CNT));
-	pr_info("Int status:  0x%08x\n",
-		readl_relaxed(msm_host->core_mem + CORE_MCI_STATUS));
+	int i, j, index = 0;
+	u32 debug_reg[20] = {0};
+
+	pr_info("----------- VENDOR REGISTER DUMP -----------\n");
+	pr_info("Data cnt: 0x%08x | Fifo cnt: 0x%08x | Int sts: 0x%08x\n",
+			readl_relaxed(msm_host->core_mem + CORE_MCI_DATA_CNT),
+			readl_relaxed(msm_host->core_mem + CORE_MCI_FIFO_CNT),
+			readl_relaxed(msm_host->core_mem + CORE_MCI_STATUS));
+	pr_info("DLL cfg:  0x%08x | DLL sts:  0x%08x\n",
+			readl_relaxed(host->ioaddr + CORE_DLL_CONFIG),
+			readl_relaxed(host->ioaddr + CORE_DLL_STATUS));
 	/* Enable test bus */
-	writel_relaxed(CORE_TESTBUS_ENA | CORE_TESTBUS_SEL2_STATE_MACHINE |
-			CORE_SEL_TESTBUS1,
-			msm_host->core_mem + CORE_TESTBUS_CONFIG);
-	pr_info("Test bus:    0x%08x | debug reg:     0x%08x\n",
-		readl_relaxed(msm_host->core_mem + CORE_TESTBUS_CONFIG),
-		readl_relaxed(msm_host->core_mem + CORE_SDCC_DEBUG_REG));
+	for (j = 0; j < 3; j++) {
+		for (i = 8; i < 16; i++) {
+			if (j == 2 && i > 9)
+				break;
+			writel_relaxed((j << CORE_TESTBUS_SEL2_BIT) |
+					(i & CORE_TESTBUS_MASK),
+					msm_host->core_mem + CORE_TESTBUS_CONFIG);
+			debug_reg[index++] = readl_relaxed(msm_host->core_mem +
+					CORE_SDCC_DEBUG_REG);
+		}
+	}
+	for (i = 0; i < 20; i = i + 4)
+		pr_info(" Test bus[%d to %d]: 0x%08x 0x%08x 0x%08x 0x%08x\n",
+				i, i + 3, debug_reg[i], debug_reg[i+1],
+				debug_reg[i+2], debug_reg[i+3]);
 	/* Disable test bus */
-	writel_relaxed(~CORE_TESTBUS_ENA,
-		msm_host->core_mem + CORE_TESTBUS_CONFIG);
+	writel_relaxed(~CORE_TESTBUS_ENA, msm_host->core_mem +
+			CORE_TESTBUS_CONFIG);
 }
 
 static struct sdhci_ops sdhci_msm_ops = {
@@ -2192,7 +2256,7 @@ static struct sdhci_ops sdhci_msm_ops = {
 	.get_min_clock = sdhci_msm_get_min_clock,
 	.get_max_clock = sdhci_msm_get_max_clock,
 	.disable_data_xfer = sdhci_msm_disable_data_xfer,
-	.dump_vendor_registers = sdhci_msm_dump_vendor_registers,
+	.dump_vendor_regs = sdhci_msm_dump_vendor_regs,
 };
 
 static void mmc_enable_ls_gpio(struct sdhci_host *host, unsigned int gpio_no)
@@ -2202,32 +2266,11 @@ static void mmc_enable_ls_gpio(struct sdhci_host *host, unsigned int gpio_no)
 	if (!gpio_is_valid(gpio_no))
 		return;
 
-	status = gpio_request_one(gpio_no, GPIOF_DIR_IN, "LS_EN");
+	status = gpio_request_one(gpio_no, GPIOF_DIR_OUT, "LS_EN");
 	if (status)
 		pr_err("%s: %s: gpio_request(%d) failed\n",
 				mmc_hostname(host->mmc), __func__, gpio_no);
 }
-
-struct mmc_cd_gpio {
-	unsigned int gpio;
-	char label[0];
-};
-
-u32 sdhci_card_present_state(struct mmc_host *mmc)
-{
-	int status = 1; /* default : removed (low active) */
-	struct mmc_cd_gpio *cd = NULL;
-
-	if(mmc)
-		cd = mmc->hotplug.handler_priv;
-
-	if(cd && gpio_is_valid(cd->gpio))
-		status = gpio_get_value_cansleep(cd->gpio);
-	
-	/* return low active */
-	return !status;
-}
-EXPORT_SYMBOL(sdhci_card_present_state);
 
 /* SYSFS about SD Card Detection */
 extern struct class *sec_class;
@@ -2359,7 +2402,7 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 	ret = clk_set_rate(msm_host->clk, sdhci_msm_get_min_clock(host));
 	if (ret) {
 		dev_err(&pdev->dev, "MClk rate set failed (%d)\n", ret);
-		goto clk_disable;
+		goto pclk_disable;
 	}
 
 	ret = clk_prepare_enable(msm_host->clk);
@@ -2512,20 +2555,19 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 					MMC_CAP_SET_XPC_300|
 					MMC_CAP_SET_XPC_330;
 
-	msm_host->mmc->caps |= MMC_CAP_HW_RESET;
 	msm_host->mmc->caps2 |= msm_host->pdata->caps2;
 	msm_host->mmc->caps2 |= (MMC_CAP2_BOOTPART_NOACC |
 				MMC_CAP2_DETECT_ON_ERR);
-#if defined(CONFIG_MACH_HLTEATT) || defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	msm_host->mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
-#else
-	if(system_rev > 2)
-		msm_host->mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
-#endif
 	msm_host->mmc->caps2 |= MMC_CAP2_POWEROFF_NOTIFY;
 	msm_host->mmc->caps2 |= MMC_CAP2_CLK_SCALE;
-	msm_host->mmc->caps2 |= MMC_CAP2_STOP_REQUEST;
 	msm_host->mmc->caps2 |= MMC_CAP2_CORE_RUNTIME_PM;
+
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	msm_host->mmc->caps2 |= MMC_CAP2_STOP_REQUEST;
+	msm_host->mmc->caps2 |= MMC_CAP2_PACKED_WR | MMC_CAP2_PACKED_WR_CONTROL;
+#endif
 
 	if (msm_host->pdata->nonremovable)
 		msm_host->mmc->caps |= MMC_CAP_NONREMOVABLE;
@@ -2536,7 +2578,6 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 
 	if (msm_host->pdata->ls_gpio || gpio_is_valid(msm_host->pdata->ls_gpio))
 		mmc_enable_ls_gpio(host, msm_host->pdata->ls_gpio);
-
 	if (gpio_is_valid(msm_host->pdata->status_gpio)) {
 		ret = mmc_cd_gpio_request(msm_host->mmc,
 				msm_host->pdata->status_gpio);

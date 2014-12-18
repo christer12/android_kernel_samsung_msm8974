@@ -230,6 +230,12 @@ static void get_temp_humidity_sensordata(char *pchRcvDataFrame, int *iDataIdx,
 
 }
 
+static void get_sig_motion_sensordata(char *pchRcvDataFrame, int *iDataIdx,
+	struct sensor_value *sensorsdata)
+{
+	sensorsdata->sig_motion = (u8)pchRcvDataFrame[(*iDataIdx)++];
+}
+
 int parse_dataframe(struct ssp_data *data, char *pchRcvDataFrame, int iLength)
 {
 	int iDataIdx, iSensorData;
@@ -244,7 +250,7 @@ int parse_dataframe(struct ssp_data *data, char *pchRcvDataFrame, int iLength)
 			iDataIdx++;
 			iSensorData = pchRcvDataFrame[iDataIdx++];
 			if ((iSensorData < 0) ||
-				(iSensorData >= (SENSOR_MAX - 1))) {
+				(iSensorData >= SENSOR_MAX)) {
 				pr_err("[SSP]: %s - Mcu data frame1 error %d\n",
 					__func__, iSensorData);
 				kfree(sensorsdata);
@@ -306,6 +312,7 @@ void initialize_function_pointer(struct ssp_data *data)
 	data->get_sensor_data[TEMPERATURE_HUMIDITY_SENSOR] =
 		get_temp_humidity_sensordata;
 	data->get_sensor_data[GEOMAGNETIC_RAW] = get_geomagnetic_rawdata;
+	data->get_sensor_data[SIG_MOTION_SENSOR] = get_sig_motion_sensordata;
 
 	data->report_sensor_data[ACCELEROMETER_SENSOR] = report_acc_data;
 	data->report_sensor_data[GYROSCOPE_SENSOR] = report_gyro_data;
@@ -318,4 +325,5 @@ void initialize_function_pointer(struct ssp_data *data)
 	data->report_sensor_data[TEMPERATURE_HUMIDITY_SENSOR] =
 		report_temp_humidity_data;
 	data->report_sensor_data[GEOMAGNETIC_RAW] = report_geomagnetic_raw_data;
+	data->report_sensor_data[SIG_MOTION_SENSOR] = report_sig_motion_data;
 }

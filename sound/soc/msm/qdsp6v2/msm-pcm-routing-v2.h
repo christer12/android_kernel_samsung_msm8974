@@ -68,6 +68,8 @@ enum {
 	MSM_FRONTEND_DAI_MULTIMEDIA4,
 	MSM_FRONTEND_DAI_MULTIMEDIA5,
 	MSM_FRONTEND_DAI_MULTIMEDIA6,
+	MSM_FRONTEND_DAI_MULTIMEDIA7,
+	MSM_FRONTEND_DAI_MULTIMEDIA8,
 	MSM_FRONTEND_DAI_CS_VOICE,
 	MSM_FRONTEND_DAI_VOIP,
 	MSM_FRONTEND_DAI_AFE_RX,
@@ -80,8 +82,8 @@ enum {
 	MSM_FRONTEND_DAI_MAX,
 };
 
-#define MSM_FRONTEND_DAI_MM_SIZE (MSM_FRONTEND_DAI_MULTIMEDIA6 + 1)
-#define MSM_FRONTEND_DAI_MM_MAX_ID MSM_FRONTEND_DAI_MULTIMEDIA6
+#define MSM_FRONTEND_DAI_MM_SIZE (MSM_FRONTEND_DAI_MULTIMEDIA8 + 1)
+#define MSM_FRONTEND_DAI_MM_MAX_ID MSM_FRONTEND_DAI_MULTIMEDIA8
 
 enum {
 	MSM_BACKEND_DAI_PRI_I2S_RX = 0,
@@ -138,13 +140,9 @@ void msm_pcm_routing_reg_psthr_stream(int fedai_id, int dspst_id,
 
 void msm_pcm_routing_dereg_phy_stream(int fedai_id, int stream_type);
 
-int lpa_set_volume(unsigned volume);
-
 int msm_routing_check_backend_enabled(int fedai_id);
 
 int multi_ch_pcm_set_volume(unsigned volume);
-
-int compressed_set_volume(unsigned volume);
 
 uint32_t get_adm_rx_topology(void);
 

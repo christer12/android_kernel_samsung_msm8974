@@ -18,7 +18,7 @@
 #include <linux/mmc/host.h>
 #include <linux/pm_qos.h>
 
-#define SDHCI_TRACE_RBUF_SZ_ORDER	4	/* 2^4 pages */
+#define SDHCI_TRACE_RBUF_SZ_ORDER	10	/* 2^10 pages */
 #define SDHCI_TRACE_RBUF_SZ		\
 	(PAGE_SIZE * (1 << SDHCI_TRACE_RBUF_SZ_ORDER))
 #define SDHCI_TRACE_EVENT_SZ		256
@@ -252,8 +252,10 @@ struct sdhci_host {
 
 	struct sdhci_next next_data;
 	ktime_t data_start_time;
+	struct mutex ios_mutex;
 
 	struct sdhci_trace_buffer trace_buf;
+	u32 auto_cmd_err_sts;
 	unsigned long private[0] ____cacheline_aligned;
 };
 #endif /* LINUX_MMC_SDHCI_H */

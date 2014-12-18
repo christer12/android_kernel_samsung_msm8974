@@ -15,7 +15,6 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
  * 02110-1301 USA
  */
-
 #ifndef _SX9500_I2C_REG_H_
 #define _SX9500_I2C_REG_H_
 
@@ -69,25 +68,14 @@ struct smtc_reg_data {
 	unsigned char val;
 };
 
-static const struct smtc_reg_data mode_reg[] = {
-	{
-		.reg = SX9500_CPS_CTRL0_REG,
-		.val = 0x20,
-	},
-	{
-		.reg = SX9500_CPS_CTRL0_REG,
-		.val = 0x21,
-	},
-};
-
 static const struct smtc_reg_data setup_reg[] = {
 	{
 		.reg = SX9500_IRQ_ENABLE_REG,
-		.val = 0x70,
+		.val = 0xF0,
 	},
 	{
 		.reg = SX9500_CPS_CTRL1_REG,
-		.val = 0x03,
+		.val = 0x43,
 	},
 	{
 		.reg = SX9500_CPS_CTRL2_REG,
@@ -95,7 +83,7 @@ static const struct smtc_reg_data setup_reg[] = {
 	},
 	{
 		.reg = SX9500_CPS_CTRL3_REG,
-		.val = 0x01, /* 0x01 not use LPF */
+		.val = 0x01,
 	},
 	{
 		.reg = SX9500_CPS_CTRL4_REG,
@@ -107,7 +95,11 @@ static const struct smtc_reg_data setup_reg[] = {
 	},
 	{
 		.reg = SX9500_CPS_CTRL6_REG,
+#ifdef CONFIG_MACH_LT03VZW
 		.val = 0x0F,
+#else
+		.val = 0x11,
+#endif
 	},
 	{
 		.reg = SX9500_CPS_CTRL7_REG,
@@ -121,6 +113,11 @@ static const struct smtc_reg_data setup_reg[] = {
 		.reg = SX9500_CPS_CTRL0_REG,
 		.val = 0x20,
 	},
+};
+
+enum {
+	OFF = 0,
+	ON = 1
 };
 
 #endif /* _SX9500_I2C_REG_H_*/

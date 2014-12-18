@@ -43,6 +43,7 @@ enum {
 	MAX77803_MUIC_DOCK_CARDOCK,
 	MAX77803_MUIC_DOCK_AUDIODOCK = 7,
 	MAX77803_MUIC_DOCK_SMARTDOCK = 8,
+	MAX77803_MUIC_DOCK_HMT = 11,
 };
 
 /* MAX77686 regulator IDs */
@@ -149,11 +150,11 @@ struct max77803_muic_data {
 #ifdef CONFIG_MFD_MAX77803
 extern struct max77803_muic_data max77803_muic;
 extern struct max77803_regulator_data max77803_regulators[];
-extern void muic_otg_control(int enable);
+extern int muic_otg_control(int enable);
 extern struct max77803_haptic_platform_data max77803_haptic_pdata;
 extern struct max77803_led_platform_data max77803_led_pdata;
 #endif
-#ifdef CONFIG_VIDEO_MHL_V2
+#if defined (CONFIG_VIDEO_MHL_V2) || defined (CONFIG_VIDEO_MHL_SII8246)
 int acc_register_notifier(struct notifier_block *nb);
 #endif
 #endif				/* __LINUX_MFD_MAX77803_H */

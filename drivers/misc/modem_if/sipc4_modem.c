@@ -114,6 +114,7 @@ static struct io_device *create_io_device(struct modem_io_t *io_t,
 	iod->io_typ = io_t->io_type;
 	iod->link_types = io_t->links;
 	iod->net_typ = pdata->modem_net;
+	iod->ipc_version = pdata->ipc_version;
 	iod->use_handover = pdata->use_handover;
 	atomic_set(&iod->opened, 0);
 
@@ -162,8 +163,16 @@ static int attach_devices(struct io_device *iod, enum modem_link tx_link)
 			 */
 			if ((countbits(iod->link_types) <= 1) ||
 					(tx_link == ld->link_type)) {
-				mif_debug("set %s->%s\n", iod->name, ld->name);
+				//mif_info("set %s->%s\n", iod->name, ld->name);
 				set_current_link(iod, ld);
+
+				if (iod->ipc_version == SIPC_VER_42) {
+					if (iod->format == IPC_FMT) {
+						int ch = iod->id & 0x03;
+						mif_info("set %s->%s, ch[%d]\n", iod->name, ld->name, ch);
+						ld->fmt_iods[ch] = iod;
+					}
+				}
 			}
 		}
 	}

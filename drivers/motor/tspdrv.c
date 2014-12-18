@@ -303,7 +303,8 @@ static int tspdrv_parse_dt(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	int rc;
 
-#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
 	vibrator_drvdata.vib_pwm_gpio = of_get_named_gpio(np, "samsung,pmic_vib_pwm_jpn", 0);
 #else
 	vibrator_drvdata.vib_pwm_gpio = of_get_named_gpio(np, "samsung,pmic_vib_pwm", 0);
@@ -313,6 +314,14 @@ static int tspdrv_parse_dt(struct platform_device *pdev)
 		pr_err("%s:%d, reset gpio not specified\n",
 				__func__, __LINE__);
 	} 
+
+#if defined(CONFIG_MOTOR_DRV_DRV2603)
+	vibrator_drvdata.drv2603_en_gpio = of_get_named_gpio(np, "samsung,drv2603_en", 0);
+	if (!gpio_is_valid(vibrator_drvdata.drv2603_en_gpio)) {
+		pr_err("%s:%d, drv2603_en_gpio not specified\n",
+				__func__, __LINE__);
+	}
+#endif
 	
 	rc = of_property_read_u32(np, "samsung,vib_model", &vibrator_drvdata.vib_model);
 	if (rc) {
@@ -360,17 +369,24 @@ static int tspdrv_parse_dt(struct platform_device *pdev)
 	return rc;
 }
 
-
+#ifdef CONFIG_MOTOR_DRV_MAX77803
 static void max77803_haptic_power_onoff(int onoff)
 {
 	int ret;
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_JS_PROJECT) || \
+    defined(CONFIG_MACH_FLTEEUR) || defined(CONFIG_MACH_FLTESKT) || defined(CONFIG_MACH_JVELTEEUR) ||\
+    defined(CONFIG_MACH_VIKALCU)
 	static struct regulator *reg_l23;
 
 	if (!reg_l23) {
 		reg_l23 = regulator_get(NULL, "8941_l23");
+#if defined(CONFIG_MACH_FLTESKT)
 		ret = regulator_set_voltage(reg_l23, 3000000, 3000000);
-
+#elif defined(CONFIG_MACH_HLTEVZW)
+		ret = regulator_set_voltage(reg_l23, 3100000, 3100000);
+#else
+		ret = regulator_set_voltage(reg_l23, 2825000, 2825000);
+#endif
 		if (IS_ERR(reg_l23)) {
 			printk(KERN_ERR"could not get 8941_l23, rc = %ld\n",
 				PTR_ERR(reg_l23));
@@ -430,8 +446,28 @@ static void max77803_haptic_power_onoff(int onoff)
 	}
 #endif
 }
+#endif
 
-
+#if defined(CONFIG_MOTOR_DRV_DRV2603)
+void drv2603_gpio_en(bool en)
+{
+	if (en) {
+		gpio_direction_output(vibrator_drvdata.drv2603_en_gpio, 1);
+	} else {
+		gpio_direction_output(vibrator_drvdata.drv2603_en_gpio, 0);
+	}
+}
+static int32_t drv2603_gpio_init(void)
+{
+	int ret;
+	ret = gpio_request(vibrator_drvdata.drv2603_en_gpio, "vib enable");
+	if (ret < 0) {
+		printk(KERN_ERR "vib enable gpio_request is failed\n");
+		return 1;
+	}
+	return 0;
+}
+#endif
 
 static __devinit int tspdrv_probe(struct platform_device *pdev)
 {
@@ -448,7 +484,8 @@ static __devinit int tspdrv_probe(struct platform_device *pdev)
 	if(rc)
 		return rc;
 
-#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
 	virt_mmss_gp1_base = ioremap(MSM_MMSS_GP3_BASE,0x28);
 #else			
 	virt_mmss_gp1_base = ioremap(MSM_MMSS_GP1_BASE,0x28);
@@ -469,12 +506,14 @@ static __devinit int tspdrv_probe(struct platform_device *pdev)
 	if (g_nmajor < 0) {
 		DbgOut((KERN_ERR "tspdrv: can't get major number.\n"));
 		ret = g_nmajor;
+		iounmap(virt_mmss_gp1_base);
 		return ret;
 	}
 #else
 	ret = misc_register(&miscdev);
 	if (ret) {
 		DbgOut((KERN_ERR "tspdrv: misc_register failed.\n"));
+		iounmap(virt_mmss_gp1_base);
 		return ret;
 	}
 #endif
@@ -746,6 +785,8 @@ static long ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	case TSPDRV_ENABLE_AMP:
 		wake_lock(&vib_wake_lock);
+		vibe_set_pwm_freq(0);
+		vibe_pwm_onoff(1);
 		ImmVibeSPI_ForceOut_AmpEnable(arg);
 		DbgRecorderReset((arg));
 		DbgRecord((arg, ";------- TSPDRV_ENABLE_AMP ---------\n"));

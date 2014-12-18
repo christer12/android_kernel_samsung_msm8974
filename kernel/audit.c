@@ -399,8 +399,10 @@ static void audit_printk_skb(struct sk_buff *skb)
 		sec_avc_log("%s\n", data);
 #endif
 	}
-
+#ifndef CONFIG_SAMSUNG_PRODUCT_SHIP
+	// Do not hold skb on SHIP Binary, only print to avc msg.
 	audit_hold_skb(skb);
+#endif
 }
 
 static void kauditd_send_skb(struct sk_buff *skb)

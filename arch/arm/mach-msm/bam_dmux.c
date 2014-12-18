@@ -28,7 +28,6 @@
 #include <linux/wakelock.h>
 #include <linux/kfifo.h>
 #include <linux/of.h>
-#include <linux/sysfs.h>
 #include <mach/msm_ipc_logging.h>
 #include <mach/sps.h>
 #include <mach/bam_dmux.h>
@@ -72,15 +71,9 @@ module_param_named(max_sleep, POLLING_MAX_SLEEP,
 static int POLLING_INACTIVITY = 40;
 module_param_named(inactivity, POLLING_INACTIVITY,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
-static int bam_adaptive_timer_disabled = 0;
 static int bam_adaptive_timer_enabled = 0;
 module_param_named(adaptive_timer_enabled,
 			bam_adaptive_timer_enabled,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
-
-static int adapt_pipe_thresh = 50; /* changed 66-> 50 */
-module_param_named(adapt_pipe_thresh,
-			adapt_pipe_thresh,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 #if defined(DEBUG)
@@ -243,6 +236,7 @@ static struct workqueue_struct *bam_mux_tx_workqueue;
 /* A2 power collaspe */
 #define UL_TIMEOUT_DELAY 1000	/* in ms */
 #define ENABLE_DISCONNECT_ACK	0x1
+#define UL_WAKEUP_TIMEOUT_MS 2000
 static void toggle_apps_ack(void);
 static void reconnect_to_bam(void);
 static void disconnect_to_bam(void);
@@ -1124,26 +1118,6 @@ fail:
 	queue_work_on(0, bam_mux_rx_workqueue, &rx_timer_work);
 }
 
-
-#ifdef BAM_DMUX_FD
-static ssize_t adaptive_timer_disabled_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	pr_info("%s:\n", __func__);
-	return sprintf(buf, "%lu\n", (unsigned long) bam_adaptive_timer_disabled);
-}
-
-static ssize_t adaptive_timer_disabled_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t size )
-{
-	pr_info("%s:\n", __func__);
-	bam_adaptive_timer_disabled = *buf - '0';
-
-	return size;
-}
-
-static DEVICE_ATTR(adaptive_timer_disabled, 0664, 
-		adaptive_timer_disabled_show, adaptive_timer_disabled_store);
-#endif
-
 static void rx_timer_work_func(struct work_struct *work)
 {
 	struct sps_iovec iov;
@@ -1202,7 +1176,7 @@ static void rx_timer_work_func(struct work_struct *work)
 			break;
 		}
 
-		if (bam_adaptive_timer_enabled && !bam_adaptive_timer_disabled) {
+		if (bam_adaptive_timer_enabled) {
 			usleep_range(rx_timer_interval, rx_timer_interval + 50);
 
 			ret = sps_get_unused_desc_num(bam_rx_pipe,
@@ -1222,9 +1196,9 @@ static void rx_timer_work_func(struct work_struct *work)
 			} else {
 				if (buffs_used > 0) {
 					rx_timer_interval =
-						(adapt_pipe_thresh * num_buffers *
+						(2 * num_buffers *
 							rx_timer_interval)/
-						(100 * buffs_used);
+						(3 * buffs_used);
 				} else {
 					rx_timer_interval =
 						MAX_POLLING_SLEEP;
@@ -1607,15 +1581,19 @@ static void ul_timeout(struct work_struct *work)
 
 static int ssrestart_check(void)
 {
+#ifndef CONFIG_SEC_LOCALE_KOR
 	int ret = 0;
 
-	DMUX_LOG_KERR("%s: modem timeout: BAM DMUX disabled for SSR\n", 
+	DMUX_LOG_KERR("%s: modem timeout: BAM DMUX disabled for SSR\n",
 				__func__);
 
 	in_global_reset = 1;
 	ret = subsystem_restart("modem");
 	if (ret == -ENODEV)
 		panic("modem subsystem restart failed\n");
+#else // ssr can't recovery modem state, call panic instead of ssr on KOR models.
+	panic("modem timeout\n");
+#endif
 
 	return 1;
 }
@@ -1692,7 +1670,7 @@ static void ul_wakeup(void)
 	if (wait_for_ack) {
 		BAM_DMUX_LOG("%s waiting for previous ack\n", __func__);
 		ret = wait_for_completion_timeout(
-					&ul_wakeup_ack_completion, HZ);
+					&ul_wakeup_ack_completion, msecs_to_jiffies(UL_WAKEUP_TIMEOUT_MS));
 		wait_for_ack = 0;
 		if (unlikely(ret == 0) && ssrestart_check()) {
 			mutex_unlock(&wakeup_lock);
@@ -1703,14 +1681,14 @@ static void ul_wakeup(void)
 	INIT_COMPLETION(ul_wakeup_ack_completion);
 	power_vote(1);
 	BAM_DMUX_LOG("%s waiting for wakeup ack\n", __func__);
-	ret = wait_for_completion_timeout(&ul_wakeup_ack_completion, HZ);
+	ret = wait_for_completion_timeout(&ul_wakeup_ack_completion, msecs_to_jiffies(UL_WAKEUP_TIMEOUT_MS));
 	if (unlikely(ret == 0) && ssrestart_check()) {
 		mutex_unlock(&wakeup_lock);
 		BAM_DMUX_LOG("%s timeout wakeup ack\n", __func__);
 		return;
 	}
 	BAM_DMUX_LOG("%s waiting completion\n", __func__);
-	ret = wait_for_completion_timeout(&bam_connection_completion, HZ);
+	ret = wait_for_completion_timeout(&bam_connection_completion, msecs_to_jiffies(UL_WAKEUP_TIMEOUT_MS));
 	if (unlikely(ret == 0) && ssrestart_check()) {
 		mutex_unlock(&wakeup_lock);
 		BAM_DMUX_LOG("%s timeout power on\n", __func__);
@@ -2509,10 +2487,6 @@ static int __init bam_dmux_init(void)
 	if (device_create_file(bamDmux_pkt_dev, &dev_attr_waketime) < 0)
 		pr_err("%s: Failed to create device file(%s)!\n",
 			__func__, dev_attr_waketime.attr.name);
-
-	/* add sysfs to control adaptive_timer 
-	   /sys/devices/virtual/sec/bamdmux/adaptive_timer_disabled */
-	device_create_file(bamDmux_pkt_dev, &dev_attr_adaptive_timer_disabled);
 #endif
 
 	bam_ipc_log_txt = ipc_log_context_create(BAM_IPC_LOG_PAGES, "bam_dmux");

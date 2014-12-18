@@ -47,6 +47,7 @@ static struct snd_msm_volume multi_ch_pcm_audio = {NULL, 0x2000};
 
 #define PLAYBACK_NUM_PERIODS	8
 #define PLAYBACK_PERIOD_SIZE	4032
+#define PLAYBACK_PERIOD_SIZE_MAX 16384
 #define CAPTURE_NUM_PERIODS	16
 #define CAPTURE_PERIOD_SIZE	320
 
@@ -78,14 +79,14 @@ static struct snd_pcm_hardware msm_pcm_hardware_playback = {
 				SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_RESUME),
 	.formats =              (SNDRV_PCM_FMTBIT_S16_LE |
 				SNDRV_PCM_FMTBIT_S24_LE),
-	.rates =                SNDRV_PCM_RATE_8000_96000,
+	.rates =                SNDRV_PCM_RATE_8000_192000,
 	.rate_min =             8000,
-	.rate_max =             96000,
+	.rate_max =             192000,
 	.channels_min =         1,
 	.channels_max =         6,
-	.buffer_bytes_max =     PLAYBACK_NUM_PERIODS * PLAYBACK_PERIOD_SIZE,
+	.buffer_bytes_max =     PLAYBACK_NUM_PERIODS * PLAYBACK_PERIOD_SIZE_MAX,
 	.period_bytes_min =	PLAYBACK_PERIOD_SIZE,
-	.period_bytes_max =     PLAYBACK_PERIOD_SIZE,
+	.period_bytes_max =     PLAYBACK_PERIOD_SIZE_MAX,
 	.periods_min =          PLAYBACK_NUM_PERIODS,
 	.periods_max =          PLAYBACK_NUM_PERIODS,
 	.fifo_size =            0,
@@ -94,7 +95,7 @@ static struct snd_pcm_hardware msm_pcm_hardware_playback = {
 /* Conventional and unconventional sample rate supported */
 static unsigned int supported_sample_rates[] = {
 	8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000,
-	96000
+	96000, 192000
 };
 
 static uint32_t in_frame_info[CAPTURE_NUM_PERIODS][2];
@@ -141,7 +142,7 @@ static void event_handler(uint32_t opcode,
 	}
 	case ASM_DATA_EVENT_RENDERED_EOS:
 		pr_debug("ASM_DATA_CMDRSP_EOS\n");
-		prtd->cmd_ack = 1;
+		clear_bit(CMD_EOS, &prtd->cmd_pending);
 		wake_up(&the_locks.eos_wait);
 		break;
 	case ASM_DATA_EVENT_READ_DONE_V2: {
@@ -241,7 +242,7 @@ static int msm_pcm_playback_prepare(struct snd_pcm_substream *substream)
 	atomic_set(&prtd->out_count, runtime->periods);
 
 	prtd->enabled = 1;
-	prtd->cmd_ack = 0;
+	prtd->cmd_pending = 0;
 	prtd->cmd_interrupt = 0;
 
 	return 0;
@@ -299,8 +300,12 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		atomic_set(&prtd->start, 0);
 		if (substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
 			break;
-		prtd->cmd_ack = 0;
+		/* pending CMD_EOS isn't expected */
+		WARN_ON_ONCE(test_bit(CMD_EOS, &prtd->cmd_pending));
+		set_bit(CMD_EOS, &prtd->cmd_pending);
 		q6asm_cmd_nowait(prtd->audio_client, CMD_EOS);
+		if (ret)
+			clear_bit(CMD_EOS, &prtd->cmd_pending);
 		break;
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
@@ -379,9 +384,6 @@ static int msm_pcm_open(struct snd_pcm_substream *substream)
 			prtd->audio_client->perf_mode,
 			prtd->session_id, substream->stream);
 
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		prtd->cmd_ack = 1;
-
 	ret = snd_pcm_hw_constraint_list(runtime, 0,
 				SNDRV_PCM_HW_PARAM_RATE,
 				&constraints_sample_rates);
@@ -454,7 +456,7 @@ static int msm_pcm_playback_copy(struct snd_pcm_substream *substream, int a,
 				__func__, atomic_read(&prtd->out_count));
 	ret = wait_event_timeout(the_locks.write_wait,
 			(atomic_read(&prtd->out_count)), 5 * HZ);
-	if (ret < 0) {
+	if (!ret) {
 		pr_err("%s: wait_event_timeout failed\n", __func__);
 		goto fail;
 	}
@@ -502,13 +504,15 @@ static int msm_pcm_playback_close(struct snd_pcm_substream *substream)
 	int dir = 0;
 	int ret = 0;
 
-	pr_debug("%s\n", __func__);
+	pr_debug("%s: cmd_pending 0x%lx\n", __func__, prtd->cmd_pending);
 
 	dir = IN;
 	ret = wait_event_timeout(the_locks.eos_wait,
-				prtd->cmd_ack, 5 * HZ);
-	if (ret < 0)
-		pr_err("%s: CMD_EOS failed\n", __func__);
+				 !test_bit(CMD_EOS, &prtd->cmd_pending),
+				 5 * HZ);
+	if (!ret)
+		pr_err("%s: CMD_EOS failed, cmd_pending 0x%lx\n",
+		       __func__, prtd->cmd_pending);
 	q6asm_cmd(prtd->audio_client, CMD_CLOSE);
 	q6asm_audio_client_buf_free_contiguous(dir,
 				prtd->audio_client);
@@ -546,7 +550,7 @@ static int msm_pcm_capture_copy(struct snd_pcm_substream *substream,
 
 	ret = wait_event_timeout(the_locks.read_wait,
 			(atomic_read(&prtd->in_count)), 5 * HZ);
-	if (ret < 0) {
+	if (!ret) {
 		pr_debug("%s: wait_event_timeout failed\n", __func__);
 		goto fail;
 	}

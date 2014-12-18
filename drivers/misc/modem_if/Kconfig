@@ -30,3 +30,8 @@ config SIM_SLOT_SWITCH
 	bool "SIM_SLOT_SWITCH"
 	depends on SEC_MODEM
 	default n
+
+config GSM_MODEM_GG_DUOS
+	bool "GSM_MODEM_GG_DUOS"
+	depends on SEC_MODEM
+	default n

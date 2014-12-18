@@ -23,6 +23,13 @@
 
 #define ADC_SAMPLING_CNT	7
 
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+//#ifndef SSRM_TEST
+//#define SSRM_TEST
+//#endif
+#endif
+
 struct sec_therm_info {
 	struct device *dev;
 	struct sec_therm_platform_data *pdata;
@@ -30,10 +37,28 @@ struct sec_therm_info {
 
 	int curr_temperature;
 	int curr_temp_adc;
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	int curr_temperature_flash_led;
+	int curr_temp_adc_flash_led;
+#endif
 };
 
 static int sec_therm_get_adc_data(struct sec_therm_info *info);
 static int convert_adc_to_temper(struct sec_therm_info *info, unsigned int adc);
+
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+static int sec_therm_get_adc_data_flash_led(struct sec_therm_info *info);
+#endif
+
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+static int convert_adc_flash_to_temper(struct sec_therm_info *info, unsigned int adc);
+#endif
+
+#if defined (SSRM_TEST)
+static int tempTest;
+#endif
 
 static ssize_t sec_therm_show_temperature(struct device *dev,
 				   struct device_attribute *attr,
@@ -47,8 +72,21 @@ static ssize_t sec_therm_show_temperature(struct device *dev,
 	adc = sec_therm_get_adc_data(info);
 	temper = convert_adc_to_temper(info, adc);
 
+        #if defined (SSRM_TEST)
+        temper = tempTest;
+        #endif
+
 	return sprintf(buf, "%d\n", temper);
 }
+
+#if defined (SSRM_TEST)
+static ssize_t sec_therm_store_temperature(struct device *dev,
+				   struct device_attribute *attr, const char *buf, size_t count)
+{
+	sscanf(buf, "%d", &tempTest);
+	return count;
+}
+#endif
 
 static ssize_t sec_therm_show_temp_adc(struct device *dev,
 				   struct device_attribute *attr,
@@ -62,14 +100,62 @@ static ssize_t sec_therm_show_temp_adc(struct device *dev,
 	return sprintf(buf, "%d\n", adc);
 }
 
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+static ssize_t sec_therm_show_temperature_flash_led(struct device *dev,
+				   struct device_attribute *attr,
+				   char *buf)
+{
+	int adc;
+	int temper;
 
+	struct sec_therm_info *info = dev_get_drvdata(dev);
+
+	adc = sec_therm_get_adc_data_flash_led(info);
+	#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) 
+	temper = convert_adc_flash_to_temper(info, adc);
+	#else
+	temper = convert_adc_to_temper(info, adc);
+	#endif
+
+	dev_info(info->dev, "%s: adc_flash=%d\n", __func__, adc);
+	return sprintf(buf, "%d\n", temper);
+}
+
+static ssize_t sec_therm_show_temp_adc_flash_led(struct device *dev,
+				   struct device_attribute *attr,
+				   char *buf)
+{
+	int adc;
+	struct sec_therm_info *info = dev_get_drvdata(dev);
+
+	adc = sec_therm_get_adc_data_flash_led(info);
+
+	return sprintf(buf, "%d\n", adc);
+}
+#endif
+
+#if defined (SSRM_TEST)
+static DEVICE_ATTR(temperature, S_IRUGO | S_IWUSR, sec_therm_show_temperature, sec_therm_store_temperature);
+#else
 static DEVICE_ATTR(temperature, S_IRUGO, sec_therm_show_temperature, NULL);
+#endif
 static DEVICE_ATTR(temp_adc, S_IRUGO, sec_therm_show_temp_adc, NULL);
 
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+static DEVICE_ATTR(temperature_flash, S_IRUGO, sec_therm_show_temperature_flash_led, NULL);
+static DEVICE_ATTR(temp_adc_flash, S_IRUGO, sec_therm_show_temp_adc_flash_led, NULL);
+#endif
 
 static struct attribute *sec_therm_attributes[] = {
 	&dev_attr_temperature.attr,
 	&dev_attr_temp_adc.attr,
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	&dev_attr_temperature_flash.attr,
+	&dev_attr_temp_adc_flash.attr,
+#endif
 	NULL
 };
 
@@ -120,11 +206,111 @@ err:
 
 }
 
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+static int sec_therm_get_adc_data_flash_led(struct sec_therm_info *info)
+{
+	int rc = 0;
+	int adc_max = 0;
+	int adc_min = 0;
+	int adc_total = 0;
+	int i, adc_data;
+
+	struct qpnp_vadc_result results;
+
+	for (i = 0; i < ADC_SAMPLING_CNT; i++) {
+
+		rc = qpnp_vadc_read(LR_MUX9_PU2_AMUX_THM5, &results);
+
+		if (rc) {
+			pr_err("error reading AMUX %d, rc = %d\n",
+						LR_MUX9_PU2_AMUX_THM5, rc);
+			goto err;
+		}
+		adc_data = results.adc_code;
+
+		pr_err("reading LR_MUX9_PU2_AMUX_THM5 [rc = %d] [adc_code = %d]\n",
+									rc,results.adc_code);
+		if (i != 0) {
+			if (adc_data > adc_max)
+				adc_max = adc_data;
+			else if (adc_data < adc_min)
+				adc_min = adc_data;
+		} else {
+			adc_max = adc_data;
+			adc_min = adc_data;
+		}
+
+		adc_total += adc_data;
+	}
+
+	return (adc_total - adc_max - adc_min) / (ADC_SAMPLING_CNT - 2);
+
+err:
+	return rc;
+
+}
+
+#if !defined( CONFIG_MACH_JS01LTEDCM) && !defined(CONFIG_MACH_JS01LTESBM)
+static int convert_adc_flash_to_temper(struct sec_therm_info *info, unsigned int adc)
+{
+	int low = 0;
+	int high = 0;
+	int mid = 0;
+	int temp = 0;
+	int temp2 = 0;
+
+	if (!info->pdata->adc_table_flash || !info->pdata->adc_flash_arr_size) {
+		/* using fake temp */
+		return 300;
+	}
+
+	high = info->pdata->adc_flash_arr_size - 1;
+
+	if (info->pdata->adc_table_flash[low].adc >= adc) {
+		temp = info->pdata->adc_table_flash[low].temperature;
+		goto convert_adc_to_temp_goto;
+	} else if (info->pdata->adc_table_flash[high].adc <= adc) {
+		temp = info->pdata->adc_table_flash[high].temperature;
+		goto convert_adc_to_temp_goto;
+	}
+
+	while (low <= high) {
+		mid = (low + high) / 2;
+		if (info->pdata->adc_table_flash[mid].adc > adc) {
+			high = mid - 1;
+		} else if (info->pdata->adc_table_flash[mid].adc < adc) {
+			low = mid + 1;
+		} else {
+			temp = info->pdata->adc_table_flash[mid].temperature;
+			goto convert_adc_to_temp_goto;
+		}
+	}
+
+	temp = info->pdata->adc_table_flash[high].temperature;
+
+	temp2 = (info->pdata->adc_table_flash[low].temperature - 
+			info->pdata->adc_table_flash[high].temperature) *
+			(adc - info->pdata->adc_table_flash[high].adc);
+
+	temp += temp2 /
+		(info->pdata->adc_table_flash[low].adc -
+			info->pdata->adc_table_flash[high].adc);
+
+convert_adc_to_temp_goto:
+
+	return temp;
+}
+#endif
+#endif
+
 static int convert_adc_to_temper(struct sec_therm_info *info, unsigned int adc)
 {
 	int low = 0;
 	int high = 0;
 	int mid = 0;
+	int temp = 0;
+	int temp2 = 0;
 
 	if (!info->pdata->adc_table || !info->pdata->adc_arr_size) {
 		/* using fake temp */
@@ -133,30 +319,65 @@ static int convert_adc_to_temper(struct sec_therm_info *info, unsigned int adc)
 
 	high = info->pdata->adc_arr_size - 1;
 
+	if (info->pdata->adc_table[low].adc >= adc) {
+		temp = info->pdata->adc_table[low].temperature;
+		goto convert_adc_to_temp_goto;
+	} else if (info->pdata->adc_table[high].adc <= adc) {
+		temp = info->pdata->adc_table[high].temperature;
+		goto convert_adc_to_temp_goto;
+	}
+
 	while (low <= high) {
 		mid = (low + high) / 2;
-		if (info->pdata->adc_table[mid].adc > adc)
+		if (info->pdata->adc_table[mid].adc > adc) {
 			high = mid - 1;
-		else if (info->pdata->adc_table[mid].adc < adc)
+		} else if (info->pdata->adc_table[mid].adc < adc) {
 			low = mid + 1;
-		else
-			return info->pdata->adc_table[mid].temperature;
+		} else {
+			temp = info->pdata->adc_table[mid].temperature;
+			goto convert_adc_to_temp_goto;
+		}
 	}
-	return info->pdata->adc_table[low].temperature;
+
+	temp = info->pdata->adc_table[high].temperature;
+
+	temp2 = (info->pdata->adc_table[low].temperature - 
+			info->pdata->adc_table[high].temperature) *
+			(adc - info->pdata->adc_table[high].adc);
+
+	temp += temp2 /
+		(info->pdata->adc_table[low].adc -
+			info->pdata->adc_table[high].adc);
+
+convert_adc_to_temp_goto:
+
+	return temp;
 }
 
 static void notify_change_of_temperature(struct sec_therm_info *info)
 {
 	char temp_buf[20];
 	char siop_buf[20];
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	char *envp[3];
+#else
 	char *envp[2];
+#endif
 	int env_offset = 0;
 	int siop_level = -1;
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	char temp_buf_flash[20];
 
-#if defined(CONFIG_MACH_JF_DCM)
+
 	snprintf(temp_buf, sizeof(temp_buf), "SUBTEMPERATURE=%d",
 		 info->curr_temperature);
 	envp[env_offset++] = temp_buf;
+
+	snprintf(temp_buf_flash, sizeof(temp_buf_flash), "FLASH_TEMP=%d",
+		 info->curr_temperature_flash_led);
+	envp[env_offset++] = temp_buf_flash;
 #else
 	snprintf(temp_buf, sizeof(temp_buf), "TEMPERATURE=%d",
 		 info->curr_temperature);
@@ -185,6 +406,11 @@ static void sec_therm_polling_work(struct work_struct *work)
 		container_of(work, struct sec_therm_info, polling_work.work);
 	int adc;
 	int temper;
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	int temper_flash;
+	int adc_flash;
+#endif
 
 	adc = sec_therm_get_adc_data(info);
 	dev_info(info->dev, "%s: adc=%d\n", __func__, adc);
@@ -195,12 +421,38 @@ static void sec_therm_polling_work(struct work_struct *work)
 	temper = convert_adc_to_temper(info, adc);
 	dev_info(info->dev, "%s: temper=%d\n", __func__, temper);
 
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || \
+	defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM)
+	adc_flash = sec_therm_get_adc_data_flash_led(info);
+	dev_info(info->dev, "%s: adc_flash=%d\n", __func__, adc_flash);
+
+	if (adc_flash < 0)
+		goto out;
+
+	#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+	temper_flash= convert_adc_flash_to_temper(info, adc_flash);
+	#else
+	temper_flash= convert_adc_to_temper(info, adc_flash);
+	#endif
+	dev_info(info->dev, "%s: temper_flash=%d\n", __func__, temper_flash);
+
+	/* if temperature was changed, notify to framework */
+	if (info->curr_temperature != temper || info->curr_temperature_flash_led!= temper_flash) {
+		info->curr_temp_adc = adc;
+		info->curr_temperature = temper;
+
+		info->curr_temp_adc_flash_led = adc_flash;
+		info->curr_temperature_flash_led = temper_flash;
+		notify_change_of_temperature(info);
+	}
+#else
 	/* if temperature was changed, notify to framework */
 	if (info->curr_temperature != temper) {
 		info->curr_temp_adc = adc;
 		info->curr_temperature = temper;
 		notify_change_of_temperature(info);
 	}
+#endif
 
 out:
 	schedule_delayed_work(&info->polling_work,
@@ -301,6 +553,9 @@ static struct platform_driver sec_thermistor_driver = {
 static int __init sec_therm_init(void)
 {
 	pr_info("func:%s\n", __func__);
+	#if defined (SSRM_TEST)
+	tempTest=333;
+	#endif
 	return platform_driver_register(&sec_thermistor_driver);
 }
 module_init(sec_therm_init);

@@ -66,12 +66,19 @@ static int restart_mode;
 void *restart_reason;
 #endif
 
+#ifdef CONFIG_USER_RESET_DEBUG
+#define RESET_CAUSE_LPM_REBOOT 0x95
+void *reboot_cause;
+extern int poweroff_charging;
+#endif
+
 int pmic_reset_irq;
 static void __iomem *msm_tmr0_base;
 
 #ifdef CONFIG_MSM_DLOAD_MODE
 static int in_panic;
 static void *dload_mode_addr;
+static bool dload_mode_enabled;
 
 /* Download mode master kill-switch */
 static int dload_set(const char *val, struct kernel_param *kp);
@@ -97,12 +104,20 @@ static void set_dload_mode(int on)
 		__raw_writel(on ? 0xCE14091A : 0,
 		       dload_mode_addr + sizeof(unsigned int));
 		mb();
+		dload_mode_enabled = on;
 #ifdef CONFIG_SEC_DEBUG
 		pr_err("set_dload_mode <%d> ( %x )\n", on,
 					(unsigned int) CALLER_ADDR0);
 #endif
 	}
 }
+
+#if 0
+static bool get_dload_mode(void)
+{
+	return dload_mode_enabled;
+}
+#endif
 
 #ifdef CONFIG_SEC_DEBUG
 void sec_debug_set_qc_dload_magic(int on)
@@ -134,6 +149,11 @@ static int dload_set(const char *val, struct kernel_param *kp)
 }
 #else
 #define set_dload_mode(x) do {} while (0)
+
+static bool get_dload_mode(void)
+{
+	return false;
+}
 #endif
 
 void msm_set_restart_mode(int mode)
@@ -142,6 +162,21 @@ void msm_set_restart_mode(int mode)
 }
 EXPORT_SYMBOL(msm_set_restart_mode);
 
+static bool scm_pmic_arbiter_disable_supported;
+/*
+ * Force the SPMI PMIC arbiter to shutdown so that no more SPMI transactions
+ * are sent from the MSM to the PMIC.  This is required in order to avoid an
+ * SPMI lockup on certain PMIC chips if PS_HOLD is lowered in the middle of
+ * an SPMI transaction.
+ */
+static void halt_spmi_pmic_arbiter(void)
+{
+	if (scm_pmic_arbiter_disable_supported) {
+		pr_crit("Calling SCM to disable SPMI PMIC arbiter\n");
+		scm_call_atomic1(SCM_SVC_PWR, SCM_IO_DISABLE_PMIC_ARBITER, 0);
+	}
+}
+
 static void __msm_power_off(int lower_pshold)
 {
 	printk(KERN_CRIT "Powering off the SoC\n");
@@ -149,18 +184,13 @@ static void __msm_power_off(int lower_pshold)
 	set_dload_mode(0);
 #endif
 	pm8xxx_reset_pwr_off(0);
-	qpnp_pon_system_pwr_off(0);
-	printk(KERN_ERR "Configure system-reset PMIC for shutdown or reset\n");
+	qpnp_pon_system_pwr_off(PON_POWER_OFF_SHUTDOWN);
 
 	if (lower_pshold) {
-		if (!use_restart_v2())
-		{
-			printk(KERN_ERR "PSHOLD_CTL_SU for shutdown or reset\n");
+		if (!use_restart_v2()) {
 			__raw_writel(0, PSHOLD_CTL_SU);
-		}
-		else
-		{
-			printk(KERN_ERR "PS_HOLD OFF for shutdown or reset\n");
+		} else {
+			halt_spmi_pmic_arbiter();
 			__raw_writel(0, MSM_MPM2_PSHOLD_BASE);
 		}
 
@@ -259,7 +289,16 @@ static void msm_restart_prepare(const char *cmd)
 	printk(KERN_NOTICE "Going down for restart now\n");
 
 	pm8xxx_reset_pwr_off(1);
-	qpnp_pon_system_pwr_off(1);
+
+#if 0 //fixme
+	/* Hard reset the PMIC unless memory contents must be maintained. */
+	if (get_dload_mode() || (cmd != NULL && cmd[0] != '\0'))
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+	else
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
+#else
+	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+#endif
 #ifdef CONFIG_SEC_DEBUG
 	if (!restart_reason)
 		restart_reason = ioremap_nocache((unsigned long)(MSM_IMEM_BASE \
@@ -305,6 +344,10 @@ static void msm_restart_prepare(const char *cmd)
 			__raw_writel(0x77665514, restart_reason);
 		} else if (!strncmp(cmd, "nvrecovery", 10)) {
 			__raw_writel(0x77665515, restart_reason);
+#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
+		} else if (!strncmp(cmd, "peripheral_hw_reset", 19)) {
+			__raw_writel(0x77665507, restart_reason);
+#endif
 		} else {
 			__raw_writel(0x77665501, restart_reason);
 		}
@@ -314,6 +357,13 @@ static void msm_restart_prepare(const char *cmd)
 #ifdef CONFIG_SEC_DEBUG
 	else {
 		printk(KERN_NOTICE "%s: clear reset flag\n", __func__);
+#ifdef CONFIG_USER_RESET_DEBUG
+		if(poweroff_charging) {
+			reboot_cause = MSM_IMEM_BASE + 0x66C;
+			__raw_writel(RESET_CAUSE_LPM_REBOOT, reboot_cause);
+		}
+#endif
+
 		__raw_writel(0x12345678, restart_reason);
 	}
 #endif
@@ -332,7 +382,6 @@ void msm_restart(char mode, const char *cmd)
 		if (!(machine_is_msm8x60_fusion() ||
 		      machine_is_msm8x60_fusn_ffa())) {
 			mb();
-			printk(KERN_ERR "PSHOLD_CTL_SU for shutdown or reset\n");
 			 /* Actually reset the chip */
 			__raw_writel(0, PSHOLD_CTL_SU);
 			mdelay(5000);
@@ -344,9 +393,9 @@ void msm_restart(char mode, const char *cmd)
 		__raw_writel(0x31F3, msm_tmr0_base + WDT0_BITE_TIME);
 		__raw_writel(1, msm_tmr0_base + WDT0_EN);
 	} else {
-		printk(KERN_ERR "bypass debug image for shutdown or reset\n");	
 		/* Needed to bypass debug image on some chips */
 		msm_disable_wdog_debug();
+		halt_spmi_pmic_arbiter();
 		__raw_writel(0, MSM_MPM2_PSHOLD_BASE);
 	}
 
@@ -408,6 +457,9 @@ static int __init msm_restart_init(void)
 	restart_reason = MSM_IMEM_BASE + RESTART_REASON_ADDR;
 #endif
 	pm_power_off = msm_power_off;
+
+	if (scm_is_call_available(SCM_SVC_PWR, SCM_IO_DISABLE_PMIC_ARBITER) > 0)
+		scm_pmic_arbiter_disable_supported = true;
 
 	return 0;
 }

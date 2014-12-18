@@ -11,8 +11,8 @@
  */
 
  / {
-	i2c@99 {
-		cell-index = <99>;
+	i2c@7 {
+		cell-index = <7>;
 		compatible = "i2c-gpio";
 		gpios = <&msmgpio 33 0 /* sda */
 		&msmgpio 32 0 /* scl */

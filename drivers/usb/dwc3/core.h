@@ -195,6 +195,7 @@
 #define DWC3_GUSB3PIPECTL_SUSPHY	(1 << 17)
 #define DWC3_GUSB3PIPECTL_DELAY_P1P2P3	(7 << 19)
 #define DWC3_GUSB3PIPECTL_DIS_RXDET_U3_RXDET	(1 << 22)
+#define DWC3_GUSB3PIPECTL_ELASTIC_BUF_MODE	(1 << 0)
 
 /* Global TX Fifo Size Register */
 #define DWC3_GTXFIFOSIZ_TXFDEF(n)	((n) & 0xffff)
@@ -642,6 +643,8 @@ struct dwc3_scratchpad_array {
 	__le64	dma_adr[DWC3_MAX_HIBER_SCRATCHBUFS];
 };
 
+#define DWC3_CONTROLLER_ERROR_EVENT	0
+
 /**
  * struct dwc3 - representation of our controller
  * @ctrl_req: usb control request which is used for ep0
@@ -770,6 +773,13 @@ struct dwc3 {
 
 	/* Indicate if software connect was issued by the usb_gadget_driver */
 	bool			softconnect;
+	void (*notify_event) (struct dwc3 *, unsigned);
+#if defined(CONFIG_SEC_H_PROJECT)  || defined(CONFIG_SEC_F_PROJECT)
+	enum usb_device_speed	speed_limit;
+	struct work_struct reconnect_work;
+	int			ss_host_avail;
+	bool		reconnect;
+#endif
 };
 
 /* -------------------------------------------------------------------------- */
@@ -919,6 +929,11 @@ void dwc3_gadget_exit(struct dwc3 *dwc);
 
 void dwc3_gadget_restart(struct dwc3 *dwc);
 void dwc3_post_host_reset_core_init(struct dwc3 *dwc);
+int dwc3_event_buffers_setup(struct dwc3 *dwc);
+
+extern void dwc3_set_notifier(void (*notify) (struct dwc3 *dwc3, unsigned event));
+extern void dwc3_notify_event(struct dwc3 *dwc3, unsigned event);
+
 
 extern int dwc3_get_device_id(void);
 extern void dwc3_put_device_id(int id);

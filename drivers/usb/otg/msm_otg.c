@@ -429,7 +429,7 @@ static void ulpi_init(struct msm_otg *motg)
 	} else {
 		seq = pdata->phy_init_seq;
 	}
-#ifdef CONFIG_SEC_J_PROJECT
+#if defined(CONFIG_SEC_J_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)
 	ulpi_write(&motg->phy, 0x39, 0x81);
 	ulpi_write(&motg->phy, 0x2B, 0x82);
 
@@ -892,7 +892,7 @@ static int msm_otg_suspend(struct msm_otg *motg)
 	struct usb_bus *bus = phy->otg->host;
 	struct msm_otg_platform_data *pdata = motg->pdata;
 	int cnt = 0;
-	bool host_bus_suspend, device_bus_suspend, dcp;
+	bool host_bus_suspend, device_bus_suspend, dcp, prop_charger;
 	u32 phy_ctrl_val = 0, cmd_val;
 	unsigned ret;
 	u32 portsc;
@@ -901,7 +901,7 @@ static int msm_otg_suspend(struct msm_otg *motg)
 		return 0;
 
 	if (motg->pdata->delay_lpm_hndshk_on_disconnect && !msm_bam_lpm_ok())
-		return 0;
+		return -EBUSY;
 
 	disable_irq(motg->irq);
 	host_bus_suspend = !test_bit(MHL, &motg->inputs) && phy->otg->host &&
@@ -910,6 +910,7 @@ static int msm_otg_suspend(struct msm_otg *motg)
 		test_bit(A_BUS_SUSPEND, &motg->inputs) &&
 		motg->caps & ALLOW_LPM_ON_DEV_SUSPEND;
 	dcp = motg->chg_type == USB_DCP_CHARGER;
+	prop_charger = motg->chg_type == USB_PROPRIETARY_CHARGER;
 
 	/*
 	 * Abort suspend when,
@@ -918,7 +919,7 @@ static int msm_otg_suspend(struct msm_otg *motg)
 	 */
 
 	if ((test_bit(B_SESS_VLD, &motg->inputs) && !device_bus_suspend &&
-		!dcp) || test_bit(A_BUS_REQ, &motg->inputs)) {
+		!dcp && !prop_charger) || test_bit(A_BUS_REQ, &motg->inputs)) {
 		enable_irq(motg->irq);
 		return -EBUSY;
 	}
@@ -986,7 +987,7 @@ static int msm_otg_suspend(struct msm_otg *motg)
 	 */
 	cmd_val = readl_relaxed(USB_USBCMD);
 	if (host_bus_suspend || device_bus_suspend ||
-		(motg->pdata->otg_control == OTG_PHY_CONTROL && dcp))
+		(motg->pdata->otg_control == OTG_PHY_CONTROL))
 		cmd_val |= ASYNC_INTR_CTRL | ULPI_STP_CTRL;
 	else
 		cmd_val |= ULPI_STP_CTRL;
@@ -1291,7 +1292,14 @@ static int msm_otg_notify_power_supply(struct msm_otg *motg, unsigned mA)
 		/* Set max current limit */
 		if (power_supply_set_current_limit(psy, 0))
 			goto psy_error;
+	} else {
+		if (power_supply_set_online(psy, true))
+			goto psy_error;
+		/* Current has changed (100/2 --> 500) */
+		if (power_supply_set_current_limit(psy, 1000*mA))
+			goto psy_error;
 	}
+
 	power_supply_changed(psy);
 	return 0;
 
@@ -1542,7 +1550,7 @@ static int msm_otg_set_host(struct usb_otg *otg, struct usb_bus *host)
 		vbus_otg = devm_regulator_get(motg->phy.dev, "vbus_otg");
 		if (IS_ERR(vbus_otg)) {
 			pr_err("Unable to get vbus_otg\n");
-			return -ENODEV;
+			return PTR_ERR(vbus_otg);
 		}
 	}
 
@@ -2400,7 +2408,7 @@ static void msm_otg_init_sm(struct msm_otg *motg)
 {
 	struct msm_otg_platform_data *pdata = motg->pdata;
 	u32 otgsc = readl(USB_OTGSC);
-#ifdef CONFIG_SEC_J_PROJECT
+#if defined(CONFIG_SEC_J_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)
 	otgsc = otgsc | OTGSC_ID;
 	writel(otgsc,USB_OTGSC);
 #endif
@@ -3957,7 +3965,7 @@ struct msm_otg_platform_data *msm_otg_dt_to_pdata(struct platform_device *pdev)
 		pdata->vbus_power = msm_otg_sec_power;
 #endif
 
-#ifdef CONFIG_SEC_J_PROJECT
+#if defined(CONFIG_SEC_J_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)
 	pdata->disable_reset_on_disconnect = 0;
 #endif
 

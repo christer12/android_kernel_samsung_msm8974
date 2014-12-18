@@ -15,13 +15,6 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
 */
-
-#if defined(CONFIG_MACH_MELIUS_EUR_OPEN) || defined(CONFIG_MACH_MELIUS_EUR_LTE)
-#undef CMC624_DEBUG
-#else
-#define CMC624_DEBUG
-#endif
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/i2c.h>
@@ -77,6 +70,7 @@ static struct regulator *display_3_3v;
 
 #define GPIO_IMA_I2C_SDA    29 
 #define GPIO_IMA_I2C_SCL    30 
+#define MSM_SEC_CMC624_I2C_BUS_ID 18 // 0x38 
 #endif
 
 #if defined(CONFIG_FB_MSM_MIPI_NOVATEK_VIDEO_HD_PT_PANEL)
@@ -619,6 +613,7 @@ bool cmc624_I2cWrite16(unsigned char Addr, unsigned long Data)
 		pr_info("cmc624_I2cWrite16 g_client->adapter is NULL\n");
 		return -ENODEV;
 	}
+        
 #if defined(CONFIG_TARGET_LOCALE_KOR_SKT) || defined(CONFIG_TARGET_LOCALE_KOR_LGU)
 	if (Addr == 0x0000) {
 		if (Data == last_cmc624_Bank)
@@ -644,7 +639,7 @@ bool cmc624_I2cWrite16(unsigned char Addr, unsigned long Data)
 		return 0;
 	}
 
-	pr_info("%s i2c transfer error:%d(a:%d)\n", __func__, err, Addr);
+	pr_info("[CMC624] %s i2c transfer error:%d(a:%d)\n", __func__, err, Addr);
 	return err;
 }
 
@@ -733,7 +728,7 @@ static int cmc624_set_tune_value(const struct cmc624RegisterSet *value, int arra
 #define PWM_DUTY_MAX 1	
 static int value255_old;	
 	
-	/* Backlight levels */
+/* Backlight levels */
 #define BRIGHTNESS_OFF   0
 #define BRIGHTNESS_DIM   20
 #define BRIGHTNESS_MIN   25
@@ -799,12 +794,12 @@ int cmc624_set_pwm_backlight( int level)
 
 void cmc624_pwm_control(int value)
 {
-	printk("%s: value(%d)", __func__, value);
+	printk("[CMC624] %s: value(%d)\n", __func__, value);
 	
 	mutex_lock(&tuning_mutex);
 	cmc624_I2cWrite16(0x00, 0x0001);
 	cmc624_I2cWrite16(0xF8, 0x0011);
-	cmc624_I2cWrite16(0xF9, value); /* value = 0~2047 */
+	cmc624_I2cWrite16(0xF9, value);         //  value = 0~2047 
 	cmc624_I2cWrite16(0xFF, 0x0000);
 	mutex_unlock(&tuning_mutex);
 }
@@ -824,7 +819,8 @@ void cmc624_pwm_control_cabc(int value255)
 
 	value = cmc624_scale_pwm_dutycycle(value255);
 	value255_old=value;
-	pr_err("%s : bg:%d, scen:%d, cabc:%d, bright:%d->%d\n", __func__, cmc624_state.background, cmc624_state.scenario, cmc624_state.cabc_mode,value255,value);
+        
+	pr_err("[CMC624] %s: bg:%d, scen:%d, cabc:%d, bright:%d->%d\n", __func__, cmc624_state.background, cmc624_state.scenario, cmc624_state.cabc_mode,value255,value);
 
 	idx = tune_value[cmc624_state.background][cmc624_state.scenario].value[cmc624_state.cabc_mode].plut;
 	p_plut = power_lut[cmc624_state.power_lut_idx][idx];
@@ -991,49 +987,6 @@ void cabc_onoff_ctrl(int value)
 		apply_main_tune_value(cmc624_state.scenario, cmc624_state.background,_cabc_on, 0);
 	}
 	return;
-}
-
-static struct cmc624RegisterSet cmc624_TuneSeq[CMC624_MAX_SETTINGS];
-static int parse_text(char *src, int len)
-{
-	int i, count, ret;
-	int index = 0;
-	char *str_line[CMC624_MAX_SETTINGS];
-	char *sstart;
-	char *c;
-	unsigned int data1, data2;
-
-	c = src;
-	count = 0;
-	sstart = c;
-
-	for (i = 0; i < len; i++, c++) {
-		char a = *c;
-		if (a == '\r' || a == '\n') {
-			if (c > sstart) {
-				str_line[count] = sstart;
-				count++;
-			}
-			*c = '\0';
-			sstart = c + 1;
-		}
-	}
-
-	if (c > sstart) {
-		str_line[count] = sstart;
-		count++;
-	}
-
-	for (i = 0; i < count; i++) {
-		ret = sscanf(str_line[i], "0x%x,0x%x\n", &data1, &data2);
-		pr_debug("Result => [0x%2x 0x%4x] %s\n", data1, data2,
-			 (ret == 2) ? "Ok" : "Not available");
-		if (ret == 2) {
-			cmc624_TuneSeq[index].RegAddr = (unsigned char)data1;
-			cmc624_TuneSeq[index++].Data = (unsigned long)data2;
-		}
-	}
-	return index;
 }
 
 bool cmc624_tune(unsigned long num)
@@ -1319,88 +1272,6 @@ int samsung_test_tune_dmb(void)
 	return 0;	//	skip this function temporary.
 }
 
-#ifdef CMC624_DEBUG
-#define LDI_MTP_ADDR 0xd3
-#define LDI_ID_ADDR 0xd1
-u8 mtp_read_data[24];
-u8 id_buffer[8];
-unsigned char LCD_ID;
-unsigned char LCD_ELVSS_ID3;
-static void read_ldi_reg(unsigned long src_add, unsigned char *read_data, unsigned char read_length)
-{
-	int i;
-	u16 data = 0;
-	/* LP Operation2 (Read IDs) */
-	/* cmc624_I2cWrite16( 0x00, 0x0003 ); */
-	cmc624_I2cWrite16(0xaa, read_length);
-
-	cmc624_I2cWrite16(0x02, 0x1100);
-	/* GENERIC WRITE 1 PARA */
-	cmc624_I2cWrite16(0x04, 0x00b0);
-	/* WRITE B0 */
-	cmc624_I2cWrite16(0x02, 0x1501);
-	/* GENERIC READ 1 PARA */
-	cmc624_I2cWrite16(0x04, src_add);
-	/* WRITE d1/ d3 (Address of MTP) */
-
-	if (src_add == LDI_ID_ADDR)
-		pr_info("Read IDs from D1h\n");
-	else
-		pr_info("READ Bright Gamma Offset from MTP(D3h)\n");
-
-	for (i = 0; i < read_length; i++) {
-		cmc624_I2cRead16(0x08, &data);	/* Read Data Valid Register */
-
-		if ((data & 0x1000) != 0x1000)
-			pr_info("[%d] invalid data %x!!!\n", i, data);
-			/* Data Valid Check 0x1000? */
-		else
-			pr_info("[%d] 0x08 data %x!!!\n", i, data);
-			/* Data Valid Check 0x1000? */
-		cmc624_I2cRead16(0x06, &data);
-		/* Read Nst Parameter */
-		read_data[i] = data;	/*Store Nst Parameter */
-		pr_info("[%d] IDs = %x\n", i, read_data[i]);
-
-	}
-	if (read_length == 8) {
-		LCD_ID = read_data[1];
-		LCD_ELVSS_ID3 = read_data[2];
-	}
-
-	cmc624_I2cRead16(0x08, &data);
-	/* Read Data Valid Register */
-	if ((data & 0x1000) != 0x1000)
-		pr_info("End of read IDs %x!!!\n", data);
-		/* Data Valid Check 0x1000? */
-	else
-		pr_info("0x08 data %x!!!\n", data);
-		/* Data Valid Check 0x1000? */
-}
-
-unsigned char LCD_Get_Value(void){
-	return LCD_ID;
-}
-
-bool Is_4_8LCD_cmc(void){
-	if ((LCD_ID == 0x20) || (LCD_ID == 0x40) || (LCD_ID == 0x60))
-		return true;
-	else
-		return false;
-}
-
-bool Is_4_65LCD_cmc(void){
-	if (LCD_ID == 0xAE)
-		return true;
-	else
-		return false;
-}
-
-unsigned char LCD_ID3(void){
-	return LCD_ELVSS_ID3;
-}
-#endif
-
 /* ################# END of SYSFS Function ############################# */
 
 static void cmc624_gpio_config(struct cmc624_platform_data *pdata)
@@ -1421,7 +1292,7 @@ static void cmc624_gpio_config(struct cmc624_platform_data *pdata)
 	}
 	gpio_tlmm_config(GPIO_CFG(pdata->gpio_sda, 3, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
 
-    /*
+       /*
 	if (pdata->lcd_en > 0) {
 		ret = gpio_request(pdata->lcd_en, "cmc624_lcd_en");
 		if (ret) {
@@ -1430,42 +1301,58 @@ static void cmc624_gpio_config(struct cmc624_platform_data *pdata)
 		}
 	}
 	*/
+
+        gpio_request(pdata->ima_pwr_en, "cmc624,ima_pwr_en");
+        gpio_direction_output(pdata->ima_pwr_en,0);   
+
+        gpio_request(pdata->ima_18v_en, "cmc624,ima_18v_en");
+        gpio_direction_output(pdata->ima_18v_en,0);   
+
+        gpio_request(pdata->ima_nRst, "cmc624,ima_nRst");
+        gpio_direction_output(pdata->ima_nRst,0);
+
+        gpio_request(pdata->ima_sleep, "cmc624,ima_sleep");
+        gpio_direction_output(pdata->ima_sleep,0);
+
+        gpio_request(pdata->cmc_en, "cmc624,cmc_en");
+        gpio_direction_output(pdata->cmc_en,0);
+
+        printk("[CMC624] %s: END \n", __func__);
 }
 
 static int cmc624_parse_dt(struct device *dev,	struct cmc624_platform_data *pdata)
 {
 	struct device_node *np = dev->of_node;
 
-    /* regulator info */    // JUN_0523
+        /* regulator info */
 	pdata->ima_int      = of_get_named_gpio(np, "cmc624,ima_int", 0);
 	pdata->ima_sleep    = of_get_named_gpio(np, "cmc624,ima_sleep", 0);
 	pdata->cmc_en       = of_get_named_gpio(np, "cmc624,cmc_en", 0);
 	pdata->ima_nRst     = of_get_named_gpio(np, "cmc624,ima_nRst", 0);
 	pdata->booster      = of_get_named_gpio(np, "cmc624,booster", 0);
-	pdata->lcd_en       = of_get_named_gpio(np, "cmc624,lcd_en", 0);
 	pdata->lcd_esd_det  = of_get_named_gpio(np, "cmc624,lcd_esd_det", 0);
 	pdata->mlcd_rst     = of_get_named_gpio(np, "cmc624,mlcd_rst", 0);
 	pdata->ima_pwr_en   = of_get_named_gpio(np, "cmc624,ima_pwr_en", 0);
 	pdata->ima_18v_en   = of_get_named_gpio(np, "cmc624,ima_18v_en", 0);
 
-    /* reset, irq gpio info */
-    pdata->gpio_scl = of_get_named_gpio_flags(np, "cmc624,scl-gpio", 0, &pdata->gpio_scl);
-    pdata->gpio_sda = of_get_named_gpio_flags(np, "cmc624,sda-gpio", 0, &pdata->gpio_sda);
+        /* reset, irq gpio info */
+        pdata->gpio_scl = of_get_named_gpio_flags(np, "cmc624,scl-gpio", 0, &pdata->gpio_scl);
+        pdata->gpio_sda = of_get_named_gpio_flags(np, "cmc624,sda-gpio", 0, &pdata->gpio_sda);
 
-    return 0;
+	//printk("[CMC624] %s: pdata->gpio_scl value(%d)\n", __func__, pdata->gpio_scl);
+	//printk("[CMC624] %s: pdata->gpio_sda value(%d)\n", __func__, pdata->gpio_sda);
+        return 0;
 }
 
 static bool CMC624_SetUp(void)
 {
-#ifdef CMC624_DEBUG
-	u16 data = 0;
-#endif
 	int i = 0;
 	static int bInit=0, bRead;
 
+	printk("[CMC624] %s: START \n", __func__);
+
 	mutex_lock(&tuning_mutex);
 	if (!bInit) {
-
 		for (i = 0; i < ARRAY_SIZE(cmc624_init); i++) {
 #if defined(CONFIG_FB_MSM_MIPI_NOVATEK_VIDEO_HD_PT_PANEL)
 				if(bRead){
@@ -1484,25 +1371,6 @@ static bool CMC624_SetUp(void)
 			}
 		}
 		
-#ifdef CMC624_DEBUG
-		mdelay(5);
-		if (!bRead) {
-			bRead = 1;
-			pr_info("CMC Init Sequence 2 Start....\n");
-			read_ldi_reg(LDI_ID_ADDR, id_buffer, 8);
-			read_ldi_reg(LDI_MTP_ADDR, mtp_read_data, 24);
-		}
-		cmc624_I2cRead16(0x00, &data);
-		pr_info("0x00 data %x!!!\n", data);
-		cmc624_I2cRead16(0x82, &data);
-		pr_info("0x82 data %x!!!\n", data);
-		cmc624_I2cRead16(0x83, &data);
-		pr_info("0x83 data %x!!!\n", data);
-		cmc624_I2cRead16(0xC2, &data);
-		pr_info("0xC2 data %x!!!\n", data);
-		cmc624_I2cRead16(0xC3, &data);
-		pr_info("0xC3 data %x!!!\n", data);
-#endif
 		/*CONV */
 		cmc624_I2cWrite16(0x00, 0x0003);	/* BANK 3 */
 		cmc624_I2cWrite16(0x01, 0x0001);	/* MIPI TO MIPI */
@@ -1521,7 +1389,8 @@ static bool CMC624_SetUp(void)
 			}
 		}
 	}
-/*	samsung_test_tune_dmb();   */
+
+	printk("[CMC624] %s: END  \n", __func__);
 	mutex_unlock(&tuning_mutex);
 	return TRUE;
 }
@@ -1745,7 +1614,7 @@ int samsung_lvds_on(int enable)
 
 int samsung_backlight_en(int enable)
 {
-	int status;
+	int status = 0;
 
     #if 0  // JUN : MELIUS 
 	if (enable)
@@ -1768,13 +1637,13 @@ static int cmc624_i2c_probe(struct i2c_client *client, const struct i2c_device_i
 
 	int error = 0;
 
-    printk(KERN_INFO "[CMC624] %s : PROBE!!! \n", __func__);
+        printk(KERN_INFO "[CMC624] %s : PROBE!!! \n", __func__);
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_I2C))
 		return -EIO;
 
 	if (client->dev.of_node) {
-		pdata = devm_kzalloc(&client->dev,	sizeof(struct cmc624_platform_data), GFP_KERNEL);
+		pdata = devm_kzalloc(&client->dev, sizeof(struct cmc624_platform_data), GFP_KERNEL);
 		if (!pdata) {
 			dev_err(&client->dev, "Failed to allocate memory\n");
 			return -ENOMEM;
@@ -1784,25 +1653,25 @@ static int cmc624_i2c_probe(struct i2c_client *client, const struct i2c_device_i
 			return error;
 	} else  {
 		pdata = client->dev.platform_data;
-    }
+        }
 
-    //Melius test
-    pr_info("[%s] ima_int = %d ",__func__, pdata->ima_int);
-    pr_info("[%s] ima_sleep = %d ",__func__, pdata->ima_sleep);
-    pr_info("[%s] cmc_en = %d ",__func__, pdata->cmc_en);
-    pr_info("[%s] ima_nRst = %d ",__func__, pdata->ima_nRst);
-    pr_info("[%s] booster = %d ",__func__, pdata->booster);
-    pr_info("[%s] lcd_en = %d ",__func__, pdata->lcd_en);
-    pr_info("[%s] lcd_esd_det = %d ",__func__, pdata->lcd_esd_det);
-    pr_info("[%s] mlcd_rst = %d ",__func__, pdata->mlcd_rst);
-    pr_info("[%s] ima_pwr_en = %d ",__func__, pdata->ima_pwr_en);
-    pr_info("[%s] ima_18v_en = %d ",__func__, pdata->ima_18v_en);
+        //Melius test
+        pr_info("[%s] ima_int = %d ",__func__, pdata->ima_int);
+        pr_info("[%s] ima_sleep = %d ",__func__, pdata->ima_sleep);
+        pr_info("[%s] cmc_en = %d ",__func__, pdata->cmc_en);
+        pr_info("[%s] ima_nRst = %d ",__func__, pdata->ima_nRst);
+        pr_info("[%s] booster = %d ",__func__, pdata->booster);
+        pr_info("[%s] lcd_esd_det = %d ",__func__, pdata->lcd_esd_det);
+        pr_info("[%s] mlcd_rst = %d ",__func__, pdata->mlcd_rst);
+        pr_info("[%s] ima_pwr_en = %d ",__func__, pdata->ima_pwr_en);
+        pr_info("[%s] ima_18v_en = %d \n",__func__, pdata->ima_18v_en);
 
-	g_pdata = pdata;
+        g_pdata = pdata;
+	g_client = client;
 
-    cmc624_gpio_config(pdata);
+        cmc624_gpio_config(pdata);
 
-    //=================================
+        //=================================
 	data = kzalloc(sizeof(struct cmc624_data), GFP_KERNEL);
 	if (!data) {
 		dev_err(&client->dev, "Failed to allocate memory\n");
@@ -1815,7 +1684,7 @@ static int cmc624_i2c_probe(struct i2c_client *client, const struct i2c_device_i
 	dev_info(&client->dev, "cmc624 i2c probe success!!!\n");
 	p_cmc624_data = data;
 
-    printk(KERN_INFO "[CMC624] %s : done \n", __func__);
+        printk(KERN_INFO "[CMC624] %s : done \n", __func__);
 	return 0;
 }
 
@@ -1885,7 +1754,7 @@ EXPORT_SYMBOL(samsung_has_cmc624);
 
 static int  cmc_pmic_gpios_pmconfig(int state)
 {
-	int ret;
+// 	int ret;
 #if 0  // JUN : 임시 막음 
 	struct pm_gpio param = {
 		.direction = PM_GPIO_DIR_OUT,
@@ -1924,8 +1793,34 @@ static int  cmc_pmic_gpios_pmconfig(int state)
 
 int cmc_power(int on)
 {
-        struct cmc624_platform_data *pdata;
-        int rc;
+        int ret;
+       
+        ret = gpio_request(g_pdata->gpio_scl, "cmc624_scl");
+        if (ret) {
+                printk(KERN_ERR "%s: unable to request cmc624_scl [%d]\n", __func__, g_pdata->gpio_scl);
+        }
+        gpio_tlmm_config(GPIO_CFG(g_pdata->gpio_scl, 3, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+        
+        ret = gpio_request(g_pdata->gpio_sda, "cmc624_sda");
+        if (ret) {
+                printk(KERN_ERR "%s: unable to request cmc624_sda [%d]\n", __func__, g_pdata->gpio_sda);
+        }
+        gpio_tlmm_config(GPIO_CFG(g_pdata->gpio_sda, 3, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+        
+        gpio_request(g_pdata->ima_pwr_en, "cmc624,ima_pwr_en");
+        gpio_direction_output(g_pdata->ima_pwr_en,0);   
+        
+        gpio_request(g_pdata->ima_18v_en, "cmc624,ima_18v_en");
+        gpio_direction_output(g_pdata->ima_18v_en,0);   
+        
+        gpio_request(g_pdata->ima_nRst, "cmc624,ima_nRst");
+        gpio_direction_output(g_pdata->ima_nRst,0);
+        
+        gpio_request(g_pdata->ima_sleep, "cmc624,ima_sleep");
+        gpio_direction_output(g_pdata->ima_sleep,0);
+        
+        gpio_request(g_pdata->cmc_en, "cmc624,cmc_en");
+        gpio_direction_output(g_pdata->cmc_en,0);
 
         if (on) {
                 pr_info("[CMC624] CMC Power On  ...\n");
