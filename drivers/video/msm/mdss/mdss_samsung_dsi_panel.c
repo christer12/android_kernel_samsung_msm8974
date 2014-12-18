@@ -2163,6 +2163,15 @@ static int mdss_dsi_panel_dimming_init(struct mdss_panel_data *pdata)
 	char vol_ref_buffer;
 #endif
 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL)
+	char *p_buffer;
+	const int mtp_block_size = 7;
+	const int mtp_reg_size = 33;
+	int mtp_fail_cnt;
+	int mtp_ok;
+	int i;
+#endif
+
 #if defined(CONFIG_FB_MSM_MDSS_MAGNA_OCTA_VIDEO_720P_PT_PANEL) // kyNam_131228_
 	return 0;
 #endif
@@ -2198,8 +2207,28 @@ static int mdss_dsi_panel_dimming_init(struct mdss_panel_data *pdata)
 		/* Just a safety check to ensure smart dimming data is initialised well */
 		BUG_ON(msd.sdimconf == NULL);
 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL)
+		/* Set the mtp read buffer pointer and read the NVM value for prevent mis-reading MTP values*/
+		mtp_fail_cnt = 3;
+		do {
+			mipi_samsung_read_nv_mem(pdata, &nv_mtp_read_cmds, msd.sdimconf->mtp_buffer);
+			p_buffer = msd.sdimconf->mtp_buffer;
+			mtp_ok = true;
+			for( i = mtp_block_size; i < mtp_reg_size; i++ ) {
+				if( i % mtp_block_size == 0 ) {
+					if( !mtp_ok ) break;
+					mtp_ok = false;
+				}
+				if(p_buffer[i-mtp_block_size] != p_buffer[i]) mtp_ok = true;
+			}
+			if(mtp_ok) break;
+		} while(--mtp_fail_cnt);
+		if( mtp_fail_cnt == 0 )	panic("MTP is not safety\n");
+#else
 		/* Set the mtp read buffer pointer and read the NVM value*/
 		mipi_samsung_read_nv_mem(pdata, &nv_mtp_read_cmds, msd.sdimconf->mtp_buffer);
+#endif 
+
 #ifdef LDI_FPS_CHANGE
 		if(msd.id3 >= 0x21) {
 			mipi_samsung_read_nv_mem(msd.pdata, &read_ldi_fps_cmds, &ldi_fps_buffer);

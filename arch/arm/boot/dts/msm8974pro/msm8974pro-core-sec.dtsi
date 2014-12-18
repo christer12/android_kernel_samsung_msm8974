@@ -101,7 +101,7 @@
 /include/ "core/msm8974-mdss.dtsi"
 /include/ "core/msm8974-smp2p.dtsi"
 /include/ "core/msm8974-bus.dtsi"
-
+/include/ "core/msm-rdbg.dtsi"
 
 &soc {
 	#address-cells = <1>;
@@ -779,7 +779,7 @@
 		"lpaif_sec_mode_muxsel",
 		"lpaif_tert_mode_muxsel",
 		"lpaif_quat_mode_muxsel";
-		
+
 		qcom,audio-routing =
 			"RX_BIAS", "MCLK",
 			"LDO_H", "MCLK",
@@ -810,6 +810,7 @@
 		qcom,sec-auxpcm-gpio-din  = <&msmgpio 81 0>;
 		qcom,sec-auxpcm-gpio-dout = <&msmgpio 82 0>;
 		qcom,micbias-en-msm-gpio = <&pma8084_gpios 7 0>;
+		qcom,micbias-en-msm-jpn-gpio = <&msmgpio 123 0>;
 	};
 
 	spmi_bus: qcom,spmi@fc4c0000 {
@@ -1570,25 +1571,47 @@
 			< 2265600000  925000 691 >;
 	};
 
+	qcom,cpubw {
+		compatible = "qcom,cpubw";
+		qcom,cpu-mem-ports = <1 512>, <2 512>;
+		qcom,bw-tbl =
+			<  381 /*  50 MHz */ >,
+			<  572 /*  75 MHz */ >,
+			<  762 /* 100 MHz */ >,
+			< 1144 /* 150 MHz */ >,
+			< 1525 /* 200 MHz */ >,
+			< 2342 /* 307 MHz */ >,
+			< 3509 /* 460 MHz */ >,
+			< 4684 /* 614 MHz */ >,
+			< 6103 /* 800 MHz */ >,
+			< 7102 /* 931 MHz */ >;
+	};
+
+	qcom,kraitbw-l2pm {
+		compatible = "qcom,kraitbw-l2pm";
+		interrupts = <0 1 1>;
+		qcom,bytes-per-beat = <8>;
+	};
+
 	qcom,msm-cpufreq@0 {
 		reg = <0 4>;
 		compatible = "qcom,msm-cpufreq";
-		qcom,cpu-mem-ports = <1 512>, <2 512>;
 		qcom,cpufreq-table =
-			<  300000  300000  600 /*  75 MHz */ >,
-			<  422400  422400 1200 /* 150 MHz */ >,
-			<  652800  499200 1600 /* 200 MHz */ >,
-			<  729600  576000 2456 /* 307 MHz */ >,
-			<  883200  576000 2456 /* 307 MHz */ >,
-			<  960000  960000 3680 /* 460 MHz */ >,
-			< 1036800 1036800 3680 /* 460 MHz */ >,
-			< 1190400 1036800 3680 /* 460 MHz */ >,
-			< 1267200 1267200 4912 /* 614 MHz */ >,
-			< 1497600 1497600 4912 /* 614 MHz */ >,
-			< 1574400 1574400 6400 /* 800 MHz */ >,
-			< 1728000 1651200 6400 /* 800 MHz */ >,
-			< 1958400 1728000 7448 /* 931 MHz */ >,
-			< 2265600 1728000 7448 /* 931 MHz */ >;
+			<  300000  300000  572 >,
+			<  422400  422400 1144 >,
+			<  652800  499200 1525 >,
+			<  729600  576000 2342 >,
+			<  883200  576000 2342 >,
+			<  960000  960000 3509 >,
+			< 1036800 1036800 3509 >,
+			< 1190400 1036800 3509 >,
+			< 1267200 1267200 4684 >,
+			< 1497600 1497600 4684 >,
+			< 1574400 1574400 6103 >,
+			< 1728000 1651200 6103 >,
+			< 1958400 1728000 7102 >,
+			< 2265600 1728000 7102 >,
+			< 2457600 1728000 7102 >;
 	};
 
 	usb3: qcom,ssusb@f9200000 {
@@ -1615,7 +1638,7 @@
 		vbus_dwc3-supply = <&pm8941_mvs1>;*/
 		qcom,dwc-usb3-msm-dbm-eps = <4>;
 		qcom,vdd-voltage-level = <1 5 7>;
-		qcom,dwc-hsphy-init = <0x00D191A4>;
+		qcom,dwc-hsphy-init = <0x00D194E4>;
 		/*qcom,misc-ref = <&pm8941_misc>;
 		dwc_usb3-adc_tm = <&pm8941_adc_tm>;*/
 		qcom,dwc-usb3-msm-tx-fifo-size = <29696>;
@@ -1688,21 +1711,16 @@
 		compatible = "qcom,msm-audio-ion";
 	};
 
-	qcom,msm-pcm {
-		compatible = "qcom,msm-pcm-dsp";
-		qcom,msm-pcm-dsp-id = <0>;
+	qti,msm-pcm {
+		compatible = "qti,msm-pcm-dsp";
+		qti,msm-pcm-dsp-id = <0>;
 	};
 
-	qcom,msm-pcm-low-latency {
-		compatible = "qcom,msm-pcm-dsp";
-		qcom,msm-pcm-dsp-id = <1>;
-		qcom,msm-pcm-low-latency;
-	};
-
-	qcom,msm-pcm-jack-low-latency {
-		compatible = "qcom,msm-pcm-dsp";
-		qcom,msm-pcm-dsp-id = <2>;
-		qcom,msm-pcm-low-latency;
+	qti,msm-pcm-low-latency {
+		compatible = "qti,msm-pcm-dsp";
+		qti,msm-pcm-dsp-id = <1>;
+		qti,msm-pcm-low-latency;
+		qti,latency-level = "regular";
 	};
 
 	qcom,msm-pcm-routing {
@@ -1744,6 +1762,10 @@
 
 	qcom,msm-lsm-client {
 		compatible = "qcom,msm-lsm-client";
+	};
+
+	qti,msm-pcm-loopback {
+		compatible = "qti,msm-pcm-loopback";
 	};
 
 	qcom,msm-dai-q6 {
@@ -2041,8 +2063,8 @@
 		qcom,msm-bus,num-cases = <2>;
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
-				<1 618 0 0>,
-				<1 618 0 800>;
+				<88 618 0 0>,
+				<88 618 0 800>;
         };
 
 	qseecom: qcom,qseecom@7300000 {
@@ -2052,14 +2074,15 @@
 		qcom,disk-encrypt-pipe-pair = <2>;
 		qcom,hlos-ce-hw-instance = <1>;
 		qcom,qsee-ce-hw-instance = <0>;
+		qcom,support-bus-scaling = <1>;
 		qcom,msm-bus,name = "qseecom-noc";
 		qcom,msm-bus,num-cases = <4>;
 		qcom,msm-bus,num-paths = <1>;
 		qcom,msm-bus,vectors-KBps =
 				<55 512 0 0>,
-				<55 512 3936000 393600>,
-				<55 512 3936000 393600>,
-				<55 512 3936000 393600>;
+				<55 512 0 0>,
+				<55 512 120000 1200000>,
+				<55 512 393600 3936000>;
 	};
 
 	qcom,wdt@f9017000 {
@@ -2244,6 +2267,10 @@
 		qcom,hotplug-temp-hysteresis = <20>;
 		qcom,cpu-sensors = "tsens_tz_sensor5", "tsens_tz_sensor6",
 				"tsens_tz_sensor7", "tsens_tz_sensor8";
+		qcom,freq-mitigation-temp = <110>;
+		qcom,freq-mitigation-temp-hysteresis = <20>;
+		qcom,freq-mitigation-value = <960000>;
+		qcom,freq-mitigation-control-mask = <0x01>;
 		qcom,vdd-restriction-temp = <5>;
 		qcom,vdd-restriction-temp-hysteresis = <10>;
 		qcom,pmic-sw-mode-temp = <85>;
@@ -2280,7 +2307,7 @@
 
         memory_hole: qcom,msm-mem-hole {
                 compatible = "qcom,msm-mem-hole";
-                qcom,memblock-remove = <0x4900000 0x8900000
+                qcom,memblock-remove = <0x5100000 0x8100000
 					0xfa00000 0x800000>; /* Address and Size of Hole */
         };
 
