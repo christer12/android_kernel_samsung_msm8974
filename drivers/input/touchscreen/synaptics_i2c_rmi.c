@@ -3627,6 +3627,7 @@ static int synaptics_rmi4_reset_device(struct synaptics_rmi4_data *rmi4_data)
 
 		msleep(30);
 		synaptics_power_ctrl(rmi4_data,true);
+		rmi4_data->current_page = MASK_8BIT;
 
 		msleep(SYNAPTICS_HW_RESET_TIME);
 
@@ -3684,6 +3685,8 @@ static void synaptics_rmi4_reboot_work(struct work_struct *work)
 	synaptics_power_ctrl(rmi4_data,false);
 	msleep(50);
 	synaptics_power_ctrl(rmi4_data,true);
+	rmi4_data->current_page = MASK_8BIT;
+
 	msleep(SYNAPTICS_HW_RESET_TIME);
 
 #if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
@@ -4531,6 +4534,7 @@ static int synaptics_rmi4_start_device(struct synaptics_rmi4_data *rmi4_data)
 #endif
 
 	synaptics_power_ctrl(rmi4_data,true);
+	rmi4_data->current_page = MASK_8BIT;
 	rmi4_data->touch_stopped = false;
 
 	mdss_dsi_panel_touchsensing(true);

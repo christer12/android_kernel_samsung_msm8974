@@ -1606,6 +1606,7 @@ static void es325_switch_route(void)
 	u8 msg[4];
 	u8 *msg_ptr;
 	int rc;
+	static int preRoute=0;
 
 	if (es325_network_type == WIDE_BAND) {
 		if (es325->new_internal_route_config >= 0 &&
@@ -1633,7 +1634,25 @@ static void es325_switch_route(void)
 	}
 
 	if (es325->internal_route_config != es325->new_internal_route_config) {
+		if ((preRoute != 5) && (es325->new_internal_route_config != 5)) {
+			dev_info(&sbdev->dev, "=[ES325]=%s(): final es325_internal_route_num = %ld\n",
+				__func__, es325_internal_route_num);
+
+			msg_ptr = &es325_internal_route_configs[5][0];
+			while (*msg_ptr != 0xff) {
+				memcpy(msg, msg_ptr, 4);
+				rc = ES325_BUS_WRITE(es325, ES325_WRITE_VE_OFFSET, ES325_WRITE_VE_WIDTH, msg, 4, 1);
+				if (rc < 0)
+					dev_err(&sbdev->dev, "=[ES325]=%s: slim write fail, rc=%d\n",
+						__func__, rc);
+				msg_ptr += 4;
+			}
+			msleep(5);
+		}
 		es325_internal_route_num = es325->new_internal_route_config;
+
+		preRoute=es325_internal_route_num;
+
 		dev_info(&sbdev->dev, "=[ES325]=%s(): final es325_internal_route_num = %ld\n",
 			__func__, es325_internal_route_num);
 		msg_ptr = &es325_internal_route_configs[es325_internal_route_num][0];
