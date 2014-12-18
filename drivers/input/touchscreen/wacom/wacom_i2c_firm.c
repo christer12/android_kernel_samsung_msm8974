@@ -26,7 +26,7 @@ unsigned char *Binary;
 	defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
 char Firmware_checksum[] = { 0x1F, 0xE8, 0xD1, 0xA9, 0x3E, };/*ver 0x207*/
 #else
-char Firmware_checksum[] = { 0x1F, 0xF0, 0x89, 0x4D, 0x4E, };/*ver 0x171*/
+char Firmware_checksum[] = { 0x1F, 0x19, 0x7E, 0x3D, 0xB3, };/*ver 0x174*/
 #endif
 char B934_checksum[] = { 0x1F, 0x93, 0x7E, 0xDE, 0xAD, };	/*ver 0x076*/
 #if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)

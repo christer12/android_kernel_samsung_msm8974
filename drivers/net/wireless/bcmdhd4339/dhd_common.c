@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd_common.c 418332 2013-08-14 20:00:06Z $
+ * $Id: dhd_common.c 420391 2013-08-27 05:39:38Z $
  */
 #include <typedefs.h>
 #include <osl.h>
@@ -2661,3 +2661,238 @@ wl_iw_parse_channel_list(char** list_str, uint16* channel_list, int channel_num)
 	*list_str = str;
 	return num;
 }
+
+#ifdef DEBUG_BCN_LOSS
+
+char bufdata[2048];
+
+#define	PRVAL(name)	pbuf += sprintf(pbuf, "%s %u ", #name, dtoh32(cnt->name))
+#define	PRVALSIX(name)	pbuf += sprintf(pbuf, "%s %u ", #name, dtoh32(cnt_six->name))
+#define	PRNL()		pbuf += sprintf(pbuf, "\n")
+
+#define WL_CNT_VERSION_SIX 6
+
+int wl_counters_save(dhd_pub_t *dhd, int print_count)
+{
+	char *statsbuf;
+	wl_cnt_t *cnt;
+	wl_cnt_ver_six_t *cnt_six;
+	int err;
+	uint i;
+	char *pbuf;
+	uint16 ver;
+
+	printk("%s : Entered.\n", __FUNCTION__);
+
+	if (strlen(bufdata) && (print_count == 1)) {
+		printk("%s : wl counters at conneted done.\n", __FUNCTION__);
+		for (i = 0; i < 2; i++) {
+			printk("%s \n", &bufdata[1024*i]);
+			if (strlen(&bufdata[1024*i]) == 0) {
+				printk("Done. \n");
+				break;
+			}
+		}
+	}
+	memset(&bufdata, 0, sizeof(bufdata));
+	bcm_mkiovar("counters", 0, 0, bufdata, sizeof(bufdata));
+	err = dhd_wl_ioctl_cmd(dhd, WLC_GET_VAR, bufdata, sizeof(bufdata), FALSE, 0);
+	if (err) {
+		DHD_ERROR(("%s: fail to get counters err = %d\n", __FUNCTION__, err));
+		return (-1);
+	}
+
+	statsbuf = (char *)bufdata;
+
+	ver = *(uint16*)statsbuf;
+
+	cnt_six = (wl_cnt_ver_six_t*)MALLOC(dhd->osh, sizeof(wl_cnt_ver_six_t));
+	if (cnt_six == NULL) {
+		printf("\tCan not allocate %d bytes for counters six struct\n",
+			(int)sizeof(wl_cnt_ver_six_t));
+		return (-1);
+	} else
+		memcpy(cnt_six, bufdata, sizeof(wl_cnt_ver_six_t));
+
+	cnt = (wl_cnt_t*)MALLOC(dhd->osh, sizeof(wl_cnt_t));
+	if (cnt == NULL) {
+		printf("\tCan not allocate %d bytes for counters struct\n",
+			(int)sizeof(wl_cnt_t));
+		MFREE(dhd->osh, cnt_six, sizeof(wl_cnt_ver_six_t));
+		return (-1);
+	} else
+		memcpy(cnt, bufdata, sizeof(wl_cnt_t));
+
+	memset(&bufdata, 0, sizeof(bufdata));
+	pbuf = bufdata;
+
+	/* summary stat counter line */
+	PRVAL(txframe); PRVAL(txbyte); PRVAL(txretrans); PRVAL(txerror);
+	PRVAL(rxframe); PRVAL(rxbyte); PRVAL(rxerror); PRNL();
+
+	PRVAL(txprshort); PRVAL(txdmawar); PRVAL(txnobuf); PRVAL(txnoassoc);
+	PRVAL(txchit); PRVAL(txcmiss); PRNL();
+
+	PRVAL(reset); PRVAL(txserr); PRVAL(txphyerr); PRVAL(txphycrs);
+	PRVAL(txfail); PRVAL(tbtt); PRNL();
+
+	pbuf += sprintf(pbuf, "d11_txfrag %d d11_txmulti %d d11_txretry %d d11_txretrie %d\n",
+		dtoh32(cnt->txfrag), dtoh32(cnt->txmulti), dtoh32(cnt->txretry),
+		dtoh32(cnt->txretrie));
+
+	pbuf += sprintf(pbuf, "d11_txrts %d d11_txnocts %d d11_txnoack %d d11_txfrmsnt %d\n",
+		dtoh32(cnt->txrts), dtoh32(cnt->txnocts), dtoh32(cnt->txnoack),
+		dtoh32(cnt->txfrmsnt));
+
+	PRVAL(rxcrc); PRVAL(rxnobuf); PRVAL(rxnondata); PRVAL(rxbadds);
+	PRVAL(rxbadcm); PRVAL(rxdup); PRVAL(rxfragerr); PRNL();
+
+	PRVAL(rxrunt); PRVAL(rxgiant); PRVAL(rxnoscb); PRVAL(rxbadproto);
+	PRVAL(rxbadsrcmac); PRNL();
+
+	pbuf += sprintf(pbuf, "d11_rxfrag %d d11_rxmulti %d d11_rxundec %d\n",
+		dtoh32(cnt->rxfrag), dtoh32(cnt->rxmulti), dtoh32(cnt->rxundec));
+
+	PRVAL(rxctl); PRVAL(rxbadda); PRVAL(rxfilter); PRNL();
+
+	pbuf += sprintf(pbuf, "rxuflo: ");
+	for (i = 0; i < NFIFO; i++)
+		pbuf += sprintf(pbuf, "%d ", dtoh32(cnt->rxuflo[i]));
+	pbuf += sprintf(pbuf, "\n");
+	PRVAL(txallfrm); PRVAL(txrtsfrm); PRVAL(txctsfrm); PRVAL(txackfrm);
+#if WL_CNT_T_VERSION > 8
+	PRVAL(txback);
+#endif
+
+	PRNL();
+	PRVAL(txdnlfrm); PRVAL(txbcnfrm); PRVAL(txtplunfl); PRVAL(txphyerr); PRNL();
+	pbuf += sprintf(pbuf, "txfunfl: ");
+	for (i = 0; i < NFIFO; i++)
+		pbuf += sprintf(pbuf, "%d ", dtoh32(cnt->txfunfl[i]));
+	pbuf += sprintf(pbuf, "\n");
+
+	/* WPA2 counters */
+	PRNL();
+	if ((cnt->version == WL_CNT_VERSION_SIX) && (cnt->version != WL_CNT_T_VERSION)) {
+		PRVALSIX(tkipmicfaill); PRVALSIX(tkipicverr); PRVALSIX(tkipcntrmsr); PRNL();
+		PRVALSIX(tkipreplay); PRVALSIX(ccmpfmterr); PRVALSIX(ccmpreplay); PRNL();
+		PRVALSIX(ccmpundec); PRVALSIX(fourwayfail); PRVALSIX(wepundec); PRNL();
+		PRVALSIX(wepicverr); PRVALSIX(decsuccess); PRVALSIX(rxundec); PRNL();
+	} else {
+		PRVAL(tkipmicfaill); PRVAL(tkipicverr); PRVAL(tkipcntrmsr); PRNL();
+		PRVAL(tkipreplay); PRVAL(ccmpfmterr); PRVAL(ccmpreplay); PRNL();
+		PRVAL(ccmpundec); PRVAL(fourwayfail); PRVAL(wepundec); PRNL();
+		PRVAL(wepicverr); PRVAL(decsuccess); PRVAL(rxundec); PRNL();
+	}
+	PRNL();
+	PRVAL(rxfrmtoolong); PRVAL(rxfrmtooshrt);
+#if WL_CNT_T_VERSION > 8
+	PRVAL(rxtoolate);
+#endif
+
+	PRVAL(rxinvmachdr); PRVAL(rxbadfcs); PRNL();
+	PRVAL(rxbadplcp); PRVAL(rxcrsglitch);
+	PRVAL(bphy_rxcrsglitch);
+#if WL_CNT_T_VERSION > 8
+	PRVAL(bphy_badplcp);
+#endif
+	PRNL();
+	PRVAL(rxstrt); PRVAL(rxdfrmucastmbss);
+	PRVAL(rxmfrmucastmbss); PRVAL(rxcfrmucast); PRNL();
+	PRVAL(rxrtsucast); PRVAL(rxctsucast);
+	PRVAL(rxackucast);
+#if WL_CNT_T_VERSION > 8
+	PRVAL(rxback);
+#endif
+	PRNL();
+	PRVAL(rxdfrmocast); PRVAL(rxmfrmocast); PRVAL(rxcfrmocast); PRNL();
+	PRVAL(rxrtsocast); PRVAL(rxctsocast);
+	PRVAL(rxdfrmmcast); PRVAL(rxmfrmmcast); PRNL();
+	PRVAL(rxcfrmmcast); PRVAL(rxbeaconmbss);
+	PRVAL(rxdfrmucastobss); PRVAL(rxbeaconobss); PRNL();
+	PRVAL(rxrsptmout); PRVAL(bcntxcancl);
+	PRVAL(rxf0ovfl); PRVAL(rxf1ovfl); PRNL();
+	PRVAL(rxf2ovfl); PRVAL(txsfovfl); PRVAL(pmqovfl); PRNL();
+	PRVAL(rxcgprqfrm); PRVAL(rxcgprsqovfl);
+	PRVAL(txcgprsfail); PRVAL(txcgprssuc); PRNL();
+	PRVAL(prs_timeout); PRVAL(rxnack); PRVAL(frmscons);
+	PRVAL(prs_timeout);
+#if WL_CNT_T_VERSION > 8
+	PRVAL(rxdrop20s);
+	PRVAL(txfbw);
+#endif
+
+	PRNL();
+	PRVAL(txphyerror); PRVAL(txchanrej); PRNL();
+
+	if ((cnt->version == WL_CNT_VERSION_SIX) && (cnt->version != WL_CNT_T_VERSION)) {
+		/* per-rate receive counters */
+		PRVALSIX(rx1mbps); PRVALSIX(rx2mbps); PRVALSIX(rx5mbps5); PRNL();
+		PRVALSIX(rx6mbps); PRVALSIX(rx9mbps); PRVALSIX(rx11mbps); PRNL();
+		PRVALSIX(rx12mbps); PRVALSIX(rx18mbps); PRVALSIX(rx24mbps); PRNL();
+		PRVALSIX(rx36mbps); PRVALSIX(rx48mbps); PRVALSIX(rx54mbps); PRNL();
+
+		PRVALSIX(pktengrxducast); PRVALSIX(pktengrxdmcast); PRNL();
+
+		PRVALSIX(txmpdu_sgi); PRVALSIX(rxmpdu_sgi); PRVALSIX(txmpdu_stbc);
+		PRVALSIX(rxmpdu_stbc); PRNL();
+	} else {
+		if (cnt->version >= 4) {
+			/* per-rate receive counters */
+			PRVAL(rx1mbps); PRVAL(rx2mbps); PRVAL(rx5mbps5); PRNL();
+			PRVAL(rx6mbps); PRVAL(rx9mbps); PRVAL(rx11mbps); PRNL();
+			PRVAL(rx12mbps); PRVAL(rx18mbps); PRVAL(rx24mbps); PRNL();
+			PRVAL(rx36mbps); PRVAL(rx48mbps); PRVAL(rx54mbps); PRNL();
+		}
+
+		if (cnt->version >= 5) {
+			PRVAL(pktengrxducast); PRVAL(pktengrxdmcast); PRNL();
+		}
+
+		if (cnt->version >= 6) {
+			PRVAL(txmpdu_sgi); PRVAL(rxmpdu_sgi); PRVAL(txmpdu_stbc);
+			PRVAL(rxmpdu_stbc); PRNL();
+		}
+
+		if (cnt->version >= 8) {
+			PRVAL(reinit); PRNL();
+			if (cnt->length >= OFFSETOF(wl_cnt_t, cso_passthrough) + sizeof(uint32)) {
+				PRVAL(cso_normal);
+				PRVAL(cso_passthrough);
+				PRNL();
+			}
+			PRVAL(chained); PRVAL(chainedsz1); PRVAL(unchained); PRVAL(maxchainsz);
+			PRVAL(currchainsz); PRNL();
+		}
+#if WL_CNT_T_VERSION > 8
+		if (cnt->version >= 9) {
+			PRVAL(pciereset); PRVAL(cfgrestore); PRNL();
+		}
+#endif
+	}
+
+	pbuf += sprintf(pbuf, "\n");
+
+	if (print_count == 1) {
+		for (i = 0; i < 2; i++) {
+			printk("%s : wl counters at this time.\n", __FUNCTION__);
+			printk("%s \n", &bufdata[1024*i]);
+			if (strlen(&bufdata[1024*i]) == 0) {
+				printk("Done. \n");
+				break;
+			}
+		}
+	}
+
+	if (cnt)
+		MFREE(dhd->osh, cnt, sizeof(wl_cnt_t));
+
+	if (cnt_six)
+		MFREE(dhd->osh, cnt_six, sizeof(wl_cnt_ver_six_t));
+
+
+	printk("%s : Done.\n", __FUNCTION__);
+
+	return (0);
+}
+#endif /* DEBUG_BCN_LOSS */

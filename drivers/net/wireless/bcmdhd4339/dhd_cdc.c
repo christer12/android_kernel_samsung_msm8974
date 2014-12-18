@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd_cdc.c 416698 2013-08-06 07:53:34Z $
+ * $Id: dhd_cdc.c 421040 2013-08-30 04:23:15Z $
  *
  * BDC is like CDC, except it includes a header for data packets to convey
  * packet priority over the bus, and flags (e.g. to indicate checksum status
@@ -223,7 +223,6 @@ dhdcdc_set_ioctl(dhd_pub_t *dhd, int ifidx, uint cmd, void *buf, uint len, uint8
 	cdc_ioctl_t *msg = &prot->msg;
 	int ret = 0;
 	uint32 flags, id;
-	int i;
 
 	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
 	DHD_CTL(("%s: cmd %d len %d\n", __FUNCTION__, cmd, len));
@@ -240,19 +239,18 @@ dhdcdc_set_ioctl(dhd_pub_t *dhd, int ifidx, uint cmd, void *buf, uint len, uint8
 		return -EIO;
 	}
 
-#if defined(CUSTOMER_HW4) && defined(CONFIG_CONTROL_PM)
-	if ((g_pm_control == TRUE) && (cmd == WLC_SET_PM))
-	{
-		DHD_ERROR(("SET PM ignored!!!!!!!!!!!!!!!!!!!!!!\n"));
-		goto done;
+#ifdef CUSTOMER_HW4
+	if (cmd == WLC_SET_PM) {
+#ifdef CONFIG_CONTROL_PM
+		if (g_pm_control == TRUE) {
+			DHD_ERROR(("%s: SET PM ignored!(Requested:%d)\n",
+				__FUNCTION__, *(char *)buf));
+			goto done;
+		}
+#endif /* CONFIG_CONTROL_PM */
+		DHD_ERROR(("%s: SET PM to %d\n", __FUNCTION__, *(char *)buf));
 	}
-#endif /* CUSTOMER_HW4 && CONFIG_CONTROL_PM */
-	if (cmd == WLC_SET_PM)
-	{
-		DHD_ERROR(("SET PM!!!!!!!!!!!!!!!!!!!!!!\n"));
-		for(i = 0; i< len; i++)
-			DHD_ERROR(("%d \n", *(char*)(buf + i)));
-	}
+#endif /* CUSTOMER_HW4 */
 	memset(msg, 0, sizeof(cdc_ioctl_t));
 
 	msg->cmd = htol32(cmd);

@@ -150,7 +150,7 @@ fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9001_B911.bin
 fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9007A_0200.bin
 fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9007_0200.bin
 fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9010_0076.bin
-fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9010_0171.bin
+fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9010_0174.bin
 fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9010_0207.bin
 fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9007A_013C.bin
 

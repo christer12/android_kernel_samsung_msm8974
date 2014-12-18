@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd_sdio.c 418699 2013-08-16 10:37:13Z $
+ * $Id: dhd_sdio.c 422234 2013-09-06 10:31:33Z $
  */
 
 #include <typedefs.h>
@@ -164,7 +164,11 @@ extern void bcmsdh_set_irq(int flag);
 #ifdef PROP_TXSTATUS
 extern void dhd_wlfc_txcomplete(dhd_pub_t *dhd, void *txp, bool success);
 extern void dhd_wlfc_trigger_pktcommit(dhd_pub_t *dhd);
-#endif
+#ifdef DHDTCPACK_SUPPRESS
+extern int dhd_os_wlfc_block(dhd_pub_t *pub);
+extern int dhd_os_wlfc_unblock(dhd_pub_t *pub);
+#endif /* DHDTCPACK_SUPPRESS */
+#endif /* PROP_TXSTATUS */
 
 #if defined(MULTIPLE_SUPPLICANT)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 25))
@@ -1757,6 +1761,7 @@ dhd_tcpack_suppress(dhd_pub_t *dhdp, void *pkt)
 					* but not delayedequeued yet, it may not have
 					* any additional header yet.
 					*/
+					dhd_os_wlfc_block(dhdp);
 					if (dhdp->wlfc_state &&	(PKTLEN(dhdp->osh, prevpkt) ==
 						tcp_ack_info->ip_tcp_ttllen + ETHER_HDR_LEN))
 						pushed_len = 0;
@@ -1772,6 +1777,9 @@ dhd_tcpack_suppress(dhd_pub_t *dhdp, void *pkt)
 							" TCP ACK replace %ud -> %ud\n", prevpkt,
 							tcp_ack_info->tcpack_number, tcp_ack_num));
 						tcp_ack_info->tcpack_number = tcp_ack_num;
+#ifdef PROP_TXSTATUS
+						dhd_os_wlfc_unblock(dhdp);
+#endif
 						dhd_os_tcpackunlock(dhdp);
 						return TRUE;
 					} else
@@ -1780,6 +1788,10 @@ dhd_tcpack_suppress(dhd_pub_t *dhdp, void *pkt)
 							PKTLEN(dhdp->osh, pkt), ip_tcp_ttllen,
 							PKTLEN(dhdp->osh, prevpkt),
 							tcp_ack_info->ip_tcp_ttllen));
+#ifdef PROP_TXSTATUS
+							dhd_os_wlfc_unblock(dhdp);
+#endif
+
 				} else {
 #ifdef TCPACK_TEST
 					void *prevpkt = tcp_ack_info->p_tcpackinqueue;
@@ -2212,13 +2224,11 @@ dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
 	int ret = BCME_ERROR;
 	osl_t *osh;
 	uint datalen, prec;
-#ifdef DHD_TX_DUMP
+#if defined(DHD_TX_DUMP) || defined(DHD_8021X_DUMP)
 	uint8 *dump_data;
 	uint16 protocol;
-#ifdef DHD_TX_FULL_DUMP
-	int i;
-#endif /* DHD_TX_FULL_DUMP */
-#endif /* DHD_TX_DUMP */
+#endif /* DHD_TX_DUMP || DHD_8021X_DUMP */
+
 	DHD_TRACE(("%s: Enter\n", __FUNCTION__));
 
 	osh = bus->dhd->osh;
@@ -2238,26 +2248,30 @@ dhd_bus_txdata(struct dhd_bus *bus, void *pkt)
 	}
 #endif /* SDTEST */
 
-#ifdef DHD_TX_DUMP
+#if defined(DHD_TX_DUMP) || defined(DHD_8021X_DUMP)
 	dump_data = PKTDATA(osh, pkt);
 	dump_data += 4; /* skip 4 bytes header */
 	protocol = (dump_data[12] << 8) | dump_data[13];
-#ifdef DHD_TX_FULL_DUMP
-	DHD_ERROR(("TX DUMP\n"));
 
-	for (i = 0; i < (datalen - 4); i++) {
-		DHD_ERROR(("%02X ", dump_data[i]));
-		if ((i & 15) == 15)
-			printk("\n");
-	}
-	DHD_ERROR(("\n"));
-
-#endif /* DHD_TX_FULL_DUMP */
 	if (protocol == ETHER_TYPE_802_1X) {
-		DHD_ERROR(("ETHER_TYPE_802_1X[TX DUMP]: ver %d, type %d, replay %d\n",
+		DHD_ERROR(("ETHER_TYPE_802_1X [TX]: ver %d, type %d, replay %d\n",
 			dump_data[14], dump_data[15], dump_data[30]));
 	}
-#endif /* DHD_TX_DUMP */
+#endif /* DHD_TX_DUMP || DHD_8021X_DUMP */
+
+#if defined(DHD_TX_DUMP) && defined(DHD_TX_FULL_DUMP)
+	{
+		int i;
+		DHD_ERROR(("TX DUMP\n"));
+
+		for (i = 0; i < (datalen - 4); i++) {
+			DHD_ERROR(("%02X ", dump_data[i]));
+			if ((i & 15) == 15)
+				printk("\n");
+		}
+		DHD_ERROR(("\n"));
+	}
+#endif /* DHD_TX_DUMP && DHD_TX_FULL_DUMP */
 
 	/* Add space for the header */
 	PKTPUSH(osh, pkt, SDPCM_HDRLEN);
@@ -2693,7 +2707,7 @@ dhd_bus_txctl(struct dhd_bus *bus, uchar *msg, uint msglen)
 			ASSERT(ret != BCME_PENDING);
 
 			if (ret == BCME_NODEVICE) {
-				DHD_ERROR(("%s: Device asleep already\n", __FUNCTION__));
+				DHD_ERROR(("%s: Device asleep already bus->sleeping %d \n", __FUNCTION__, bus->sleeping));
 			} else if (ret < 0) {
 			/* On failure, abort the command and terminate the frame */
 				DHD_INFO(("%s: sdio error %d, abort command and terminate frame.\n",

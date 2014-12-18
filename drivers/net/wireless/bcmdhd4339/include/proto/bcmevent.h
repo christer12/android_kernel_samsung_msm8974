@@ -23,7 +23,7 @@
  *
  * Dependencies: proto/bcmeth.h
  *
- * $Id: bcmevent.h 386716 2013-02-21 18:16:10Z $
+ * $Id: bcmevent.h 420384 2013-08-27 04:46:11Z $
  *
  */
 
@@ -220,12 +220,15 @@ typedef BWL_PRE_PACKED_STRUCT struct bcm_event {
 #define WLC_E_CSA_START_IND		121
 #define WLC_E_CSA_DONE_IND		122
 #define WLC_E_CSA_FAILURE_IND		123
-#define WLC_E_CCA_CHAN_QUAL		124
-#define WLC_E_TX_STAT_ERROR     126 /* tx error indication */
-#define WLC_E_BCMC_CREDIT_SUPPORT   127 /* credit check for BCMC supported */
-#define WLC_E_PSTA_PRIMARY_INTF_IND 128 /* psta primary interface indication */
+#define WLC_E_CCA_CHAN_QUAL		124	
+#define WLC_E_BSSID     125 
+#define WLC_E_TX_STAT_ERROR     126 
+#define WLC_E_BCMC_CREDIT_SUPPORT   127 
+#define WLC_E_PSTA_PRIMARY_INTF_IND 128 
 #define WLC_E_CCX_S69_RESP_RX	129
-#define WLC_E_LAST			130	/* highest val + 1 for range checking */
+#define WLC_E_LAST			130	
+
+
 
 typedef struct {
 	uint event;
