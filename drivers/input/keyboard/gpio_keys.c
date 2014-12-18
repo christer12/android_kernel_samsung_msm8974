@@ -719,8 +719,8 @@ static irqreturn_t flip_cover_detect(int irq, void *dev_id)
 	cancel_delayed_work_sync(&ddata->flip_cover_dwork);
 	
 	if(flip_status) {
-		wake_lock_timeout(&ddata->flip_wake_lock, HZ * 45 / 100);
-		schedule_delayed_work(&ddata->flip_cover_dwork, HZ * 4 / 10);
+		wake_lock_timeout(&ddata->flip_wake_lock, HZ * 5 / 100); /* 50ms */
+		schedule_delayed_work(&ddata->flip_cover_dwork, HZ * 1 / 100); /* 10ms */
 	} else {
 		wake_unlock(&ddata->flip_wake_lock);
 		schedule_delayed_work(&ddata->flip_cover_dwork, 0);
