@@ -56,6 +56,7 @@
 #define MSM_CPP_NOMINAL_CLOCK 266670000
 #define MSM_CPP_TURBO_CLOCK 320000000
 
+extern int poweroff_charging;
 
 typedef struct _msm_cpp_timer_data_t {
 	struct cpp_device *cpp_dev;
@@ -71,6 +72,11 @@ typedef struct _msm_cpp_timer_t {
 msm_cpp_timer_t cpp_timers[2];
 static int del_timer_idx=0;
 static int set_timer_idx=0;
+
+/* dump the frame command before writing to the hardware */
+#define  MSM_CPP_DUMP_FRM_CMD 0
+
+static int msm_cpp_buffer_ops(struct cpp_device *cpp_dev,uint32_t buff_mgr_ops, struct msm_buf_mngr_info *buff_mgr_info);
 
 #if CONFIG_MSM_CPP_DBG
 #define CPP_DBG(fmt, args...) pr_err(fmt, ##args)
@@ -771,6 +777,13 @@ static int cpp_init_hardware(struct cpp_device *cpp_dev)
 			goto req_irq_fail;
 		}
 		cpp_dev->buf_mgr_subdev = msm_buf_mngr_get_subdev();
+		
+		rc = msm_cpp_buffer_ops(cpp_dev,VIDIOC_MSM_BUF_MNGR_INIT, NULL);
+		if (rc < 0) {
+			pr_err("buf mngr init failed\n");
+			free_irq(cpp_dev->irq->start, cpp_dev);
+			goto req_irq_fail;
+		}
 	}
 
 	cpp_dev->hw_info.cpp_hw_version =
@@ -828,7 +841,11 @@ bus_scale_register_failed:
 
 static void cpp_release_hardware(struct cpp_device *cpp_dev)
 {
+	int32_t rc;
 	if (cpp_dev->state != CPP_STATE_BOOT) {
+		rc = msm_cpp_buffer_ops(cpp_dev,VIDIOC_MSM_BUF_MNGR_DEINIT, NULL);
+	if (rc < 0)
+		pr_err("error in buf mngr deinit rc=%d\n", rc);
 		free_irq(cpp_dev->irq->start, cpp_dev);
 		tasklet_kill(&cpp_dev->cpp_tasklet);
 		atomic_set(&cpp_dev->irq_cnt, 0);
@@ -1349,10 +1366,9 @@ static int msm_cpp_cfg(struct cpp_device *cpp_dev,
 	unsigned long in_phyaddr, out_phyaddr0, out_phyaddr1;
 	uint16_t num_stripes = 0;
 	struct msm_buf_mngr_info buff_mgr_info, dup_buff_mgr_info;
-	struct msm_cpp_frame_info_t *u_frame_info =
-		(struct msm_cpp_frame_info_t *)ioctl_ptr->ioctl_ptr;
 	int32_t status = 0;
 	uint8_t fw_version_1_2_x = 0;
+	int32_t *ret_status = 0;
 
 	int i = 0;
 	if (!new_frame) {
@@ -1365,8 +1381,9 @@ static int msm_cpp_cfg(struct cpp_device *cpp_dev,
 	if (rc) {
 		ERR_COPY_FROM_USER();
 		rc = -EINVAL;
-		goto ERROR1;
+		goto ERROR0;
 	}
+	ret_status = new_frame->status;
 
 	cpp_frame_msg = kzalloc(sizeof(uint32_t)*new_frame->msg_len,
 		GFP_KERNEL);
@@ -1491,7 +1508,7 @@ static int msm_cpp_cfg(struct cpp_device *cpp_dev,
 
 	ioctl_ptr->trans_code = rc;
 	status = rc;
-	rc = (copy_to_user((void __user *)u_frame_info->status, &status,
+	rc = (copy_to_user((void __user *)ret_status, &status,
 		sizeof(int32_t)) ? -EFAULT : 0);
 	if (rc) {
 		ERR_COPY_FROM_USER();
@@ -1507,12 +1524,13 @@ ERROR3:
 ERROR2:
 	kfree(cpp_frame_msg);
 ERROR1:
-	kfree(new_frame);
 	ioctl_ptr->trans_code = rc;
 	status = rc;
-	if (copy_to_user((void __user *)u_frame_info->status, &status,
+	if (copy_to_user((void __user *)ret_status, &status,
 		sizeof(int32_t)))
 		pr_err("error cannot copy error\n");
+ERROR0:
+	kfree(new_frame);
 	return rc;
 }
 
@@ -1527,7 +1545,10 @@ long msm_cpp_subdev_ioctl(struct v4l2_subdev *sd,
 		pr_err("ioctl_ptr is null\n");
 		return -EINVAL;
 	}
-
+	if (cpp_dev == NULL) {
+		pr_err("cpp_dev is null\n");
+		return -EINVAL;
+	}
 	mutex_lock(&cpp_dev->mutex);
 	CPP_DBG("E cmd: %d\n", cmd);
 	switch (cmd) {
@@ -1738,6 +1759,13 @@ long msm_cpp_subdev_ioctl(struct v4l2_subdev *sd,
 			return -EINVAL;
 		}
 
+		if ((ioctl_ptr->len == 0) ||
+			(ioctl_ptr->len > sizeof(uint32_t))) {
+			pr_err("ioctl_ptr->len is wrong : %d\n", ioctl_ptr->len);
+			mutex_unlock(&cpp_dev->mutex);
+			return -EINVAL;
+		}
+
 		rc = (copy_from_user(&identity,
 				(void __user *)ioctl_ptr->ioctl_ptr,
 				ioctl_ptr->len) ? -EFAULT : 0);
@@ -1828,7 +1856,7 @@ long msm_cpp_subdev_ioctl(struct v4l2_subdev *sd,
 	
 	case VIDIOC_MSM_CPP_SET_CLOCK: {
 		long clock_rate = 0;
-		if (ioctl_ptr->len == 0) {
+		if (ioctl_ptr->len == 0 || (ioctl_ptr->len > sizeof(long))) {
 			pr_err("ioctl_ptr->len is 0\n");
 			mutex_unlock(&cpp_dev->mutex);
 			return -EINVAL;
@@ -1979,7 +2007,14 @@ static int __devinit cpp_probe(struct platform_device *pdev)
 {
 	struct cpp_device *cpp_dev;
 	int rc = 0;
-
+	
+	// We'll move this modification after studying with QC
+	if (poweroff_charging == 1)
+	{
+		pr_err("forced return cpp_probe at lpm mode\n");
+		return rc;
+	}
+	
 	cpp_dev = kzalloc(sizeof(struct cpp_device), GFP_KERNEL);
 	if (!cpp_dev) {
 		pr_err("no enough memory\n");

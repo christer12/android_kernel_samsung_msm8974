@@ -22,7 +22,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: wl_cfg80211.c 429125 2013-10-11 10:43:53Z $
+ * $Id: wl_cfg80211.c 431563 2013-10-24 01:50:16Z $
  */
 /* */
 #include <typedefs.h>
@@ -1358,7 +1358,7 @@ wl_cfg80211_add_virtual_iface(struct wiphy *wiphy,
 
 		wl_cfg80211_scan_abort(wl);
 #ifdef PROP_TXSTATUS_VSDB
-		if (!wl->wlfc_on && !disable_proptx) {
+		if (dhd->op_mode != DHD_FLAG_IBSS_MODE && !wl->wlfc_on && !disable_proptx) {
 			dhd->wlfc_enabled = true;
 			dhd_wlfc_init(dhd);
 			err = wldev_ioctl(_ndev, WLC_UP, &up, sizeof(s32), true);
@@ -1433,7 +1433,7 @@ wl_cfg80211_add_virtual_iface(struct wiphy *wiphy,
 					dhd_mode = DHD_FLAG_P2P_GO_MODE;
 				DNGL_FUNC(dhd_cfg80211_set_p2p_info, (wl, dhd_mode));
 #ifdef PROP_TXSTATUS_VSDB
-				if (dhd->plat_enable)
+				if (dhd->op_mode != DHD_FLAG_IBSS_MODE && dhd->plat_enable)
 					dhd->plat_enable((void *)dhd);
 #endif /* PROP_TXSTATUS_VSDB */
 				/* reinitialize completion to clear previous count */
@@ -1454,7 +1454,7 @@ wl_cfg80211_add_virtual_iface(struct wiphy *wiphy,
 			memset(wl->p2p->vir_ifname, '\0', IFNAMSIZ);
 			wl->p2p->vif_created = false;
 #ifdef PROP_TXSTATUS_VSDB
-		if (dhd->wlfc_enabled && wl->wlfc_on) {
+		if (dhd->op_mode != DHD_FLAG_IBSS_MODE && dhd->wlfc_enabled && wl->wlfc_on) {
 			dhd->wlfc_enabled = false;
 			dhd_wlfc_deinit(dhd);
 			if (dhd->plat_deinit)
@@ -1760,7 +1760,7 @@ wl_cfg80211_ifdel_ops(struct net_device *ndev)
 
 		WL_DBG(("type : %d\n", type));
 #ifdef PROP_TXSTATUS_VSDB
-		if (dhd->wlfc_enabled && wl->wlfc_on) {
+		if (dhd->op_mode != DHD_FLAG_IBSS_MODE && dhd->wlfc_enabled && wl->wlfc_on) {
 			dhd->wlfc_enabled = false;
 			dhd_wlfc_deinit(dhd);
 			if (dhd->plat_deinit)
@@ -2988,7 +2988,7 @@ wl_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
 	if (chan) {
 		if (chan->band == IEEE80211_BAND_5GHZ)
 			param[0] = WLC_BAND_5G;
-		else if (chan->band == IEEE80211_BAND_5GHZ)
+		else if (chan->band == IEEE80211_BAND_2GHZ)
 			param[0] = WLC_BAND_2G;
 		err = wldev_iovar_getint(dev, "bw_cap", param);
 		if (unlikely(err)) {
@@ -3057,9 +3057,9 @@ wl_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *dev,
 	}
 	wl_update_prof(wl, dev, NULL, &join_params.ssid, WL_PROF_SSID);
 	wl_update_prof(wl, dev, NULL, &wl->channel, WL_PROF_CHAN);
-#if defined(CUSTOMER_HW4) && defined(SUPPORT_AIBSS)
+#ifdef SUPPORT_AIBSS
 	wl->aibss_txfail_seq = 0;	/* initialize the sequence */
-#endif /* CUSTOMER_HW4 && SUPPORT_AIBSS */
+#endif /* SUPPORT_AIBSS */
 	return err;
 }
 
@@ -3947,8 +3947,10 @@ wl_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 		if (err == BCME_UNSUPPORTED) {
 			WL_DBG(("join iovar is not supported\n"));
 			goto set_ssid;
-		} else
+		} else {
 			WL_ERR(("error (%d)\n", err));
+			goto exit;
+		}
 	} else
 		goto exit;
 
@@ -7393,6 +7395,16 @@ static s32 wl_setup_wiphy(struct wireless_dev *wdev, struct device *sdiofunc_dev
 #if (LINUX_VERSION_CODE > KERNEL_VERSION(3, 2, 0)) || defined(WL_COMPAT_WIRELESS)
 	wdev->wiphy->flags |= WIPHY_FLAG_SUPPORTS_TDLS;
 #endif
+
+#if defined(CONFIG_PM) && defined(WL_CFG80211_P2P_DEV_IF)
+	/*
+	 * From linux-3.10 kernel, wowlan packet filter is mandated to avoid the
+	 * disconnection of connected network before suspend. So a dummy wowlan
+	 * filter is configured for kernels linux-3.8 and above.
+	 */
+	wdev->wiphy->wowlan.flags = WIPHY_WOWLAN_ANY;
+#endif /* CONFIG_PM && WL_CFG80211_P2P_DEV_IF */
+
 	WL_DBG(("Registering custom regulatory)\n"));
 	wdev->wiphy->flags |= WIPHY_FLAG_CUSTOM_REGULATORY;
 	wiphy_apply_custom_regulatory(wdev->wiphy, &brcm_regdom);
@@ -8010,7 +8022,7 @@ wl_notify_connect_status(struct wl_priv *wl, bcm_struct_cfgdev *cfgdev,
 	return err;
 }
 
-#if defined(CUSTOMER_HW4) && defined(SUPPORT_AIBSS)
+#ifdef SUPPORT_AIBSS
 void wl_cfg80211_set_txfail_pid(int pid)
 {
 	struct wl_priv *wl = wlcfg_drv_priv;
@@ -8027,13 +8039,16 @@ wl_notify_aibss_txfail(struct wl_priv *wl, struct net_device *ndev,
 	int ret = -1;
 
 	if (wl->aibss_txfail_pid != 0) {
-		ret = wl_netlink_send_msg(wl->aibss_txfail_pid, wl->aibss_txfail_seq++, data, 6);
+		ret = wl_netlink_send_msg(wl->aibss_txfail_pid, wl->aibss_txfail_seq++,
+			(void *)&e->addr, ETHER_ADDR_LEN);
 	}
 
-	WL_DBG(("txfail : evt=%d, pid=%d, ret=%d\n", evt, wl->aibss_txfail_pid, ret));
+	WL_DBG(("txfail : evt=%d, pid=%d, ret=%d, mac=" MACF "\n",
+		evt, wl->aibss_txfail_pid, ret, ETHERP_TO_MACF(&e->addr)));
+
 	return ret;
 }
-#endif /* CUSTOMER_HW4 && SUPPORT_AIBSS */
+#endif /* SUPPORT_AIBSS */
 
 static s32
 wl_notify_roaming_status(struct wl_priv *wl, bcm_struct_cfgdev *cfgdev,
@@ -9087,9 +9102,9 @@ static void wl_init_event_handler(struct wl_priv *wl)
 #ifdef WLTDLS
 	wl->evt_handler[WLC_E_TDLS_PEER_EVENT] = wl_tdls_event_handler;
 #endif /* WLTDLS */
-#if defined(CUSTOMER_HW4) && defined(SUPPORT_AIBSS)
+#ifdef SUPPORT_AIBSS
 	wl->evt_handler[WLC_E_AIBSS_TXFAIL] = wl_notify_aibss_txfail;
-#endif /* CUSTOMER_HW4 && SUPPORT_AIBSS */
+#endif /* SUPPORT_AIBSS */
 #ifdef BCMCCX_S69
 	wl->evt_handler[WLC_E_CCX_S69_RESP_RX] = wl_ccx_s69_response;
 #endif
@@ -11155,7 +11170,8 @@ static s32 __wl_cfg80211_down(struct wl_priv *wl)
 		wl_clr_p2p_status(wl, GO_NEG_PHASE);
 #ifdef PROP_TXSTATUS_VSDB
 		if (wl->p2p->vif_created) {
-			if (dhd->wlfc_enabled && wl->wlfc_on) {
+			if (dhd-> op_mode != DHD_FLAG_IBSS_MODE &&
+				dhd->wlfc_enabled && wl->wlfc_on) {
 				dhd->wlfc_enabled = false;
 				dhd_wlfc_deinit(dhd);
 				if (dhd->plat_deinit)

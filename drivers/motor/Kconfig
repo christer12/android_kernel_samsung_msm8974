@@ -10,11 +10,27 @@ menuconfig VIBETONZ
 	-------------
 	-------------
 
+config TACTILE_ASSIST
+	tristate "Auto Haptic"
+	default n
+	depends on VIBETONZ
+
 config MOTOR_DRV_MAX77803
 	tristate "Maxim MAX77803 motor"
 	default n
 
 	depends on MFD_MAX77803
+
+config MOTOR_DRV_MAX77804K
+	tristate "Maxim MAX77804K motor"
+	default n
+
+	depends on MFD_MAX77804K
+
+config MOTOR_DRV_MAX77828
+	tristate "Maxim MAX77828 motor"
+	default n
+	depends on MFD_MAX77828
 
 config MOTOR_DRV_ISA1400
 	tristate "ISA1400 motor"
@@ -52,4 +68,4 @@ config CONFIG_HAPTIC_ISA1200
         default n
         depends on I2C
         help
-          Say Y to enalbe the ISA1200 IC.
+          Say Y to enable the ISA1200 IC. 

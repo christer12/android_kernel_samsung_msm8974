@@ -117,6 +117,44 @@ static void _set_vibetonz_work(struct work_struct *unused);
 static DECLARE_WORK(vibetonz_work, _set_vibetonz_work);
 struct vibrator_platform_data_isa1200 vibrator_drvdata;
 
+#if defined CONFIG_MACH_MATISSE3G_OPEN || defined CONFIG_SEC_MATISSELTE_COMMON
+static void haptic_power_onoff(int onoff)
+{
+	int ret;
+	static struct regulator *reg_l6;
+
+	if (!reg_l6) {
+		reg_l6 = regulator_get(&vibrator_drvdata.client->dev,"vddo");
+		if (IS_ERR(reg_l6)) {
+			printk(KERN_ERR"could not get 8226_l6, rc = %ld\n",
+				PTR_ERR(reg_l6));
+			return;
+		}
+		ret = regulator_set_voltage(reg_l6, 1800000, 1800000);
+	}
+
+	if (onoff) {
+		ret = regulator_enable(reg_l6);
+		if (ret) {
+			printk(KERN_ERR"enable l6 failed, rc=%d\n", ret);
+			return;
+		}
+		printk(KERN_DEBUG"haptic power_on is finished.\n");
+	} else {
+		if (regulator_is_enabled(reg_l6)) {
+			ret = regulator_disable(reg_l6);
+			if (ret) {
+				printk(KERN_ERR"disable l6 failed, rc=%d\n",
+									ret);
+				return;
+			}
+		}
+		printk(KERN_DEBUG"haptic power_off is finished.\n");
+	}
+}
+
+#endif
+
 static int set_vibetonz(int timeout)
 {
 	int8_t strength;
@@ -155,7 +193,7 @@ static int get_time_for_vibetonz(struct timed_output_dev *dev)
 
 	if (hrtimer_active(&timer)) {
 		ktime_t r = hrtimer_get_remaining(&timer);
-		ktime_to_ms(r);
+		remaining = (int)ktime_to_ms(r);
 	} else
 		remaining = 0;
 
@@ -279,6 +317,10 @@ static int __devinit isa1200_vibrator_i2c_probe(struct i2c_client *client,
 	virt_mmss_gp1_base = ioremap(MSM_MMSS_GP1_BASE,0x28);
 	if (!virt_mmss_gp1_base)
                 panic("tspdrv : Unable to ioremap MSM_MMSS_GP1 memory!");
+
+#if defined(CONFIG_MACH_MATISSE3G_OPEN) || defined CONFIG_SEC_MATISSELTE_COMMON
+	vibrator_drvdata.power_onoff = haptic_power_onoff;
+#endif
 	nRet = misc_register(&miscdev);
         if (nRet)
 	{
@@ -493,8 +535,7 @@ static ssize_t write(struct file *file, const char *buf, size_t count,
     g_nForceLog[g_nForceLogIndex++] = g_cSPIBuffer[0];
 	if (g_nForceLogIndex >= FORCE_LOG_BUFFER_SIZE) {
 		for (i = 0; i < FORCE_LOG_BUFFER_SIZE; i++) {
-			printk(KERN_DEBUG "<6>%d\t%d\n",
-				g_nTime, g_nForceLog[i]);
+			printk(KERN_DEBUG "<6>%d\t%d\n",g_nTime, g_nForceLog[i]);
             g_nTime += TIME_INCREMENT;
         }
         g_nForceLogIndex = 0;
@@ -535,8 +576,7 @@ static long unlocked_ioctl(struct file *file, unsigned int cmd,
 #ifdef QA_TEST
 		if (g_nForceLogIndex) {
 			for (i = 0; i < g_nForceLogIndex; i++) {
-				printk(KERN_DEBUG "<6>%d\t%d\n",
-					g_nTime, g_nForceLog[i]);
+				printk(KERN_DEBUG "<6>%d\t%d\n",g_nTime, g_nForceLog[i]);
                     g_nTime += TIME_INCREMENT;
                 }
             }
@@ -551,6 +591,8 @@ static long unlocked_ioctl(struct file *file, unsigned int cmd,
 
         case TSPDRV_ENABLE_AMP:
 	    wake_lock(&vib_wake_lock);
+	    vibe_set_pwm_freq(0);
+	    vibe_pwm_onoff(1);
             ImmVibeSPI_ForceOut_AmpEnable(arg);
             DbgRecorderReset((arg));
             DbgRecord((arg,";------- TSPDRV_ENABLE_AMP ---------\n"));

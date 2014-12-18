@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/of_gpio.h>
 #include <linux/wakelock.h>
+#include <linux/regulator/consumer.h>
 #include <mach/gpiomux.h>
 
 #include "sensors_core.h"
@@ -41,9 +42,9 @@
 
 #define CALIBRATION_FILE_PATH           "/efs/accel_calibration_data"
 #define CALIBRATION_DATA_AMOUNT         20
-#define MAX_ACCEL_1G			1024
+#define MAX_ACCEL_1G			4096
 
-#define BMA280_DEFAULT_DELAY            200
+#define BMA280_DEFAULT_DELAY            200000000LL
 #define BMA280_CHIP_ID                  0xFB
 
 #define CHIP_ID_RETRIES                 3
@@ -85,14 +86,15 @@ struct bma280_p {
 	struct wake_lock reactive_wake_lock;
 	struct i2c_client *client;
 	struct input_dev *input;
-	struct delayed_work work;
 	struct delayed_work irq_work;
 	struct device *factory_device;
 	struct bma280_v accdata;
 	struct bma280_v caldata;
 	struct mutex mode_mutex;
-
-	atomic_t delay;
+	struct hrtimer accel_timer;
+	struct workqueue_struct *accel_wq;
+	struct work_struct work;
+	ktime_t poll_delay;
 	atomic_t enable;
 
 	u32 chip_pos;
@@ -100,7 +102,6 @@ struct bma280_p {
 	int irq1;
 	int irq_state;
 	int acc_int1;
-	int acc_int2;
 	int sda_gpio;
 	int scl_gpio;
 	int time_count;
@@ -420,13 +421,23 @@ exit:
 	return ret;
 }
 
+static enum hrtimer_restart bma280_timer_func(struct hrtimer *timer)
+{
+	struct bma280_p *data = container_of(timer,
+					struct bma280_p, accel_timer);
+	if (!work_pending(&data->work))
+		queue_work(data->accel_wq, &data->work);
+
+	hrtimer_forward_now(&data->accel_timer, data->poll_delay);
+
+	return HRTIMER_RESTART;
+}
+
 static void bma280_work_func(struct work_struct *work)
 {
 	int ret;
 	struct bma280_v acc;
-	struct bma280_p *data = container_of((struct delayed_work *)work,
-			struct bma280_p, work);
-	unsigned long delay = msecs_to_jiffies(atomic_read(&data->delay));
+	struct bma280_p *data = container_of(work, struct bma280_p, work);
 
 	ret = bma280_read_accel_xyz(data, &acc);
 	if (ret < 0)
@@ -442,40 +453,24 @@ static void bma280_work_func(struct work_struct *work)
 	input_sync(data->input);
 
 exit:
-	if ((atomic_read(&data->delay) * data->time_count)
-		>= (ACCEL_LOG_TIME * MSEC_PER_SEC)) {
+	if ((ktime_to_ns(data->poll_delay) * (int64_t)data->time_count)
+		>= ((int64_t)ACCEL_LOG_TIME * NSEC_PER_SEC)) {
 		pr_info("[SENSOR]: %s - x = %d, y = %d, z = %d (ra:%d)\n",
 			__func__, data->accdata.x, data->accdata.y,
 			data->accdata.z, data->recog_flag);
 		data->time_count = 0;
 	} else
 		data->time_count++;
-
-	schedule_delayed_work(&data->work, delay);
 }
 
 static void bma280_set_enable(struct bma280_p *data, int enable)
 {
-	int pre_enable = atomic_read(&data->enable);
-
-	if (enable) {
-		if (pre_enable == OFF) {
-			bma280_open_calibration(data);
-			bma280_set_mode(data, BMA280_MODE_NORMAL);
-			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
-			atomic_set(&data->enable, ON);
-		}
+	if (enable == ON) {
+		hrtimer_start(&data->accel_timer, data->poll_delay,
+		      HRTIMER_MODE_REL);
 	} else {
-		if (pre_enable == ON) {
-			atomic_set(&data->enable, OFF);
-			if (data->recog_flag == ON)
-				bma280_set_mode(data, BMA280_MODE_LOWPOWER1);
-			else
-				bma280_set_mode(data, BMA280_MODE_SUSPEND);
-
-			cancel_delayed_work_sync(&data->work);
-		}
+		hrtimer_cancel(&data->accel_timer);
+		cancel_work_sync(&data->work);
 	}
 }
 
@@ -491,7 +486,7 @@ static ssize_t bma280_enable_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	u8 enable;
-	int ret;
+	int ret, pre_enable;
 	struct bma280_p *data = dev_get_drvdata(dev);
 
 	ret = kstrtou8(buf, 2, &enable);
@@ -501,8 +496,26 @@ static ssize_t bma280_enable_store(struct device *dev,
 	}
 
 	pr_info("[SENSOR]: %s - new_value = %u\n", __func__, enable);
-	if ((enable == ON) || (enable == OFF))
-		bma280_set_enable(data, (int)enable);
+	pre_enable = atomic_read(&data->enable);
+
+	if (enable) {
+		if (pre_enable == OFF) {
+			bma280_open_calibration(data);
+			bma280_set_mode(data, BMA280_MODE_NORMAL);
+			atomic_set(&data->enable, ON);
+			bma280_set_enable(data, ON);
+		}
+	} else {
+		if (pre_enable == ON) {
+			atomic_set(&data->enable, OFF);
+			if (data->recog_flag == ON)
+				bma280_set_mode(data, BMA280_MODE_LOWPOWER1);
+			else
+				bma280_set_mode(data, BMA280_MODE_SUSPEND);
+
+			bma280_set_enable(data, OFF);
+		}
+	}
 
 	return size;
 }
@@ -512,7 +525,8 @@ static ssize_t bma280_delay_show(struct device *dev,
 {
 	struct bma280_p *data = dev_get_drvdata(dev);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->delay));
+	return snprintf(buf, PAGE_SIZE, "%lld\n",
+			ktime_to_ns(data->poll_delay));
 }
 
 static ssize_t bma280_delay_store(struct device *dev,
@@ -528,19 +542,26 @@ static ssize_t bma280_delay_store(struct device *dev,
 		return ret;
 	}
 
-	if (delay <= 5)
-		bma280_set_bandwidth(data, BMA280_BW_250HZ);
-	else if (delay <= 10)
+	if (delay <= 3000000LL)
+		bma280_set_bandwidth(data, BMA280_BW_500HZ);
+	else if (delay <= 5000000LL)
 		bma280_set_bandwidth(data, BMA280_BW_125HZ);
-	else if (delay <= 20)
+	else if (delay <= 10000000LL)
 		bma280_set_bandwidth(data, BMA280_BW_62_50HZ);
-	else if (delay <= 70)
-		bma280_set_bandwidth(data, BMA280_BW_15_63HZ);
+	else if (delay <= 20000000LL)
+		bma280_set_bandwidth(data, BMA280_BW_31_25HZ);
 	else
 		bma280_set_bandwidth(data, BMA280_BW_7_81HZ);
 
-	atomic_set(&data->delay, (unsigned int)delay);
+	data->poll_delay = ns_to_ktime(delay);
 	pr_info("[SENSOR]: %s - poll_delay = %lld\n", __func__, delay);
+
+	if (atomic_read(&data->enable) == ON) {
+		bma280_set_mode(data, BMA280_MODE_SUSPEND);
+		bma280_set_enable(data, OFF);
+		bma280_set_mode(data, BMA280_MODE_NORMAL);
+		bma280_set_enable(data, ON);
+	}
 
 	return size;
 }
@@ -630,7 +651,7 @@ static int bma280_do_calibrate(struct bma280_p *data, int enable)
 		data->caldata.z = 0;
 
 		if (atomic_read(&data->enable) == ON)
-			cancel_delayed_work_sync(&data->work);
+			bma280_set_enable(data, OFF);
 		else
 			bma280_set_mode(data, BMA280_MODE_NORMAL);
 
@@ -645,8 +666,7 @@ static int bma280_do_calibrate(struct bma280_p *data, int enable)
 		}
 
 		if (atomic_read(&data->enable) == ON)
-			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
+			bma280_set_enable(data, ON);
 		else
 			bma280_set_mode(data, BMA280_MODE_SUSPEND);
 
@@ -946,38 +966,8 @@ static int bma280_setup_pin(struct bma280_p *data)
 		goto exit_acc_int1;
 	}
 
-	ret = gpio_request(data->acc_int2, "ACC_INT2");
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - gpio %d request failed (%d)\n",
-			__func__, data->acc_int2, ret);
-		goto exit_acc_int1;
-	}
-
-	ret = gpio_direction_input(data->acc_int2);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - failed to set gpio %d as input (%d)\n",
-			__func__, data->acc_int2, ret);
-		goto exit_acc_int2;
-	}
-
-	wake_lock_init(&data->reactive_wake_lock, WAKE_LOCK_SUSPEND,
-		       "reactive_wake_lock");
-
-	data->irq1 = gpio_to_irq(data->acc_int1);
-	ret = request_threaded_irq(data->irq1, NULL, bma280_irq_thread,
-		IRQF_TRIGGER_RISING | IRQF_ONESHOT, "bma280_accel", data);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - can't allocate irq.\n", __func__);
-		goto exit_reactive_irq;
-	}
-
-	disable_irq(data->irq1);
 	goto exit;
 
-exit_reactive_irq:
-	wake_lock_destroy(&data->reactive_wake_lock);
-exit_acc_int2:
-	gpio_free(data->acc_int2);
 exit_acc_int1:
 	gpio_free(data->acc_int1);
 exit:
@@ -1041,13 +1031,6 @@ static int bma280_parse_dt(struct bma280_p *data, struct device *dev)
 		return -ENODEV;
 	}
 
-	data->acc_int2 = of_get_named_gpio_flags(dNode,
-		"bma280-i2c,acc_int2-gpio", 0, &flags);
-	if (data->acc_int2 < 0) {
-		pr_err("[SENSOR]: %s - acc_int2 error\n", __func__);
-		return -ENODEV;
-	}
-
 	data->sda_gpio = of_get_named_gpio_flags(dNode,
 		"bma280-i2c,sda", 0, &flags);
 	if (data->sda_gpio < 0)
@@ -1065,6 +1048,38 @@ static int bma280_parse_dt(struct bma280_p *data, struct device *dev)
 	return 0;
 }
 
+static int sensor_regulator_onoff(struct device *dev, bool onoff)
+{
+	struct regulator *sensor_vcc, *sensor_lvs1;
+
+	sensor_vcc = devm_regulator_get(dev, "bma280-i2c,vdd");
+	if (IS_ERR(sensor_vcc)) {
+		pr_err("[SENSOR]: %s - cannot get sensor_vcc\n", __func__);
+		return -ENOMEM;
+	}
+
+	sensor_lvs1 = devm_regulator_get(dev, "bma280-i2c,vdd-io");
+	if (IS_ERR(sensor_lvs1)) {
+		pr_err("[SENSOR]: %s - cannot get sensor_lvs1\n", __func__);
+		devm_regulator_put(sensor_vcc);
+		return -ENOMEM;
+	}
+
+	if (onoff) {
+		regulator_enable(sensor_vcc);
+		regulator_enable(sensor_lvs1);
+	} else {
+		regulator_disable(sensor_vcc);
+		regulator_disable(sensor_lvs1);
+	}
+
+	devm_regulator_put(sensor_vcc);
+	devm_regulator_put(sensor_lvs1);
+	mdelay(5);
+
+	return 0;
+}
+
 static int bma280_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
 {
@@ -1078,6 +1093,10 @@ static int bma280_probe(struct i2c_client *client,
 			__func__);
 		goto exit;
 	}
+
+	ret = sensor_regulator_onoff(&client->dev, true);
+	if (ret < 0)
+		pr_err("[SENSOR]: %s - No regulator\n", __func__);
 
 	data = kzalloc(sizeof(struct bma280_p), GFP_KERNEL);
 	if (data == NULL) {
@@ -1101,13 +1120,17 @@ static int bma280_probe(struct i2c_client *client,
 
 	i2c_set_clientdata(client, data);
 	data->client = client;
+	mutex_init(&data->mode_mutex);
+	wake_lock_init(&data->reactive_wake_lock, WAKE_LOCK_SUSPEND,
+		       "reactive_wake_lock");
 
 	/* read chip id */
+	bma280_set_mode(data, BMA280_MODE_NORMAL);
 	for (i = 0; i < CHIP_ID_RETRIES; i++) {
 		ret = i2c_smbus_read_word_data(client, BMA280_CHIP_ID_REG);
 		if ((ret & 0x00ff) != BMA280_CHIP_ID) {
-			pr_err("[SENSOR]: %s - chip id failed %d\n",
-				__func__, ret);
+			pr_err("[SENSOR]: %s - chip id failed 0x%x\n",
+				__func__, (unsigned int)ret & 0x00ff);
 		} else {
 			pr_info("[SENSOR]: %s - chip id success 0x%x\n",
 				__func__, (unsigned int)ret & 0x00ff);
@@ -1128,13 +1151,35 @@ static int bma280_probe(struct i2c_client *client,
 
 	sensors_register(data->factory_device, data, sensor_attrs, MODULE_NAME);
 
-	/* workqueue init */
-	INIT_DELAYED_WORK(&data->work, bma280_work_func);
+	/* accel_timer settings. we poll for light values using a timer. */
+	hrtimer_init(&data->accel_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	data->poll_delay = ns_to_ktime(BMA280_DEFAULT_DELAY);
+	data->accel_timer.function = bma280_timer_func;
+
+	/* the timer just fires off a work queue request.  we need a thread
+	   to read the i2c (can be slow and blocking). */
+	data->accel_wq = create_singlethread_workqueue("accel_wq");
+	if (!data->accel_wq) {
+		ret = -ENOMEM;
+		pr_err("[SENSOR]: %s - could not create workqueue\n", __func__);
+		goto exit_create_workqueue;
+	}
+
+	/* this is the thread function we run on the work queue */
+	INIT_WORK(&data->work, bma280_work_func);
 	INIT_DELAYED_WORK(&data->irq_work, bma280_irq_work_func);
 
-	mutex_init(&data->mode_mutex);
+	data->irq1 = gpio_to_irq(data->acc_int1);
 
-	atomic_set(&data->delay, BMA280_DEFAULT_DELAY);
+	ret = request_threaded_irq(data->irq1, NULL, bma280_irq_thread,
+		IRQF_TRIGGER_RISING | IRQF_ONESHOT, "bma280_accel", data);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - can't allocate irq.\n", __func__);
+		goto exit_request_threaded_irq;
+	}
+
+	disable_irq(data->irq1);
+
 	atomic_set(&data->enable, OFF);
 	data->time_count = 0;
 	data->irq_state = 0;
@@ -1149,11 +1194,16 @@ static int bma280_probe(struct i2c_client *client,
 
 	return 0;
 
+exit_request_threaded_irq:
+exit_create_workqueue:
+	sensors_unregister(data->factory_device, sensor_attrs);
+	sensors_remove_symlink(&data->input->dev.kobj, data->input->name);
+	sysfs_remove_group(&data->input->dev.kobj, &bma280_attribute_group);
+	input_unregister_device(data->input);
 exit_input_init:
 exit_read_chipid:
-	free_irq(data->irq1, data);
+	mutex_destroy(&data->mode_mutex);
 	wake_lock_destroy(&data->reactive_wake_lock);
-	gpio_free(data->acc_int2);
 	gpio_free(data->acc_int1);
 exit_setup_pin:
 exit_of_node:
@@ -1169,8 +1219,12 @@ static void bma280_shutdown(struct i2c_client *client)
 	struct bma280_p *data = (struct bma280_p *)i2c_get_clientdata(client);
 
 	pr_info("[SENSOR]: %s\n", __func__);
+
 	if (atomic_read(&data->enable) == ON)
-		cancel_delayed_work_sync(&data->work);
+		bma280_set_enable(data, OFF);
+
+	atomic_set(&data->enable, OFF);
+	bma280_set_mode(data, BMA280_MODE_SUSPEND);
 }
 
 static int __devexit bma280_remove(struct i2c_client *client)
@@ -1180,8 +1234,10 @@ static int __devexit bma280_remove(struct i2c_client *client)
 	if (atomic_read(&data->enable) == ON)
 		bma280_set_enable(data, OFF);
 
-	cancel_delayed_work_sync(&data->work);
+	atomic_set(&data->enable, OFF);
 	cancel_delayed_work_sync(&data->irq_work);
+
+	bma280_set_mode(data, BMA280_MODE_SUSPEND);
 	sensors_unregister(data->factory_device, sensor_attrs);
 	sensors_remove_symlink(&data->input->dev.kobj, data->input->name);
 
@@ -1191,10 +1247,7 @@ static int __devexit bma280_remove(struct i2c_client *client)
 	free_irq(data->irq1, data);
 	wake_lock_destroy(&data->reactive_wake_lock);
 	mutex_destroy(&data->mode_mutex);
-
-	gpio_free(data->acc_int2);
 	gpio_free(data->acc_int1);
-
 	kfree(data);
 
 	return 0;
@@ -1212,7 +1265,7 @@ static int bma280_suspend(struct device *dev)
 		else
 			bma280_set_mode(data, BMA280_MODE_SUSPEND);
 
-		cancel_delayed_work_sync(&data->work);
+		bma280_set_enable(data, OFF);
 	}
 
 	return 0;
@@ -1226,8 +1279,7 @@ static int bma280_resume(struct device *dev)
 
 	if (atomic_read(&data->enable) == ON) {
 		bma280_set_mode(data, BMA280_MODE_NORMAL);
-		schedule_delayed_work(&data->work,
-			msecs_to_jiffies(atomic_read(&data->delay)));
+		bma280_set_enable(data, ON);
 	}
 
 	return 0;

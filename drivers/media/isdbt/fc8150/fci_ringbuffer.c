@@ -28,6 +28,7 @@ void fci_ringbuffer_init(struct fci_ringbuffer *rbuf, void *data, size_t len)
 	rbuf->data = data;
 	rbuf->size = len;
 	rbuf->error = 0;
+
 	init_waitqueue_head(&rbuf->queue);
 
 	spin_lock_init(&(rbuf->lock));
@@ -45,7 +46,6 @@ ssize_t fci_ringbuffer_free(struct fci_ringbuffer *rbuf)
 	free = rbuf->pread - rbuf->pwrite;
 	if (free <= 0)
 		free += rbuf->size;
-
 	return free-1;
 }
 

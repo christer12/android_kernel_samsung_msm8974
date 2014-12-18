@@ -7,7 +7,7 @@
  Description : API of 1-SEG baseband module
 
 *******************************************************************************/
-
+#include <linux/delay.h>
 #include "fci_types.h"
 #include "fci_oal.h"
 #include "fci_hal.h"
@@ -90,10 +90,9 @@ static u8 filter_coef_8M[7][16] = {
 
 static void fc8150_clock_mode(HANDLE hDevice)
 {
-		int i;
+	int i;
 
 #if (BBM_XTAL_FREQ == 16000)
-
 	bbm_write(hDevice, 0x0016, 0);
 
 #if (BBM_BAND_WIDTH == 6)
@@ -604,6 +603,7 @@ int fc8150_probe(HANDLE hDevice)
 
 int fc8150_init(HANDLE hDevice)
 {
+	printk(KERN_ERR "ISDBT fc8150_init \n");
 	bbm_write(hDevice, 0x00b0, 0x03);
 	bbm_write(hDevice, 0x00b1, 0x00);
 	bbm_write(hDevice, 0x00b2, 0x05);
@@ -627,7 +627,7 @@ int fc8150_init(HANDLE hDevice)
 	bbm_write(hDevice, 0x2106, 0x1f);
 
 	bbm_write(hDevice, 0x5010, 0x00);
-	bbm_write(hDevice, BBM_RS_FAIL_TX, 0x00); /* RS FAILURE TX: 0x02*/
+	bbm_write(hDevice, BBM_RS_FAIL_TX, 0x00); /* RS FAILURE TX: 0x02 original:0x00*/
 
 	bbm_word_write(hDevice, BBM_BUF_TS_START, TS_BUF_START);
 	bbm_word_write(hDevice, BBM_BUF_TS_END, TS_BUF_END);
@@ -647,7 +647,11 @@ int fc8150_init(HANDLE hDevice)
 	bbm_write(hDevice, BBM_BUF_INT, 0x01);
 
 	bbm_write(hDevice, BBM_INT_MASK, 0x07);
+#ifdef BBM_I2C_TSIF
+	bbm_write(hDevice, BBM_INT_STS_EN, 0x00);
+#else
 	bbm_write(hDevice, BBM_INT_STS_EN, 0x01);
+#endif
 
 	return BBM_OK;
 }
@@ -655,7 +659,7 @@ int fc8150_init(HANDLE hDevice)
 int fc8150_deinit(HANDLE hDevice)
 {
 	bbm_write(hDevice, BBM_SW_RESET, 0x00);
-
+	printk(KERN_ERR "ISDBT fc8150_deinit \n");
 	return BBM_OK;
 }
 
@@ -672,10 +676,11 @@ int fc8150_scan_status(HANDLE hDevice)
 	u8    data, data1;
 	u8    lay0_mod, lay0_cr;
 	int   i;
+printk(KERN_ERR "ISDBT fc8150_scan_status \n");
 
 	for (i = 0; i < ifagc_timeout; i++) {
 		bbm_read(hDevice, 0x3025, &data);
-
+printk(KERN_ERR "ifagc loop: data=0x%x\n",data);
 		if (data & 0x01)
 			break;
 
@@ -692,7 +697,7 @@ int fc8150_scan_status(HANDLE hDevice)
 
 	for (; i < ofdm_timeout; i++) {
 		bbm_read(hDevice, 0x3025, &data);
-
+printk(KERN_ERR "ofdm loop: data=0x%x\n",data);
 		if (data & 0x08)
 			break;
 
@@ -700,14 +705,16 @@ int fc8150_scan_status(HANDLE hDevice)
 	}
 
 	if (i == ofdm_timeout)
-		return BBM_NOK;
-
+	{
+			 printk(KERN_ERR "ISDBT ofdm_timeout \n");
+			return BBM_NOK;
+	}
 	if (0 == (data & 0x04))
 		return BBM_NOK;
 
 	for (; i < ffs_lock_timeout; i++) {
 		bbm_read(hDevice, 0x3026, &data);
-
+printk(KERN_ERR "ffs loop: data=0x%x\n",data);
 		if (data & 0x10)
 			break;
 
@@ -715,7 +722,10 @@ int fc8150_scan_status(HANDLE hDevice)
 	}
 
 	if (i == ffs_lock_timeout)
+	{	
+		printk(KERN_ERR "ISDBT ffs_lock_timeout \n");	
 		return BBM_NOK;
+		}
 
 	/* DAGC Lock*/
 	for (i = 0; i < dagc_timeout; i++) {
@@ -732,7 +742,7 @@ int fc8150_scan_status(HANDLE hDevice)
 
 	for (i = 0; i < cfs_timeout; i++) {
 		bbm_read(hDevice, 0x3025, &data);
-
+printk(KERN_ERR "cfs loop: data=0x%x\n",data);
 		if (data & 0x40)
 			break;
 
@@ -740,14 +750,21 @@ int fc8150_scan_status(HANDLE hDevice)
 	}
 
 	if (i == cfs_timeout)
-		return BBM_NOK;
+	{
+			printk(KERN_ERR "ISDBT cfs_timeout \n");
+			return BBM_NOK;
+	}
 
 	bbm_read(hDevice, 0x2023, &data1);
 	if (data1 & 1)
-		return BBM_NOK;
+	{
+			printk(KERN_ERR "ISDBT data1 & 0x01 = 1 return BBM_NOK \n");
+			return BBM_NOK;
+	}
 
 	for (i = 0; i < 	tmcc_timeout; i++) {
 		bbm_read(hDevice, 0x3026, &data);
+printk(KERN_ERR "tmcc loop: data=0x%x\n",data);
 		if (data & 0x02)
 			break;
 
@@ -755,7 +772,10 @@ int fc8150_scan_status(HANDLE hDevice)
 	}
 
 	if (i == tmcc_timeout)
-		return BBM_NOK;
+	{
+			printk(KERN_ERR "ISDBT tmcc_timeout \n");
+			return BBM_NOK;
+	}
 
 	bbm_read(hDevice, 0x4113, &data);
 	bbm_read(hDevice, 0x4114, &data1);
@@ -781,6 +801,7 @@ int fc8150_scan_status(HANDLE hDevice)
 
 	for (i = 0; i < ts_err_free_timeout; i++) {
 		bbm_read(hDevice, 0x5053, &data);
+printk(KERN_ERR "ts-err loop: data=0x%x\n",data);
 		if (data & 0x01)
 			break;
 
@@ -788,8 +809,12 @@ int fc8150_scan_status(HANDLE hDevice)
 	}
 
 	if (i == ts_err_free_timeout)
-		return BBM_NOK;
+	{
+			printk(KERN_ERR "ISDBT ts_err_free_timeout\n");
+			return BBM_NOK;
+	}
 
 	return BBM_OK;
 }
+
 

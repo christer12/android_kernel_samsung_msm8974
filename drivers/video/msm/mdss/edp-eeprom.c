@@ -10,7 +10,7 @@
  */
 #include <linux/kernel.h>
 #include <asm/unaligned.h>
-#include <mach/cpufreq.h>
+//#include <mach/cpufreq.h>
 #include <linux/input/mt.h>
 #include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
@@ -35,9 +35,12 @@
 #include "mdss_panel.h"
 #include "mdss_mdp.h"
 #include "mdss_edp.h"
+
 #if defined(CONFIG_SEC_LT03_PROJECT)
 #include "n1_power_save.h"
-#else
+#elif defined(CONFIG_SEC_PICASSO_PROJECT)
+#include "picasso_power_save.h"
+#else ////defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_V2_PROJECT)
 #include "v1_power_save.h"
 #endif
 
@@ -53,7 +56,7 @@
 #include <linux/lcd.h>
 #endif
 
-#if defined(CONFIG_SEC_LT03_PROJECT)
+#if defined(CONFIG_SEC_LT03_PROJECT) || defined(CONFIG_SEC_PICASSO_PROJECT)
 #define LOWEST_PWM_DUTY 10
 #else
 #define LOWEST_PWM_DUTY 20
@@ -74,8 +77,6 @@ struct edp_eeprom_platform_data {
 	int auto_br;
 	int power_save_mode;
 };
-
-struct edp_eeprom_platform_data *gv_pdata;
 
 struct edp_eeprom_info {
 	struct i2c_client			*client;
@@ -120,7 +121,7 @@ static int eeprom_i2c_read(struct i2c_client *client,
 	msg[1].flags = I2C_M_RD;
 	msg[1].len   = 1;
 	msg[1].buf   = val;
-	eeprom_request_gpio_master(gv_pdata);
+
 	err = i2c_transfer(adapter, msg, 2);
 
 	if  (err == 2)
@@ -151,7 +152,7 @@ static int eeprom_i2c_write(struct i2c_client *client,
 		msg[loop].len   = 3;
 		msg[loop].buf   = &buf[loop][0];
 	}
-	eeprom_request_gpio_master(gv_pdata);
+
 	err = i2c_transfer(adapter, msg, len);
 
 	if  (err == len)
@@ -161,7 +162,33 @@ static int eeprom_i2c_write(struct i2c_client *client,
 
 	return err;
 }
+void tcon_i2c_slave_change(void)
+{
+	unsigned char data[3];
 
+	/* i2c slave change */
+	data[0] = 0x03;
+	data[1] = 0x13;
+	data[2] = 0xBB;
+	aux_tx(0x491, data, 3);
+
+	data[0] = 0x03;
+	data[1] = 0x14;
+	data[2] = 0xBB;
+	aux_tx(0x491, data, 3);
+
+	if (global_pinfo)
+		eeprom_request_gpio_master(global_pinfo->pdata);
+	else
+		pr_info("%s global_pinfo is NULL", __func__);
+
+#if defined(CONFIG_EDP_TCON_MDNIE)
+	/* TO enable MDNIE*/
+	data[0] = 0x08;
+	aux_tx(0x720, data, 1);
+	update_mdnie_register();
+#endif
+}
 static void tcon_init_setting(void)
 {
 	u16 i2c_addr[4];
@@ -193,6 +220,9 @@ static void tcon_init_setting(void)
 		pr_info("%s global_pinfo is NULL", __func__);
 		return ;
 	}
+
+	eeprom_request_gpio_master(global_pinfo->pdata);
+
 	/* low revision panel needs update display resolution */
 	i2c_addr[0] = 0xCB2; i2c_data[0] = 0x0;
 	i2c_addr[1] = 0xCB3; i2c_data[1] = 0x0A;
@@ -497,13 +527,13 @@ int tcon_tune_value(struct edp_eeprom_info *pinfo)
 
 	if (pdata->power_save_mode) {
 		if (pdata->mode == 1 || pdata->mode == 2 || pdata->mode == 3)
-			tune_value = v1_tune_value[1][1][1]; /*TCON_VIDEO*/
+			tune_value = power_save_tune_value[1][1][1]; /*TCON_VIDEO*/
 		else if (pdata->mode == 8)
-			tune_value = v1_tune_value[1][1][8]; /*TCON_BROWSER*/
+			tune_value = power_save_tune_value[1][1][8]; /*TCON_BROWSER*/
 		else
-			tune_value = v1_tune_value[1][1][0]; /*TCON_POWER_SAVE*/
+			tune_value = power_save_tune_value[1][1][0]; /*TCON_POWER_SAVE*/
 	} else
-        	tune_value = v1_tune_value[pdata->auto_br][pdata->lux][pdata->mode];
+        	tune_value = power_save_tune_value[pdata->auto_br][pdata->lux][pdata->mode];
 
 	if (!tune_value) {
 		pr_err("%s tcon value is null", __func__);
@@ -590,7 +620,7 @@ void tcon_pwm_duty(int pwm_duty, int updata_from_backlight)
 static ssize_t disp_lcdtype_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_V2LTEEUR)
+#if defined(CONFIG_MACH_VIENNA_LTE) || defined(CONFIG_MACH_V2LTEEUR)
 	snprintf(buf, 30, "INH_LSL122DL01\n");
 #else // CONFIG_SEC_LT03_PROJECT
 	snprintf(buf, 30, "INH_LSL101DL01\n");
@@ -907,7 +937,7 @@ static int __devinit edp_eeprom_probe(struct i2c_client *client,
 			return error;
 	} else
 		pdata = client->dev.platform_data;
-	gv_pdata = pdata;
+
 	eeprom_request_gpio_slave(pdata);
 
 	global_pinfo = info = kzalloc(sizeof(*info), GFP_KERNEL);

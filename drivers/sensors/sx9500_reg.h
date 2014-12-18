@@ -95,11 +95,7 @@ static const struct smtc_reg_data setup_reg[] = {
 	},
 	{
 		.reg = SX9500_CPS_CTRL6_REG,
-#ifdef CONFIG_MACH_LT03VZW
-		.val = 0x0F,
-#else
 		.val = 0x11,
-#endif
 	},
 	{
 		.reg = SX9500_CPS_CTRL7_REG,

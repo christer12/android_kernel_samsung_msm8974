@@ -41,6 +41,7 @@ enum {
 #define HAVE_WCNSS_RESET_INTR 1
 #define HAVE_WCNSS_CAL_DOWNLOAD 1
 #define HAVE_WCNSS_RX_BUFF_COUNT 1
+#define CONFIG_WCNSS_REGISTER_DUMP_ON_BITE 1
 
 struct device *wcnss_wlan_get_device(void);
 struct resource *wcnss_wlan_get_memory_map(struct device *dev);
@@ -79,6 +80,13 @@ void wcnss_riva_dump_pmic_regs(void);
 int wcnss_xo_auto_detect_enabled(void);
 u32 wcnss_get_wlan_rx_buff_count(void);
 int wcnss_wlan_iris_xo_mode(void);
+#ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
+void wcnss_log_debug_regs_on_bite(void);
+#else
+static inline void wcnss_log_debug_regs_on_bite(void)
+{
+}
+#endif
 
 #define wcnss_wlan_get_drvdata(dev) dev_get_drvdata(dev)
 #define wcnss_wlan_set_drvdata(dev, data) dev_set_drvdata((dev), (data))

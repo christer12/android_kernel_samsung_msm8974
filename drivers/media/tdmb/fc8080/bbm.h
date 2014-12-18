@@ -21,6 +21,15 @@
 
 	History :
 	----------------------------------------------------------------------
+	20130422 v1.1.0
+	20130613 v1.2.0
+	20130704 v1.2.1
+	20130710 v1.3.1
+	20130716 v1.4.1
+	20130806 v1.5.1
+	20130926 v1.6.1
+	20131125 v1.7.1
+	20131202 v1.8.1
 *******************************************************************************/
 
 #ifndef __BBM_H__
@@ -32,7 +41,7 @@ extern "C" {
 
 #include "fci_types.h"
 
-#define DRIVER_VER 	"VER 1.0.0"
+#define DRIVER_VER	"VER 1.8.1"
 
 extern s32 bbm_com_reset(HANDLE handle);
 extern s32 bbm_com_probe(HANDLE handle);
@@ -67,7 +76,7 @@ extern s32 bbm_com_video_deselect(HANDLE handle, u8 subch_id, u8 buf_id,
 					u8 cdi_id);
 extern s32 bbm_com_audio_deselect(HANDLE handle, u8 subch_id, u8 buf_id);
 extern s32 bbm_com_data_deselect(HANDLE handle, u8 subch_id, u8 buf_id);
-extern s32 bbm_com_hostif_select(HANDLE handle, u8 hostif);
+extern s32 bbm_com_hostif_select(HANDLE handle, u8 hostif, u32 param);
 extern s32 bbm_com_hostif_deselect(HANDLE handle);
 extern s32 bbm_com_fic_callback_register(u32 userdata, s32 (*callback)(
 					u32 userdata, u8 *data, s32 length));

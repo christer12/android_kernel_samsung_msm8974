@@ -36,12 +36,14 @@ static struct gpiomux_setting mdm2ap_status_cfg = {
 	.dir = GPIOMUX_IN,
 };
 
+#if 0   // MCU Pin
 static struct gpiomux_setting mdm2ap_errfatal_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv = GPIOMUX_DRV_8MA,
 	.pull = GPIOMUX_PULL_DOWN,
 	.dir = GPIOMUX_IN,
 };
+#endif
 
 static struct gpiomux_setting ap2mdm_soft_reset_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
@@ -58,6 +60,7 @@ static struct msm_gpiomux_config mdm_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &mdm2ap_status_cfg,
 		}
 	},
+#if 0  // MCU Pin
 	/* MDM2AP_ERRFATAL */
 	{
 		.gpio = 82,
@@ -65,6 +68,7 @@ static struct msm_gpiomux_config mdm_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &mdm2ap_errfatal_cfg,
 		}
 	},
+#endif
 	/* AP2MDM_SOFT_RESET, aka AP2MDM_PON_RESET_N */
 	{
 		.gpio = 24,
@@ -113,7 +117,7 @@ static struct gpiomux_setting gpio_spi_cs3_config = {
 	.pull = GPIOMUX_PULL_DOWN,
 };
 
-#if defined(CONFIG_SENSORS_SSP_STM)
+#if defined(CONFIG_SENSORS_SSP)
 static struct gpiomux_setting gpio_spi11_config = {
 	.func = GPIOMUX_FUNC_1,
 	.drv = GPIOMUX_DRV_8MA,
@@ -196,7 +200,7 @@ static struct gpiomux_setting gpio_suspend_config[] = {
 	},
 };
 
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if 0 // MCU pin
 static struct gpiomux_setting gpio_epm_config = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv  = GPIOMUX_DRV_2MA,
@@ -755,7 +759,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP)
 	{
 		.gpio      = 83,		/* BLSP11 QUP I2C_DAT */
 		.settings = {
@@ -824,7 +828,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if defined(CONFIG_SENSORS_SSP_STM)
+#if defined(CONFIG_SENSORS_SSP)
 	{
 		.gpio      = 81,
 		.settings = {
@@ -854,7 +858,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP)
 	{
 		.gpio      = 81,		/* EPM enable */
 		.settings = {
@@ -933,7 +937,7 @@ static struct msm_gpiomux_config sd_card_det __initdata = {
 	},
 };
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_H
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI
 static struct gpiomux_setting touch_init_state = {
 	.func = GPIOMUX_FUNC_3,
 	.drv = GPIOMUX_DRV_2MA,
@@ -1576,7 +1580,7 @@ static struct msm_gpiomux_config apq8074_dragonboard_ts_config[] __initdata = {
 	},
 };
 
-#if defined(CONFIG_BT_BCM4335) || defined(CONFIG_BT_BCM4339)
+#if 0 //defined(CONFIG_BT_BCM4335) || defined(CONFIG_BT_BCM4339)
 static struct msm_gpiomux_config msm8974_btuart_configs[] __initdata = {
 	{
 		/* TXD */
@@ -1802,33 +1806,33 @@ static struct gpiomux_setting gpio_fpga_config[] = {
 		.func = GPIOMUX_FUNC_GPIO,
 		.drv = GPIOMUX_DRV_2MA,
 		.pull = GPIOMUX_PULL_NONE,
-		.dir = GPIOMUX_IN,	
+		.dir = GPIOMUX_IN,
 	},
 	{
 		.func = GPIOMUX_FUNC_GPIO,
 		.drv = GPIOMUX_DRV_2MA,
 		.pull = GPIOMUX_PULL_NONE,
 		.dir = GPIOMUX_OUT_HIGH,
-	},	
+	},
 };
 
 static struct msm_gpiomux_config msm8974_fpga_config[] __initdata = {
 	{
 		.gpio = 108,
 		.settings = {
-			[GPIOMUX_SUSPENDED] = &gpio_fpga_config[0],		
+			[GPIOMUX_SUSPENDED] = &gpio_fpga_config[0],
 		},
 	},
 	{
 		.gpio = 109,
 		.settings = {
-			[GPIOMUX_SUSPENDED] = &gpio_fpga_config[0],	
+			[GPIOMUX_SUSPENDED] = &gpio_fpga_config[0],
 		},
 	},
 	{
 		.gpio = 132,
 		.settings = {
-			[GPIOMUX_SUSPENDED] = &gpio_fpga_config[1], 	
+			[GPIOMUX_SUSPENDED] = &gpio_fpga_config[1],
 		},
 	},
 };
@@ -1858,7 +1862,7 @@ void __init msm_8974_init_gpiomux(void)
 	msm_gpiomux_install(msm_blsp2_uart7_configs, ARRAY_SIZE(msm_blsp2_uart7_configs));
 #endif
 
-#if defined(CONFIG_BT_BCM4335) || defined(CONFIG_BT_BCM4339)
+#if 0 //defined(CONFIG_BT_BCM4335) || defined(CONFIG_BT_BCM4339)
 	msm_gpiomux_btuart_install();
 #endif
 
@@ -1980,7 +1984,7 @@ void __init msm_8974_init_gpiomux(void)
 		msm_gpiomux_install(apq8074_dragonboard_ts_config,
 			ARRAY_SIZE(apq8074_dragonboard_ts_config));
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_H
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI
 	printk(KERN_INFO "%s:[TSP] touch config.\n",__func__);
 	msm_gpiomux_install(msm8974_touch_config,
 			ARRAY_SIZE(msm8974_touch_config));

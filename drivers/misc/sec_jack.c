@@ -32,7 +32,10 @@
 #include <linux/sec_jack.h>
 #include <linux/of_gpio.h>
 #include <linux/qpnp/qpnp-adc.h>
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)
+#ifdef CONFIG_ARCH_MSM8226
+#include <linux/regulator/consumer.h>
+#endif
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 #include <linux/qpnp/pin.h>
 #endif
 
@@ -44,11 +47,14 @@
 #define WAKE_LOCK_TIME		(HZ * 5)	/* 5 sec */
 
 struct sec_jack_info {
+	struct platform_device *client;
 	struct sec_jack_platform_data *pdata;
 	struct delayed_work jack_detect_work;
 	struct work_struct buttons_work;
 	struct work_struct detect_work;
 	struct workqueue_struct *queue;
+	struct workqueue_struct *buttons_queue;
+	struct timer_list timer;
 	struct input_dev *input_dev;
 	struct wake_lock det_wake_lock;
 	struct sec_jack_zone *zone;
@@ -59,11 +65,12 @@ struct sec_jack_info {
 	int dev_id;
 	int pressed;
 	int pressed_code;
+	bool buttons_enable;
 	struct platform_device *send_key_dev;
 	unsigned int cur_jack_type;
 };
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 int pm8941_mpp4;
 
 static struct qpnp_pin_cfg pm8941_mpp4_endis = {
@@ -120,7 +127,18 @@ static struct gpio_event_platform_data sec_jack_input_data = {
 	.info_count = ARRAY_SIZE(sec_jack_input_info),
 };
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)
+#ifdef CONFIG_ARCH_MSM8226
+/*Enabling Ear Mic Bias of WCD Codec*/
+extern void msm8226_enable_ear_micbias(bool state);
+#endif
+
+#if defined(CONFIG_MACH_KLTE_JPN)
+#define MAX_DETECT_LIMIT 3
+static void determine_jack_type(struct sec_jack_info *hi);
+static int detect_count = 0;
+#endif
+
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 static void mpp_control(bool onoff)
 {
 	if(onoff) {
@@ -138,7 +156,22 @@ static void mpp_control(bool onoff)
 static void sec_jack_gpio_init(struct sec_jack_platform_data *pdata)
 {
 	int ret;
-
+#ifdef CONFIG_ARCH_MSM8226
+	if(pdata->ear_micbias_gpio > 0) {
+		ret = gpio_request(pdata->ear_micbias_gpio, "ear_micbias_en");
+		if (ret) {
+			pr_err("%s : gpio_request failed for %d\n", __func__,
+				pdata->ear_micbias_gpio);
+			return;
+		}
+		gpio_direction_output(pdata->ear_micbias_gpio, 0);
+	}
+#else
+#ifdef CONFIG_MACH_HEAT_AIO
+	gpio_free(pdata->ear_micbias_gpio);
+	pr_err("%s HEAT_AIO: gpio_free for %d\n", __func__,
+			pdata->ear_micbias_gpio);
+#endif
 	ret = gpio_request(pdata->ear_micbias_gpio, "ear_micbias_en");
 	if (ret) {
 		pr_err("%s : gpio_request failed for %d\n", __func__,
@@ -146,6 +179,7 @@ static void sec_jack_gpio_init(struct sec_jack_platform_data *pdata)
 		return;
 	}
 	gpio_direction_output(pdata->ear_micbias_gpio, 0);
+#endif
 
 	if (pdata->fsa_en_gpio > 0) {
 		ret = gpio_request(pdata->fsa_en_gpio, "fsa_en");
@@ -159,15 +193,39 @@ static void sec_jack_gpio_init(struct sec_jack_platform_data *pdata)
 
 }
 
-static int sec_jack_get_adc_value(void)
+static int sec_jack_get_adc_value(struct sec_jack_info *hi)
 {
 	struct qpnp_vadc_result result;
+	struct sec_jack_platform_data *pdata = hi->pdata;
+	struct qpnp_vadc_chip *earjack_vadc;
 	int retVal;
+	uint32_t mpp_ch;
+	
+	/* Initialize mpp_ch default setting
+	* default mpp scale is  < 4 1 3 >
+	*/
+	mpp_ch = pdata->mpp_ch_scale[0] + P_MUX1_1_3 - 1;
+	
+	/* To get proper mpp_ch,
+	* If scaling is 1:1 then add (P_MUX1_1_1 - 1)
+	* If scaling is 1:3 then add (P_MUX1_1_3 - 1)
+	*/
+	if (pdata->mpp_ch_scale[2] == 1)
+		mpp_ch = pdata->mpp_ch_scale[0] + P_MUX1_1_1 - 1;
+	else if (pdata->mpp_ch_scale[2] == 3)
+		mpp_ch = pdata->mpp_ch_scale[0] + P_MUX1_1_3 - 1;
+	else
+		pr_err("%s - invalid channel scale=%d\n", __func__, pdata->mpp_ch_scale[2]);
 
-	// Read the MPP4 VADC channel with 1:1 scaling
-	qpnp_vadc_read(P_MUX4_1_3, &result);
+	earjack_vadc = qpnp_get_vadc(&hi->client->dev, "earjack-read");
 
-	// Get MPP4 voltage in microvolts
+#ifdef CONFIG_ARCH_MSM8226
+	// Read the MPP4 VADC channel with 1:3 scaling
+	qpnp_vadc_read(pdata->vadc_dev,  mpp_ch, &result);
+#else
+	qpnp_vadc_read(NULL,  mpp_ch, &result);
+#endif
+	// Get voltage in microvolts
 	retVal = ((int)result.physical)/1000;
 
 	return retVal;
@@ -176,7 +234,15 @@ static int sec_jack_get_adc_value(void)
 static void set_sec_micbias_state(struct sec_jack_info *hi, bool state)
 {
 	struct sec_jack_platform_data *pdata = hi->pdata;
-	gpio_set_value_cansleep(pdata->ear_micbias_gpio, state);
+
+#ifdef CONFIG_ARCH_MSM8226
+        if(pdata->ear_micbias_gpio > 0)
+           gpio_set_value_cansleep(pdata->ear_micbias_gpio, state); /*Uses external Mic Bias*/
+        else
+			msm8226_enable_ear_micbias(state); /* Uses WCD Mic Bias*/
+#else 
+	 gpio_set_value_cansleep(pdata->ear_micbias_gpio, state);	
+#endif
 }
 
 /* gpio_input driver does not support to read adc value.
@@ -196,7 +262,7 @@ static bool sec_jack_buttons_filter(struct input_handle *handle,
 	/* This is called in timer handler of gpio_input driver.
 	 * We use workqueue to read adc value.
 	 */
-	queue_work(hi->queue, &hi->buttons_work);
+	queue_work(hi->buttons_queue, &hi->buttons_work);
 
 	return true;
 }
@@ -266,12 +332,20 @@ static void sec_jack_set_type(struct sec_jack_info *hi, int jack_type)
 	 * the type but then we get another interrupt and do it again
 	 */
 	if (jack_type == hi->cur_jack_type) {
+#if defined(CONFIG_MACH_KLTE_JPN)
+		if ((jack_type != SEC_HEADSET_4POLE) || (jack_type != SEC_EXTERNAL_ANTENNA))
+#else
 		if (jack_type != SEC_HEADSET_4POLE)
+#endif
 			set_sec_micbias_state(hi, false);
 		return;
 	}
 
+#if defined(CONFIG_MACH_KLTE_JPN)
+	if ((jack_type == SEC_HEADSET_4POLE) || (jack_type == SEC_EXTERNAL_ANTENNA)) {
+#else
 	if (jack_type == SEC_HEADSET_4POLE) {
+#endif
 		/* for a 4 pole headset, enable detection of send/end key */
 		if (hi->send_key_dev == NULL)
 			/* enable to get events again */
@@ -280,12 +354,16 @@ static void sec_jack_set_type(struct sec_jack_info *hi, int jack_type)
 				hi->dev_id,
 				&sec_jack_input_data,
 				sizeof(sec_jack_input_data));
+			mod_timer(&hi->timer,
+				jiffies + msecs_to_jiffies(1000));
 	} else {
 		/* for all other jacks, disable send/end key detection */
 		if (hi->send_key_dev != NULL) {
 			/* disable to prevent false events on next insert */
 			platform_device_unregister(hi->send_key_dev);
 			hi->send_key_dev = NULL;
+			del_timer_sync(&hi->timer);
+			hi->buttons_enable = false;
 		}
 		/* micbias is left enabled for 4pole and disabled otherwise */
 		set_sec_micbias_state(hi, false);
@@ -294,6 +372,29 @@ static void sec_jack_set_type(struct sec_jack_info *hi, int jack_type)
 	hi->cur_jack_type = jack_type;
 	pr_info("%s : jack_type = %d\n", __func__, jack_type);
 
+#if defined(CONFIG_MACH_KLTE_JPN)
+	if (jack_type == SEC_EXTERNAL_ANTENNA) {
+		if(++detect_count > MAX_DETECT_LIMIT) {
+			detect_count = 0;
+			return;
+		}
+		else {
+			int time_left_ms = 100;
+		
+			while (time_left_ms > 0) {
+				usleep_range(10000, 10000);
+				time_left_ms -= 10;
+			}
+
+			hi->cur_jack_type = SEC_JACK_NO_DEVICE;
+			determine_jack_type(hi);
+			
+			return;
+		}
+	}
+	else
+		detect_count = 0;
+#endif
 	switch_set_state(&switch_jack_detection, jack_type);
 }
 
@@ -316,12 +417,12 @@ static void determine_jack_type(struct sec_jack_info *hi)
 	/* set mic bias to enable adc */
 	set_sec_micbias_state(hi, true);
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)	
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	mpp_control(1);
 #endif
 
 	while (gpio_get_value(pdata->det_gpio) ^ npolarity) {
-		adc = sec_jack_get_adc_value();
+		adc = sec_jack_get_adc_value(hi);
 		pr_info("%s: adc = %d\n", __func__, adc);
 
 		/* determine the type of headset based on the
@@ -338,7 +439,7 @@ static void determine_jack_type(struct sec_jack_info *hi)
 				if (++count[i] > zones[i].check_count) {
 					sec_jack_set_type(hi,
 						zones[i].jack_type);
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)						
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 					mpp_control(0);
 #endif
 					return;
@@ -350,7 +451,7 @@ static void determine_jack_type(struct sec_jack_info *hi)
 		}
 	}
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)	
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	mpp_control(0);
 #endif
 
@@ -388,17 +489,34 @@ static ssize_t earjack_state_onoff_show(struct device *dev,
 static DEVICE_ATTR(state, 0664 , earjack_state_onoff_show,
 	NULL);
 
+static void sec_jack_timer_handler(unsigned long data)
+{
+	struct sec_jack_info *hi = (struct sec_jack_info *)data;
 
+	hi->buttons_enable = true;
+
+}
 /* thread run whenever the headset detect state changes (either insertion
  * or removal).
  */
 static irqreturn_t sec_jack_detect_irq(int irq, void *dev_id)
 {
+
+#if defined(CONFIG_MACH_S3VE3G_EUR)
+		struct sec_jack_info *hi = dev_id;
+		disable_irq_wake(hi->det_irq);
+		queue_work(hi->queue, &hi->detect_work);
+		mdelay(100);
+		enable_irq_wake(hi->det_irq);
+		pr_info("%s: Debug code for removing flooding of jack irq\n", __func__);
+		return IRQ_HANDLED;
+#else
 	struct sec_jack_info *hi = dev_id;
 
 	queue_work(hi->queue, &hi->detect_work);
 
 	return IRQ_HANDLED;
+#endif
 }
 
 void sec_jack_detect_work(struct work_struct *work)
@@ -448,6 +566,14 @@ void sec_jack_buttons_work(struct work_struct *work)
 	int adc;
 	int i;
 
+	if (!hi->buttons_enable) {
+		pr_info("%s: BTN %d is skipped\n", __func__,
+			hi->pressed_code);
+		return;
+	}
+	/* prevent suspend to allow user space to respond to switch */
+	wake_lock_timeout(&hi->det_wake_lock, WAKE_LOCK_TIME);
+
 	/* when button is released */
 	if (hi->pressed == 0) {
 		input_report_key(hi->input_dev, hi->pressed_code, 0);
@@ -458,15 +584,32 @@ void sec_jack_buttons_work(struct work_struct *work)
 		return;
 	}
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)	
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	mpp_control(1);
 #endif
 
 	/* when button is pressed */
-	adc = sec_jack_get_adc_value();
+	adc = sec_jack_get_adc_value(hi);
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)	
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	mpp_control(0);
+#endif
+
+#if defined(CONFIG_MACH_KLTE_JPN)
+	if (hi->cur_jack_type == SEC_EXTERNAL_ANTENNA) {
+		
+		int time_left_ms = 1000;
+		
+		while (time_left_ms > 0) {
+			usleep_range(10000, 10000);
+			time_left_ms -= 10;
+		}
+
+		hi->cur_jack_type = SEC_JACK_NO_DEVICE;
+		determine_jack_type(hi);
+
+		return;
+	}
 #endif
 
 	for (i = 0; i < num_buttons_zones; i++)
@@ -489,34 +632,36 @@ static struct sec_jack_platform_data *sec_jack_populate_dt_pdata(struct device *
 	struct sec_jack_platform_data *pdata;
 	struct of_phandle_args args;
 	int i = 0;
+	int ret = 0;
 	pdata =  devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata) {
 		pr_err("%s : could not allocate memory for platform data\n", __func__);
-		goto err;
+		goto alloc_err;
 	}
 
 	pdata->det_gpio = of_get_named_gpio(dev->of_node, "qcom,earjack-detect-gpio", 0);
 	if (pdata->det_gpio < 0) {
 		pr_err("%s : can not find the earjack-detect-gpio in the dt\n", __func__);
-		goto alloc_err;
 	} else
 		pr_info("%s : earjack-detect-gpio =%d\n", __func__, pdata->det_gpio);
 
 	pdata->send_end_gpio = of_get_named_gpio(dev->of_node, "qcom,earjack-sendend-gpio", 0);
 	if (pdata->send_end_gpio < 0) {
 		pr_err("%s : can not find the earjack-detect-gpio in the dt\n", __func__);
-		goto alloc_err;		
 	} else
 		pr_info("%s : earjack-sendend-gpio =%d\n", __func__, pdata->send_end_gpio);
 
 	pdata->ear_micbias_gpio = of_get_named_gpio(dev->of_node, "qcom,earjack-micbias-gpio", 0);
+	if (pdata->ear_micbias_gpio < 0)
+		of_property_read_u32(dev->of_node, "qcom,earjack-micbias-expander-gpio", &pdata->ear_micbias_gpio);
 	if (pdata->ear_micbias_gpio < 0) {
 		pr_err("%s : can not find the earjack-micbias-gpio in the dt\n", __func__);
-		goto alloc_err;		
 	} else
 		pr_info("%s : earjack-micbias-gpio =%d\n", __func__, pdata->ear_micbias_gpio);	
 			
 	pdata->fsa_en_gpio = of_get_named_gpio(dev->of_node, "qcom,earjack-fsa_en-gpio", 0);
+	if (pdata->fsa_en_gpio < 0) 
+		of_property_read_u32(dev->of_node, "qcom,earjack-fsa_en-expander-gpio", &pdata->fsa_en_gpio);
 	if (pdata->fsa_en_gpio < 0)
 		pr_info("%s : No support FSA8038 chip\n", __func__);
 	else
@@ -528,7 +673,11 @@ static struct sec_jack_platform_data *sec_jack_populate_dt_pdata(struct device *
 		pdata->jack_zones[i].adc_high = args.args[0];
 		pdata->jack_zones[i].delay_us = args.args[1];
 		pdata->jack_zones[i].check_count = args.args[2];
+#if defined(CONFIG_MACH_KLTE_JPN)
+		pdata->jack_zones[i].jack_type = args.args[3];
+#else
 		pdata->jack_zones[i].jack_type = args.args[3]==0?SEC_HEADSET_3POLE:SEC_HEADSET_4POLE;
+#endif
 		pr_info("%s : %d, %d, %d, %d, %d \n",
 				__func__, args.args_count, args.args[0],
 				args.args[1], args.args[2],args.args[3]);		
@@ -546,17 +695,44 @@ static struct sec_jack_platform_data *sec_jack_populate_dt_pdata(struct device *
 
 	if (of_find_property(dev->of_node, "qcom,send-end-active-high", NULL))
 		pdata->send_end_active_high = true;
+		
+	ret = of_property_read_u32_array(dev->of_node, "mpp-channel-scaling", pdata->mpp_ch_scale, 3);
+	if (ret < 0) {
+		pr_err("%s : cannot find mpp-channel-scaling in the dt - using default MPP6_1_3\n",
+		__func__);
+		pdata->mpp_ch_scale[0] = 6;
+		pdata->mpp_ch_scale[1] = 1;
+		pdata->mpp_ch_scale[2] = 3;
+	}
+	pr_info("%s - mpp-channel-scaling - %d %d %d\n", __func__, pdata->mpp_ch_scale[0], pdata->mpp_ch_scale[1], pdata->mpp_ch_scale[2]);
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)		
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	pm8941_mpp4 = of_get_named_gpio(dev->of_node, "pm8941-mpp4", 0);
 #endif
 
+#ifdef CONFIG_ARCH_MSM8226
+	/*Reading vadc ptr from dtsi File*/
+
+	pdata->vadc_dev = qpnp_get_vadc(dev, "earjack");
+	if (IS_ERR(pdata->vadc_dev)) {
+		int rc;
+		rc = PTR_ERR(pdata->vadc_dev);
+		if (rc != -EPROBE_DEFER)
+			pr_err("vadc property missing, rc=%d\n", rc);
+		goto alloc_err;
+	}
+#endif
+
 	return pdata;
+
 alloc_err:
 	devm_kfree(dev, pdata);
-err:
 	return NULL;
 }
+
+#ifdef CONFIG_ARCH_MSM8226
+extern bool is_codec_probe_done(void);
+#endif
 
 static int sec_jack_probe(struct platform_device *pdev)
 {		
@@ -566,6 +742,13 @@ static int sec_jack_probe(struct platform_device *pdev)
 	struct device *earjack;
 	int ret;
 
+#ifdef CONFIG_ARCH_MSM8226
+	if(!is_codec_probe_done()) {
+		pr_err("%s - defer as codec_probe_done is false\n", __func__);
+		return -EPROBE_DEFER;
+	}
+#endif
+
 	pr_info("%s : Registering jack driver\n", __func__);
 
 	pdata = sec_jack_populate_dt_pdata(&pdev->dev);
@@ -573,7 +756,7 @@ static int sec_jack_probe(struct platform_device *pdev)
 		pr_err("%s : pdata is NULL.\n", __func__);
 		return -ENODEV;
 	} else
-		sec_jack_gpio_init(pdata);	
+		sec_jack_gpio_init(pdata);
 
 	if (atomic_xchg(&instantiated, 1)) {
 		pr_err("%s : already instantiated, can only have one\n",
@@ -597,13 +780,26 @@ static int sec_jack_probe(struct platform_device *pdev)
 	 * it is unique relative to other gpio_event devices
 	 */
 	hi->dev_id = pdev->id;
-
+	/* to read the vadc */
+	hi->client = pdev;	
+	
+#ifdef CONFIG_ARCH_MSM8226
+	if(pdata->det_gpio > 0) {
+		ret = gpio_request(pdata->det_gpio, "ear_jack_detect");
+		if (ret) {
+			pr_err("%s : gpio_request failed for %d\n",
+				__func__, pdata->det_gpio);
+			goto err_gpio_request;
+		}
+	}
+#else
 	ret = gpio_request(pdata->det_gpio, "ear_jack_detect");
 	if (ret) {
 		pr_err("%s : gpio_request failed for %d\n",
 			__func__, pdata->det_gpio);
 		goto err_gpio_request;
 	}
+#endif
 
 	ret = switch_dev_register(&switch_jack_detection);
 	if (ret < 0) {
@@ -637,6 +833,8 @@ static int sec_jack_probe(struct platform_device *pdev)
 		pr_err("Failed to create device file in sysfs entries(%s)!\n",
 			dev_attr_state.attr.name);
 
+	setup_timer(&hi->timer, sec_jack_timer_handler, (unsigned long)hi);
+
 	INIT_WORK(&hi->buttons_work, sec_jack_buttons_work);
 	INIT_WORK(&hi->detect_work, sec_jack_detect_work);
 	hi->queue = create_singlethread_workqueue("sec_jack_wq");
@@ -644,6 +842,12 @@ static int sec_jack_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		pr_err("%s: Failed to create workqueue\n", __func__);
 		goto err_create_wq_failed;
+	}
+	hi->buttons_queue = create_singlethread_workqueue("sec_jack_buttons_wq");
+	if (hi->buttons_queue == NULL) {
+		ret = -ENOMEM;
+		pr_err("%s: Failed to create buttons workqueue\n", __func__);
+		goto err_create_buttons_wq_failed;
 	}
 	queue_work(hi->queue, &hi->detect_work);
 
@@ -685,7 +889,7 @@ static int sec_jack_probe(struct platform_device *pdev)
 	dev_set_drvdata(&pdev->dev, hi);
 	dev_set_drvdata(earjack, hi);
 
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)	
+#if defined(CONFIG_MACH_VIENNA) || defined(CONFIG_MACH_PICASSO) || defined(CONFIG_MACH_MONDRIAN) || defined(CONFIG_MACH_LT03) || defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	mpp_control(0);
 #endif
 
@@ -696,6 +900,8 @@ err_enable_irq_wake:
 err_request_detect_irq:
 	input_unregister_handler(&hi->handler);
 err_register_input_handler:
+	destroy_workqueue(hi->buttons_queue);
+err_create_buttons_wq_failed:
 	destroy_workqueue(hi->queue);
 err_create_wq_failed:
 	device_remove_file(earjack, &dev_attr_state);
@@ -719,11 +925,11 @@ static int sec_jack_remove(struct platform_device *pdev)
 {
 
 	struct sec_jack_info *hi = dev_get_drvdata(&pdev->dev);
-
 	pr_info("%s :\n", __func__);
 	disable_irq_wake(hi->det_irq);
 	free_irq(hi->det_irq, hi);
 	destroy_workqueue(hi->queue);
+	destroy_workqueue(hi->buttons_queue);
 	if (hi->send_key_dev) {
 		platform_device_unregister(hi->send_key_dev);
 		hi->send_key_dev = NULL;
@@ -754,9 +960,32 @@ static struct platform_driver sec_jack_driver = {
 		.of_match_table = sec_jack_dt_match,
 	},
 };
+
+#if defined(CONFIG_MACH_KLTE_KOR) || defined(CONFIG_MACH_KLTE_JPN)
+extern unsigned int system_rev;
+#endif
+
 static int __init sec_jack_init(void)
 {
+#if defined(CONFIG_MACH_KLTE_KOR)
+	if (system_rev >= 13) {
+		pr_info("%s: Do not use sec jack in system_rev %d",
+			__func__, system_rev);
+		return 0;
+	} else {
+		return platform_driver_register(&sec_jack_driver);
+	}
+#elif defined(CONFIG_MACH_KLTE_JPN)
+	if (system_rev >= 11) {
+		pr_info("%s: Do not use sec jack in system_rev %d",
+			__func__, system_rev);
+		return 0;
+	} else {
+		return platform_driver_register(&sec_jack_driver);
+	}
+#else
 	return platform_driver_register(&sec_jack_driver);
+#endif
 }
 
 static void __exit sec_jack_exit(void)

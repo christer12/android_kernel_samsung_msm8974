@@ -14,7 +14,7 @@
  */
 
 #include <asm/unaligned.h>
-#include <mach/cpufreq.h>
+//#include <mach/cpufreq.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/input.h>
@@ -58,8 +58,13 @@ struct mxt_touchkey mxt_touchkey_data[] = {
 	},
 	{
 		.value = TOUCH_KEY_MENU,
+#ifdef USE_MENU_TOUCHKEY
 		.keycode = KEY_MENU,
 		.name = "menu",
+#else
+		.keycode = KEY_RECENT,
+		.name = "recent",
+#endif
 		.xnode = 30,
 		.ynode = 51,
 		.deltaobj = 4,
@@ -178,7 +183,8 @@ static int mxt_parse_dt(struct device *dev,
 	pdata->max_x = coords[2];
 	pdata->max_y = coords[3];
 	pdata->boot_address = MXT_BOOT_ADDRESS;
-
+	pdata->firmware_name = MXT_FIRMWARE_NAME;
+	
 	pdata->num_touchkey = ARRAY_SIZE(mxt_touchkey_data);
 	pdata->touchkey = mxt_touchkey_data;
 
@@ -293,42 +299,26 @@ static int mxt_power_onoff(struct mxt_data *data, bool enable)
 
 	dev_err(&data->client->dev,
 			"%s enable(%d)\n", __func__, enable);
-#if defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03LGT) || defined(CONFIG_MACH_LT03KTT)
-	/* Sometime TSP self test fail when TSP_SW3_2.8V is low(0), so change Power sequence */
-	ret = gpio_direction_output(data->pdata->tsp_en1, enable);
-	if (ret) {
-		dev_err(&data->client->dev,
-			"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
-			 __func__, data->pdata->tsp_en1);
-		return -EINVAL;
-	}
 
-	msleep(1);
+		/* Sometime TSP self test fail when TSP_SW3_2.8V is low(0), so change Power sequence */
+		ret = gpio_direction_output(data->pdata->tsp_en1, enable);
+		if (ret) {
+			dev_err(&data->client->dev,
+				"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
+				 __func__, data->pdata->tsp_en1);
+			return -EINVAL;
+		}
+	
+		msleep(1);
+	
+		ret = gpio_direction_output(data->pdata->tsp_en, enable);
+		if (ret) {
+			dev_err(&data->client->dev,
+				"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
+				 __func__, data->pdata->tsp_en);
+			return -EINVAL;
+		}
 
-	ret = gpio_direction_output(data->pdata->tsp_en, enable);
-	if (ret) {
-		dev_err(&data->client->dev,
-			"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
-			 __func__, data->pdata->tsp_en);
-		return -EINVAL;
-	}
-#else
-	ret = gpio_direction_output(data->pdata->tsp_en, enable);
-	if (ret) {
-		dev_err(&data->client->dev,
-			"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
-			__func__, data->pdata->tsp_en);
-		return -EINVAL;
-	}
-
-	ret = gpio_direction_output(data->pdata->tsp_en1, enable);
-	if (ret) {
-		dev_err(&data->client->dev,
-			"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
-			__func__, data->pdata->tsp_en1);
-		return -EINVAL;
-	}
-#endif
 	msleep(30);
 
 	ret = gpio_direction_output(data->pdata->tsp_rst, enable);
@@ -659,6 +649,29 @@ static int mxt_write_config_from_pdata(struct mxt_data *data)
 	return ret;
 }
 
+
+static int mxt_check_config_crc(struct mxt_fw_info *fw_info)
+{
+	struct mxt_data *data = fw_info->data;
+	struct device *dev = &data->client->dev;
+	u32 current_crc;
+	int ret;
+	
+	/* Get config CRC from device */
+	ret = mxt_read_config_crc(data, &current_crc);
+	if (ret)
+		return ret;
+		
+	/* Check config CRC */
+	if (current_crc == fw_info->cfg_crc) {
+		dev_info(dev, "Skip writing backup and reset:[CRC 0x%06X]\n",
+			current_crc);
+		return 0;
+	}
+	return 1;				
+}
+
+
 static int mxt_write_config(struct mxt_fw_info *fw_info)
 {
 	struct mxt_data *data = fw_info->data;
@@ -836,16 +849,16 @@ static int set_charger_config(struct mxt_data *data)
 		    }
 	    }
 		data->chargin_status = data->charging_mode;
-		
-#ifdef CONFIG_SEC_LT03_PROJECT
+
+#ifdef WORKAROUND_THRESHOLD
 		if (data->setdata == 1 && system_rev < 11) {
-#if TSP_PATCH		
+#if TSP_PATCH
 			dev_info(&data->client->dev, "RF Mode\n");
 			if(data->patch.event_cnt)
-				mxt_patch_test_event(data, 3); 			
-#endif			
-		}		
-#endif		
+				mxt_patch_test_event(data, 3);
+#endif
+		}
+#endif
 	}
 	return 0;
 }
@@ -889,6 +902,7 @@ static void mxt_report_input_data(struct mxt_data *data)
 	int i;
 	int count = 0;
 	int report_count = 0;
+	u16 sum_size = 0; //20131231
 
 	for (i = 0; i < MXT_MAX_FINGER; i++) {
 		if (data->fingers[i].state == MXT_STATE_INACTIVE)
@@ -909,6 +923,13 @@ static void mxt_report_input_data(struct mxt_data *data)
 					data->fingers[i].x);
 			input_report_abs(data->input_dev, ABS_MT_POSITION_Y,
 					data->fingers[i].y);
+#ifdef PALM_TUNING
+#if USE_FOR_SUFACE //20131220
+			if (!data->charging_mode) {
+				data->fingers[i].w += 10;
+			}
+#endif //20131220
+#endif
 			input_report_abs(data->input_dev, ABS_MT_TOUCH_MAJOR,
 					data->fingers[i].w);
 			input_report_abs(data->input_dev, ABS_MT_PRESSURE,
@@ -917,8 +938,22 @@ static void mxt_report_input_data(struct mxt_data *data)
 #if TSP_USE_SHAPETOUCH
 			input_report_abs(data->input_dev, ABS_MT_COMPONENT,
 					data->fingers[i].component);
+
+			sum_size = data->sumsize;
+#if USE_FOR_SUFACE //20131211
+#ifdef PALM_TUNING
+			if (!data->charging_mode) {
+				sum_size = (data->sumsize * 16) / 10; //20131231
+			}
+#else
+			if (!data->charging_mode) {
+				if(data->sumsize > 20)
+					sum_size = data->sumsize + 30;
+			}
+#endif
+#endif //20131211
 			input_report_abs(data->input_dev, ABS_MT_SUMSIZE,
-					data->sumsize);
+					sum_size);
 #endif
 #if TSP_USE_PALM_FLAG
 			input_report_abs(data->input_dev, ABS_MT_PALM,
@@ -1124,7 +1159,11 @@ static void mxt_release_all_keys(struct mxt_data *data)
 							"%s: [TSP_KEY] Ignore menu R! by back key\n",
 								 __func__);
 				} else {
+#ifdef USE_MENU_TOUCHKEY
 					input_report_key(data->input_dev, KEY_MENU, KEY_RELEASE);
+#else
+					input_report_key(data->input_dev, KEY_RECENT, KEY_RELEASE);
+#endif
 						dev_info(&data->client->dev,
 							"%s: [TSP_KEY] menu R!\n", __func__);
 #if MXT_TKEY_BOOSTER
@@ -1223,7 +1262,12 @@ static void mxt_treat_T15_object(struct mxt_data *data,
 						"%s: [TSP_KEY] Ignore menu %s by back key\n",
 								 __func__, key_state != 0 ? "P" : "R");
 				} else {
+					
+#ifdef USE_MENU_TOUCHKEY
 					input_report_key(data->input_dev, KEY_MENU, key_state != 0 ? KEY_PRESS : KEY_RELEASE);
+#else
+					input_report_key(data->input_dev, KEY_RECENT, key_state != 0 ? KEY_PRESS : KEY_RELEASE);
+#endif					
 					dev_info(&data->client->dev, 
 						"%s: [TSP_KEY] menu %s\n",
 								__func__, key_state != 0 ? "P" : "R");
@@ -2055,7 +2099,7 @@ static int mxt_get_object_table(struct mxt_data *data)
 		object->instances = buf[4] + 1;
 		object->num_report_ids = buf[5];
 
-		dev_info(&data->client->dev,
+		dev_dbg(&data->client->dev,
 			"Object:T%d\t\t\t Address:0x%x\tSize:%d\tInstance:%d\tReport Id's:%d\n",
 			object->type, object->start_address,
 			object->size, object->instances,
@@ -2159,7 +2203,9 @@ static int  mxt_rest_initialize(struct mxt_fw_info *fw_info)
 {
 	struct mxt_data *data = fw_info->data;
 	struct device *dev = &data->client->dev;
-	int ret;
+	int ret = 0;
+
+if( mxt_check_config_crc(fw_info)){	
 
 	/* Restore memory and stop event handing */
 	ret = mxt_command_backup(data, MXT_DISALEEVT_VALUE);
@@ -2191,6 +2237,7 @@ static int  mxt_rest_initialize(struct mxt_fw_info *fw_info)
 		dev_err(dev, "Failed Reset IC\n");
 		goto out;
 	}
+}
 
 #if TSP_PATCH
 	if(data->patch.patch)
@@ -2302,7 +2349,7 @@ static int mxt_input_open(struct input_dev *dev)
 		goto err_open;
 
 
-#ifdef CONFIG_SEC_LT03_PROJECT
+#ifdef WORKAROUND_THRESHOLD
 	if (data->setdata == 1 && system_rev < 11) {
 		ret = set_threshold(data);
 			if (!ret) {
@@ -2583,11 +2630,7 @@ out:
 static int __devinit mxt_touch_init(struct mxt_data *data, bool nowait)
 {
 	struct i2c_client *client = data->client;
-#ifdef CONFIG_SEC_LT03_PROJECT
-	const char *firmware_name = data->pdata->firmware_name ?: MXT_N_PROJECT_FIRMWARE_NAME;
-#else
-	const char *firmware_name = data->pdata->firmware_name ?: MXT_V_PROJECT_FIRMWARE_NAME;
-#endif
+	const char *firmware_name = data->pdata->firmware_name;
 	int ret = 0;
 
 #if TSP_INFORM_CHARGER
@@ -2601,6 +2644,12 @@ static int __devinit mxt_touch_init(struct mxt_data *data, bool nowait)
 		inform_charger_init(data);
 	}
 #endif
+
+	if (firmware_name == NULL) {
+		dev_info(&client->dev, "%s: firmware name is NULL!, return\n",
+			__func__);
+		return 0;
+	}
 
 	if (nowait) {
 		const struct firmware *fw;
@@ -2911,8 +2960,8 @@ static int __devinit mxt_probe(struct i2c_client *client,
 	* to prevent unnecessary report of touch event
 	* it will be enabled in open function
 	*/
-
 	mxt_stop(data);
+
 /*
 	mxt_input_close(data->input_dev);
 */

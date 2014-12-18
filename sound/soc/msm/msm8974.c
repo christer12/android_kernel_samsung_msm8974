@@ -10,10 +10,6 @@
  * GNU General Public License for more details.
  */
 
-#ifdef CONFIG_SEC_LOCALE_KOR_H
-#define DEBUG
-#endif
-
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
@@ -37,8 +33,12 @@
 #include "qdsp6v2/q6core.h"
 #include "../codecs/wcd9xxx-common.h"
 #include "../codecs/wcd9320.h"
-#include "../codecs/es325-export.h"
 
+#if defined(CONFIG_SND_SOC_ES705)
+#include "../codecs/audience/es705-export.h"
+#elif defined(CONFIG_SND_SOC_ES325)
+#include "../codecs/es325-export.h"
+#endif
 #define DRV_NAME "msm8974-asoc-taiko"
 
 #define MSM8974_SPK_ON 1
@@ -63,15 +63,8 @@ static int msm8974_auxpcm_rate = 8000;
 #define LO_2_SPK_AMP	0x4
 #define LO_4_SPK_AMP	0x8
 
-#define LPAIF_OFFSET 0xFE000000
-#define LPAIF_PRI_MODE_MUXSEL (LPAIF_OFFSET + 0x2B000)
-#define LPAIF_SEC_MODE_MUXSEL (LPAIF_OFFSET + 0x2C000)
-#define LPAIF_TER_MODE_MUXSEL (LPAIF_OFFSET + 0x2D000)
-#define LPAIF_QUAD_MODE_MUXSEL (LPAIF_OFFSET + 0x2E000)
-
 #define I2S_PCM_SEL 1
 #define I2S_PCM_SEL_OFFSET 1
-
 
 #define WCD9XXX_MBHC_DEF_BUTTONS 3
 #define WCD9XXX_MBHC_DEF_RLOADS 5
@@ -126,7 +119,11 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec, int enable,
 					bool dapm);
 
 static struct wcd9xxx_mbhc_config mbhc_cfg = {
+#if defined(CONFIG_MACH_KS01EUR)
+	.read_fw_bin = false,
+#else
 	.read_fw_bin = true,
+#endif
 	.calibration = NULL,
 	.micbias = MBHC_MICBIAS2,
 	.mclk_cb_fn = msm_snd_enable_codec_ext_clk,
@@ -135,9 +132,22 @@ static struct wcd9xxx_mbhc_config mbhc_cfg = {
 	.gpio_irq = 0,
 	.gpio_level_insert = 0,
 	.detect_extn_cable = true,
+#if defined(CONFIG_SEC_FACTORY)
+	/* Micbias for MBHC is always on in factory test */
+	.micbias_enable_flags = (1 << MBHC_MICBIAS_ENABLE_THRESHOLD_HEADSET | 
+	1 << MBHC_MICBIAS_ENABLE_REGULAR_HEADSET),
+#else
 	.micbias_enable_flags = 1 << MBHC_MICBIAS_ENABLE_THRESHOLD_HEADSET,
+#endif
 	.insert_detect = true,
 	.swap_gnd_mic = NULL,
+#if (defined(CONFIG_MACH_KLTE_KOR) || defined(CONFIG_MACH_KLTE_JPN)) && !defined(CONFIG_SEC_FACTORY)
+	.cs_enable_flags = (1 << MBHC_CS_ENABLE_POLLING),
+#else
+	.cs_enable_flags = 0,
+#endif
+	.do_recalibration = false,
+	.use_vddio_meas = true,
 };
 
 struct msm_auxpcm_gpio {
@@ -148,6 +158,7 @@ struct msm_auxpcm_gpio {
 struct msm_auxpcm_ctrl {
 	struct msm_auxpcm_gpio *pin_data;
 	u32 cnt;
+	void __iomem *mux;
 };
 
 struct msm8974_asoc_mach_data {
@@ -168,24 +179,12 @@ static char *msm_prim_auxpcm_gpio_name[][2] = {
 	{"PRIM_AUXPCM_DOUT",      "qcom,prim-auxpcm-gpio-dout"},
 };
 
-#ifdef CONFIG_PCM_ROUTE_VOICE_STUB
-static char *msm_sec_auxpcm_gpio_name[][2] = {
-	{"SEC_AUXPCM_CLK",       "qcom,sec-auxpcm-gpio-clk_duos"},
-	{"SEC_AUXPCM_SYNC",      "qcom,sec-auxpcm-gpio-sync_duos"},
-	{"SEC_AUXPCM_DIN",       "qcom,sec-auxpcm-gpio-din_duos"},
-	{"SEC_AUXPCM_DOUT",      "qcom,sec-auxpcm-gpio-dout_duos"},
-};
-#else
 static char *msm_sec_auxpcm_gpio_name[][2] = {
 	{"SEC_AUXPCM_CLK",       "qcom,sec-auxpcm-gpio-clk"},
 	{"SEC_AUXPCM_SYNC",      "qcom,sec-auxpcm-gpio-sync"},
 	{"SEC_AUXPCM_DIN",       "qcom,sec-auxpcm-gpio-din"},
 	{"SEC_AUXPCM_DOUT",      "qcom,sec-auxpcm-gpio-dout"},
 };
-#endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
-
-void *lpaif_pri_muxsel_virt_addr;
-void *lpaif_sec_muxsel_virt_addr;
 
 struct msm8974_liquid_dock_dev {
 	int dock_plug_gpio;
@@ -232,10 +231,14 @@ static atomic_t sec_auxpcm_rsc_ref;
 static int mainmic_bias_gpio = 0;
 static int micbias_en_msm_gpio = 0;
 static int spkamp_en_gpio = 0;
-static int lineout_en_gpio = 0;
 static int main_mic_delay = 0;
+#if defined(CONFIG_SEC_H_PROJECT)
 int speaker_status = 0;
 EXPORT_SYMBOL(speaker_status);
+#endif
+#if defined(CONFIG_MACH_KLTE_KOR) || defined(CONFIG_MACH_KLTE_JPN)
+static int fsa_en_gpio;
+#endif
 
 static int msm8974_liquid_ext_spk_power_amp_init(void)
 {
@@ -286,7 +289,9 @@ static int msm8974_liquid_ext_spk_power_amp_init(void)
 static void msm8974_liquid_ext_ult_spk_power_amp_enable(u32 on)
 {
 	if (on) {
-		regulator_enable(ext_spk_amp_regulator);
+		if (regulator_enable(ext_spk_amp_regulator))
+			pr_err("%s: enable failed ext_spk_amp_reg\n",
+				__func__);
 		gpio_direction_output(ext_ult_spk_amp_gpio, 1);
 		/* time takes enable the external power class AB amplifier */
 		usleep_range(EXT_CLASS_AB_EN_DELAY,
@@ -306,7 +311,9 @@ static void msm8974_liquid_ext_ult_spk_power_amp_enable(u32 on)
 static void msm8974_liquid_ext_spk_power_amp_enable(u32 on)
 {
 	if (on) {
-		regulator_enable(ext_spk_amp_regulator);
+		if (regulator_enable(ext_spk_amp_regulator))
+			pr_err("%s: enable failed ext_spk_amp_reg\n",
+				__func__);
 		gpio_direction_output(ext_spk_amp_gpio, on);
 		/*time takes enable the external power amplifier*/
 		usleep_range(EXT_CLASS_D_EN_DELAY,
@@ -405,21 +412,22 @@ static int msm8974_liquid_init_docking(struct snd_soc_dapm_context *dapm)
 
 		msm8974_liquid_dock_dev->dapm = dapm;
 
+		INIT_WORK(
+			&msm8974_liquid_dock_dev->irq_work,
+			msm8974_liquid_docking_irq_work);
+
 		ret = request_irq(msm8974_liquid_dock_dev->dock_plug_irq,
 				  msm8974_liquid_docking_irq_handler,
 				  dock_plug_irq_flags,
 				  "liquid_dock_plug_irq",
 				  msm8974_liquid_dock_dev);
 
-		INIT_WORK(
-			&msm8974_liquid_dock_dev->irq_work,
-			msm8974_liquid_docking_irq_work);
 	}
 
 	return 0;
 }
 
-#if !defined(CONFIG_SEC_VIENNA_PROJECT) && !defined(CONFIG_SEC_V2_PROJECT) && !defined(CONFIG_SEC_LT03_PROJECT)
+#if !defined(CONFIG_MACH_VIENNA_LTE) && !defined(CONFIG_MACH_V2_LTE) && !defined(CONFIG_MACH_LT03_LTE) && !defined(CONFIG_MACH_PICASSO_LTE) && !defined(CONFIG_MACH_MONDRIAN)
 static int msm8974_liquid_ext_spk_power_amp_on(u32 spk)
 {
 	int rc;
@@ -573,34 +581,8 @@ static int msm8974_set_spk(struct snd_kcontrol *kcontrol,
 	return 1;
 }
 
-static int msm_ext_spkramp_ultrasound_event(struct snd_soc_dapm_widget *w,
-			     struct snd_kcontrol *k, int event)
-{
 
-	pr_debug("%s()\n", __func__);
-
-	if (!strncmp(w->name, "SPK_ultrasound amp", 19)) {
-		if (!gpio_is_valid(ext_ult_spk_amp_gpio)) {
-			pr_err("%s: ext_ult_spk_amp_gpio isn't configured\n",
-				__func__);
-			return -EINVAL;
-		}
-
-		if (SND_SOC_DAPM_EVENT_ON(event))
-			msm8974_liquid_ext_ult_spk_power_amp_enable(1);
-		else
-			msm8974_liquid_ext_ult_spk_power_amp_enable(0);
-
-	} else {
-			pr_err("%s() Invalid Speaker Widget = %s\n",
-					__func__, w->name);
-			return -EINVAL;
-	}
-
-	return 0;
-}
-
-#if !defined(CONFIG_SEC_VIENNA_PROJECT) && !defined(CONFIG_SEC_V2_PROJECT) && !defined(CONFIG_SEC_LT03_PROJECT)
+#if !defined(CONFIG_MACH_VIENNA_LTE) && !defined(CONFIG_MACH_V2_LTE) && !defined(CONFIG_MACH_LT03_LTE) && !defined(CONFIG_MACH_PICASSO_LTE) && !defined(CONFIG_MACH_MONDRIAN)
 static int msm_ext_spkramp_event(struct snd_soc_dapm_widget *w,
 			     struct snd_kcontrol *k, int event)
 {
@@ -652,18 +634,32 @@ static int msm_ext_spkramp_event(struct snd_soc_dapm_widget *w,
 }
 #endif
 
-#if defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_V2_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)
-static int lineout_en_event(struct snd_soc_dapm_widget *w,
+static int msm_ext_spkramp_ultrasound_event(struct snd_soc_dapm_widget *w,
 			     struct snd_kcontrol *k, int event)
 {
-	pr_info("%s() : control =%d\n", __func__, event);
 
-	gpio_direction_output(lineout_en_gpio,
-			SND_SOC_DAPM_EVENT_ON(event));
+	pr_debug("%s()\n", __func__);
+
+	if (!strncmp(w->name, "SPK_ultrasound amp", 19)) {
+		if (!gpio_is_valid(ext_ult_spk_amp_gpio)) {
+			pr_err("%s: ext_ult_spk_amp_gpio isn't configured\n",
+				__func__);
+			return -EINVAL;
+		}
+
+		if (SND_SOC_DAPM_EVENT_ON(event))
+			msm8974_liquid_ext_ult_spk_power_amp_enable(1);
+		else
+			msm8974_liquid_ext_ult_spk_power_amp_enable(0);
+
+	} else {
+			pr_err("%s() Invalid Speaker Widget = %s\n",
+					__func__, w->name);
+			return -EINVAL;
+	}
 
 	return 0;
 }
-#endif
 
 static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec, int enable,
 					bool dapm)
@@ -726,9 +722,7 @@ static int msm8974_mclk_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
-#if !defined(CONFIG_SEC_J_PROJECT) && !defined(CONFIG_SEC_JACTIVE_PROJECT)\
-	&& !defined(CONFIG_SEC_MELIUSCA_PROJECT) && !defined(CONFIG_MACH_MONTBLANC)\
-	&& !defined(CONFIG_MACH_VIKALCU)
+#if !defined(CONFIG_SEC_KS01_PROJECT)
 static int msm_mainmic_bias_event(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *k, int event)
 {
@@ -739,24 +733,23 @@ static int msm_mainmic_bias_event(struct snd_soc_dapm_widget *w,
 		gpio_set_value_cansleep(micbias_en_msm_gpio,
 				SND_SOC_DAPM_EVENT_ON(event));
 	} else {
-	        gpio_direction_output(mainmic_bias_gpio, 
+		gpio_direction_output(mainmic_bias_gpio,
 				SND_SOC_DAPM_EVENT_ON(event));
 	}
 
-    if(main_mic_delay) {
+	if(main_mic_delay) {
 		if(main_mic_delay != 100)
 			main_mic_delay *= 50;
 		msleep(main_mic_delay);
 		pr_info("%s: main_mic_delay = %d\n", __func__, main_mic_delay);
 		main_mic_delay = 0;
-    }
+	}
 
 	return 0;
 }
 #endif
 
-#if defined(CONFIG_SEC_J_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)\
-	|| defined(CONFIG_SEC_MELIUSCA_PROJECT)
+#ifdef CONFIG_SEC_K_PROJECT
 static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
 
 	SND_SOC_DAPM_SUPPLY("MCLK",  SND_SOC_NOPM, 0, 0,
@@ -770,17 +763,20 @@ static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
 	SND_SOC_DAPM_SPK("SPK_ultrasound amp",
 					 msm_ext_spkramp_ultrasound_event),
 
-	SND_SOC_DAPM_MIC("Main Mic", NULL),
+	SND_SOC_DAPM_MIC("Handset Mic", NULL),
 	SND_SOC_DAPM_MIC("Headset Mic", NULL),
-	SND_SOC_DAPM_MIC("Sub Mic", NULL),
-	SND_SOC_DAPM_MIC("Third Mic", NULL),
+	SND_SOC_DAPM_MIC("ANCRight Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("ANCLeft Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Analog Mic4", NULL),
+	SND_SOC_DAPM_MIC("Analog Mic6", NULL),
+	SND_SOC_DAPM_MIC("Analog Mic7", NULL),
 
 	SND_SOC_DAPM_MIC("Digital Mic1", NULL),
-	SND_SOC_DAPM_MIC("Digital Mic2", NULL),
+	SND_SOC_DAPM_MIC("Main Mic", msm_mainmic_bias_event),
 	SND_SOC_DAPM_MIC("Digital Mic3", NULL),
-	SND_SOC_DAPM_MIC("Digital Mic4", NULL),
+	SND_SOC_DAPM_MIC("Sub Mic", NULL),
 	SND_SOC_DAPM_MIC("Digital Mic5", NULL),
-	SND_SOC_DAPM_MIC("Digital Mic6", NULL),
+	SND_SOC_DAPM_MIC("Third Mic", NULL),
 };
 #else
 static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
@@ -795,10 +791,7 @@ static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
 	SND_SOC_DAPM_SPK("Lineout_4 amp", msm_ext_spkramp_event),
 	SND_SOC_DAPM_SPK("SPK_ultrasound amp",
 					 msm_ext_spkramp_ultrasound_event),
-#if defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_V2_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)
-	SND_SOC_DAPM_SPK("Lineout_switch", lineout_en_event),
-#endif	
-#if defined(CONFIG_MACH_MONTBLANC) || defined(CONFIG_MACH_VIKALCU)
+#if defined(CONFIG_SEC_KS01_PROJECT)
 	SND_SOC_DAPM_MIC("Main Mic", NULL),
 #else
 	SND_SOC_DAPM_MIC("Main Mic", msm_mainmic_bias_event),
@@ -819,7 +812,8 @@ static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
 static const char *const spk_function[] = {"Off", "On"};
 static const char *const slim0_rx_ch_text[] = {"One", "Two"};
 static const char *const slim0_tx_ch_text[] = {"One", "Two", "Three", "Four",
-						"Five"};
+						"Five", "Six", "Seven",
+						"Eight"};
 static char const *hdmi_rx_ch_text[] = {"Two", "Three", "Four", "Five",
 					"Six", "Seven", "Eight"};
 static char const *rx_bit_format_text[] = {"S16_LE", "S24_LE"};
@@ -973,10 +967,10 @@ static int msm_btsco_rate_put(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
 {
 	switch (ucontrol->value.integer.value[0]) {
-	case 0:
+	case 8000:
 		msm_btsco_rate = BTSCO_RATE_8KHZ;
 		break;
-	case 1:
+	case 16000:
 		msm_btsco_rate = BTSCO_RATE_16KHZ;
 		break;
 	default:
@@ -1135,14 +1129,18 @@ static int msm8974_auxpcm_rate_put(struct snd_kcontrol *kcontrol,
 	switch (ucontrol->value.integer.value[0]) {
 	case 0:
 		msm8974_auxpcm_rate = 8000;
+		msm_btsco_rate = BTSCO_RATE_8KHZ;
 		break;
 	case 1:
 		msm8974_auxpcm_rate = 16000;
+		msm_btsco_rate = BTSCO_RATE_16KHZ;
 		break;
 	default:
 		msm8974_auxpcm_rate = 8000;
+		msm_btsco_rate = BTSCO_RATE_8KHZ;
 		break;
 	}
+	pr_info("%s: BT sample rate = %d ====\n",__func__, msm8974_auxpcm_rate);
 	return 0;
 }
 
@@ -1165,6 +1163,7 @@ static int main_mic_delay_put(struct snd_kcontrol *kcontrol,
 	return 1;
 }
 
+#if defined(CONFIG_SEC_H_PROJECT)
 static int speaker_status_get(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
@@ -1180,6 +1179,7 @@ static int speaker_status_put(struct snd_kcontrol *kcontrol,
 	pr_info("%s: speaker_status = %d\n", __func__, speaker_status);
 	return 1;
 }
+#endif
 
 static int msm_proxy_rx_ch_get(struct snd_kcontrol *kcontrol,
 				struct snd_ctl_elem_value *ucontrol)
@@ -1352,12 +1352,14 @@ static int msm_prim_auxpcm_startup(struct snd_pcm_substream *substream)
 		goto err;
 	}
 	if (atomic_inc_return(&prim_auxpcm_rsc_ref) == 1) {
-		if (lpaif_pri_muxsel_virt_addr != NULL)
+		if (auxpcm_ctrl->mux != NULL) {
 			iowrite32(I2S_PCM_SEL << I2S_PCM_SEL_OFFSET,
-				lpaif_pri_muxsel_virt_addr);
-		else
-			pr_err("%s lpaif_pri_muxsel_virt_addr is NULL\n",
-				 __func__);
+				  auxpcm_ctrl->mux);
+		} else {
+			pr_err("%s: Pri AUXPCM MUX addr is NULL\n", __func__);
+			ret = -EINVAL;
+			goto err;
+		}
 		ret = msm_aux_pcm_get_gpios(auxpcm_ctrl);
 	}
 	if (ret < 0) {
@@ -1407,12 +1409,14 @@ static int msm_sec_auxpcm_startup(struct snd_pcm_substream *substream)
 		goto err;
 	}
 	if (atomic_inc_return(&sec_auxpcm_rsc_ref) == 1) {
-		if (lpaif_sec_muxsel_virt_addr != NULL)
+		if (auxpcm_ctrl->mux != NULL) {
 			iowrite32(I2S_PCM_SEL << I2S_PCM_SEL_OFFSET,
-				lpaif_sec_muxsel_virt_addr);
-		else
-			pr_err("%s lpaif_sec_muxsel_virt_addr is NULL\n",
-				 __func__);
+				  auxpcm_ctrl->mux);
+		} else {
+			pr_err("%s Sec AUXPCM MUX addr is NULL\n", __func__);
+			ret = -EINVAL;
+			goto err;
+		}
 		ret = msm_aux_pcm_get_gpios(auxpcm_ctrl);
 	}
 	if (ret < 0) {
@@ -1459,7 +1463,7 @@ static int msm_slim_0_rx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	rate->min = rate->max = slim0_rx_sample_rate;
 	channels->min = channels->max = msm_slim_0_rx_ch;
 
-	 pr_debug("%s: format = %d, rate = %d, channels = %d\n",
+	 pr_info("%s: format = %d, rate = %d, channels = %d\n",
 			  __func__, params_format(params), params_rate(params),
 			  msm_slim_0_rx_ch);
 
@@ -1478,6 +1482,10 @@ static int msm_slim_0_tx_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	pr_debug("%s()\n", __func__);
 	rate->min = rate->max = 48000;
 	channels->min = channels->max = msm_slim_0_tx_ch;
+
+	 pr_info("%s: format = %d, rate = %d, channels = %d\n",
+			  __func__, params_format(params), params_rate(params),
+			  msm_slim_0_tx_ch);
 
 	return 0;
 }
@@ -1537,15 +1545,31 @@ static int msm_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	return 0;
 }
 
+static int msm_be_fm_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+				struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+
+	struct snd_interval *channels =
+	    hw_param_interval(params, SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	pr_debug("%s()\n", __func__);
+	rate->min = rate->max = 48000;
+	channels->min = channels->max = 2;
+
+	return 0;
+}
+
 static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, spk_function),
 	SOC_ENUM_SINGLE_EXT(2, slim0_rx_ch_text),
-	SOC_ENUM_SINGLE_EXT(5, slim0_tx_ch_text),
+	SOC_ENUM_SINGLE_EXT(8, slim0_tx_ch_text),
 	SOC_ENUM_SINGLE_EXT(7, hdmi_rx_ch_text),
 	SOC_ENUM_SINGLE_EXT(2, rx_bit_format_text),
 	SOC_ENUM_SINGLE_EXT(3, slim0_rx_sample_rate_text),
 	SOC_ENUM_SINGLE_EXT(8, proxy_rx_ch_text),
-	SOC_ENUM_SINGLE_EXT(3, hdmi_rx_sample_rate_text),	
+	SOC_ENUM_SINGLE_EXT(3, hdmi_rx_sample_rate_text),
 };
 
 static const struct snd_kcontrol_new msm_snd_controls[] = {
@@ -1567,12 +1591,16 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			hdmi_rx_bit_format_get, hdmi_rx_bit_format_put),
 	SOC_ENUM_EXT("PROXY_RX Channels", msm_snd_enum[6],
 			msm_proxy_rx_ch_get, msm_proxy_rx_ch_put),
+	SOC_ENUM_EXT("Internal BTSCO SampleRate", msm_btsco_enum[0],
+		     msm_btsco_rate_get, msm_btsco_rate_put),
 	SOC_ENUM_EXT("HDMI_RX SampleRate", msm_snd_enum[7],
 			hdmi_rx_sample_rate_get, hdmi_rx_sample_rate_put),
 	SOC_SINGLE_EXT("Main Mic Delay",SND_SOC_NOPM, 0, 100, 0,
 			main_mic_delay_get, main_mic_delay_put),
+#if defined(CONFIG_SEC_H_PROJECT)
 	SOC_SINGLE_EXT("SPK Status",SND_SOC_NOPM, 0, 1, 0,
 			speaker_status_get, speaker_status_put),
+#endif
 };
 
 static bool msm8974_swap_gnd_mic(struct snd_soc_codec *codec)
@@ -1680,6 +1708,10 @@ static int msm8974_taiko_event_cb(struct snd_soc_codec *codec,
 	}
 }
 
+#if defined(CONFIG_MACH_KLTE_KOR) || defined(CONFIG_MACH_KLTE_JPN)
+extern unsigned int system_rev;
+#endif
+
 static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 {
 	int err;
@@ -1775,8 +1807,36 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		}
 	}
 
-#if defined(CONFIG_SEC_J_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)\
-	|| defined(CONFIG_SEC_MELIUSCA_PROJECT)
+#if defined(CONFIG_MACH_KLTE_KOR)
+	if (system_rev >= 13) {
+		pr_info("%s: USE MBHC revision %d\n", __func__, system_rev);
+		/* start mbhc */
+		mbhc_cfg.calibration = def_taiko_mbhc_cal();
+		if (mbhc_cfg.calibration) {
+			err = taiko_hs_detect(codec, &mbhc_cfg);
+			if (err)
+				goto out;
+		} else {
+			err = -ENOMEM;
+			goto out;
+		}
+	}
+#elif defined(CONFIG_MACH_KLTE_JPN)
+	if (system_rev >= 11) {
+		pr_info("%s: USE MBHC revision %d\n", __func__, system_rev);
+		/* start mbhc */
+		mbhc_cfg.calibration = def_taiko_mbhc_cal();
+		if (mbhc_cfg.calibration) {
+			err = taiko_hs_detect(codec, &mbhc_cfg);
+			if (err)
+				goto out;
+		} else {
+			err = -ENOMEM;
+			goto out;
+		}
+	}
+#else
+#if !defined(CONFIG_SAMSUNG_JACK)
 	/* start mbhc */
 	mbhc_cfg.calibration = def_taiko_mbhc_cal();
 	if (mbhc_cfg.calibration) {
@@ -1787,7 +1847,8 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		err = -ENOMEM;
 		goto out;
 	}
-#endif		
+#endif
+#endif /* CONFIG_MACH_KLTE_KOR */
 	adsp_state_notifier =
 	    subsys_notif_register_notifier("adsp",
 					   &adsp_state_notifier_block);
@@ -1795,6 +1856,19 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 		pr_err("%s: Failed to register adsp state notifier\n",
 		       __func__);
 		err = -EFAULT;
+#if defined(CONFIG_MACH_KLTE_KOR)
+		if (system_rev >= 13) {
+			taiko_hs_detect_exit(codec);
+		}
+#elif defined(CONFIG_MACH_KLTE_JPN)
+		if (system_rev >= 11) {
+			taiko_hs_detect_exit(codec);
+		}
+#else
+#if !defined(CONFIG_SAMSUNG_JACK)
+		taiko_hs_detect_exit(codec);
+#endif
+#endif /* CONFIG_MACH_KLTE_KOR */
 		goto out;
 	}
 
@@ -1843,7 +1917,7 @@ void *def_taiko_mbhc_cal(void)
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_PLUG_TYPE_PTR(taiko_cal)->X) = (Y))
 	S(v_no_mic, 950);
-	S(v_hs_max, 2650);
+	S(v_hs_max, 3000);
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_BTN_DET_PTR(taiko_cal)->X) = (Y))
 	S(c[0], 62);
@@ -1862,10 +1936,10 @@ void *def_taiko_mbhc_cal(void)
 	btn_high = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg,
 					       MBHC_BTN_DET_V_BTN_HIGH);
 	btn_low[0] = -50;
-	btn_high[0] = 134;
-	btn_low[1] = 136;
-	btn_high[1] = 324;
-	btn_low[2] = 333;
+	btn_high[0] = 160;
+	btn_low[1] = 161;
+	btn_high[1] = 330;
+	btn_low[2] = 331;
 	btn_high[2] = 730;
 	n_ready = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_N_READY);
 	n_ready[0] = 80;
@@ -1917,21 +1991,26 @@ static int msm_snd_hw_params(struct snd_pcm_substream *substream,
 			pr_err("%s: failed to get codec chan map\n", __func__);
 			goto end;
 		}
-#ifdef CONFIG_SND_SOC_ES325
+
 		/* For tabla_tx1 case */
-		if ((codec_dai->id == 1) ||(codec_dai->id == 11))
-#else
-		/* For tabla_tx1 case */
+#if defined(CONFIG_SND_SOC_ES705)
 		if (codec_dai->id == 1)
-#endif
 			user_set_tx_ch = msm_slim_0_tx_ch;
-		/* For tabla_tx2 case */
+#elif defined(CONFIG_SND_SOC_ES325)
+		if ((codec_dai->id == 1) ||(codec_dai->id == 11)) {
+			user_set_tx_ch = msm_slim_0_tx_ch;
+		}
+#else
+		if (codec_dai->id == 1)
+			user_set_tx_ch = msm_slim_0_tx_ch;
+#endif
+
+	/* For tabla_tx2 case */
 		else if (codec_dai->id == 3)
 			user_set_tx_ch = params_channels(params);
 		else
 			user_set_tx_ch = tx_ch_cnt;
-
-		pr_debug("%s: msm_slim_0_tx_ch(%d)user_set_tx_ch(%d)tx_ch_cnt(%d)\n",
+		pr_info("%s: msm_slim_0_tx_ch(%d)user_set_tx_ch(%d)tx_ch_cnt(%d)\n",
 			 __func__, msm_slim_0_tx_ch, user_set_tx_ch, tx_ch_cnt);
 
 		ret = snd_soc_dai_set_channel_map(cpu_dai,
@@ -2157,7 +2236,7 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.name = "MSM8974 Compr",
 		.stream_name = "COMPR",
 		.cpu_dai_name	= "MultiMedia4",
-		.platform_name  = "msm-compr-dsp",
+		.platform_name  = "msm-compress-dsp",
 		.dynamic = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			 SND_SOC_DPCM_TRIGGER_POST},
@@ -2272,28 +2351,12 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.codec_name = "snd-soc-dummy",
 		.be_id = MSM_FRONTEND_DAI_LSM1,
 	},
-	/* for JackAudio */
-	{
-		.name = "MSM8974 Media6",
-		.stream_name = "MultiMedia6",
-		.cpu_dai_name   = "MultiMedia6",
-		.platform_name  = "msm-pcm-dsp.0",
-		.dynamic = 1,
-		.codec_dai_name = "snd-soc-dummy-dai",
-		.codec_name = "snd-soc-dummy",
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
-			SND_SOC_DPCM_TRIGGER_POST},
-		.ignore_suspend = 1,
-		/* this dainlink has playback support */
-		.ignore_pmdown_time = 1,
-		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA6,
-	},
 	/* Multiple Tunnel instances */
 	{
 		.name = "MSM8974 Compr2",
 		.stream_name = "COMPR2",
 		.cpu_dai_name	= "MultiMedia6",
-		.platform_name  = "msm-compr-dsp",
+		.platform_name  = "msm-compress-dsp",
 		.dynamic = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			 SND_SOC_DPCM_TRIGGER_POST},
@@ -2308,7 +2371,7 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.name = "MSM8974 Compr3",
 		.stream_name = "COMPR3",
 		.cpu_dai_name	= "MultiMedia7",
-		.platform_name  = "msm-compr-dsp",
+		.platform_name  = "msm-compress-dsp",
 		.dynamic = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			 SND_SOC_DPCM_TRIGGER_POST},
@@ -2334,6 +2397,22 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		 /* this dainlink has playback support */
 		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA8,
 	},
+	{
+		.name = "QCHAT",
+		.stream_name = "QCHAT",
+		.cpu_dai_name   = "QCHAT",
+		.platform_name  = "msm-pcm-voice",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.be_id = MSM_FRONTEND_DAI_QCHAT,
+	},
 	/* HDMI Hostless */
 	{
 		.name = "HDMI_RX_HOSTLESS",
@@ -2348,6 +2427,53 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.ignore_pmdown_time = 1,
 		.codec_dai_name = "snd-soc-dummy-dai",
 		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "Voice2",
+		.stream_name = "Voice2",
+		.cpu_dai_name   = "Voice2",
+		.platform_name  = "msm-pcm-voice",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.be_id = MSM_FRONTEND_DAI_VOICE2,
+	},
+	{
+		.name = "INT_HFP_BT Hostless",
+		.stream_name = "INT_HFP_BT Hostless",
+		.cpu_dai_name   = "INT_HFP_BT_HOSTLESS",
+		.platform_name  = "msm-pcm-hostless",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		/* this dai link has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+	{
+		.name = "MSM8974 HFP TX",
+		.stream_name = "MultiMedia6",
+		.cpu_dai_name = "MultiMedia6",
+		.platform_name  = "msm-pcm-loopback",
+		.dynamic = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.ignore_suspend = 1,
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA6,
 	},
 	{
 		.name = LPASS_BE_SLIMBUS_4_TX,
@@ -2422,7 +2548,7 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.codec_dai_name = "msm-stub-rx",
 		.no_pcm = 1,
 		.be_id = MSM_BACKEND_DAI_INT_FM_RX,
-		.be_hw_params_fixup = msm_be_hw_params_fixup,
+		.be_hw_params_fixup = msm_be_fm_hw_params_fixup,
 		/* this dainlink has playback support */
 		.ignore_pmdown_time = 1,
 		.ignore_suspend = 1,
@@ -2467,21 +2593,37 @@ static struct snd_soc_dai_link msm8974_common_dai_links[] = {
 		.ignore_suspend = 1,
 	},
 #ifdef CONFIG_PCM_ROUTE_VOICE_STUB
-	{ // 25
-		.name = "Voice Stub", 
-		.stream_name = "Voice Stub", 
-		.cpu_dai_name = "VOICE_STUB", 
-		.platform_name = "msm-pcm-hostless", 
-		.dynamic = 1, 
-		.trigger = {SND_SOC_DPCM_TRIGGER_POST, SND_SOC_DPCM_TRIGGER_POST}, 
-		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST, 
-		.ignore_suspend = 1, 
-		.ignore_pmdown_time = 1, /* this dainlink has playback support */ 
-		.codec_dai_name = "snd-soc-dummy-dai", 
-		.codec_name = "snd-soc-dummy", 
+	{
+		.name = "Voice Stub",
+		.stream_name = "Voice Stub",
+		.cpu_dai_name = "VOICE_STUB",
+		.platform_name = "msm-pcm-hostless",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST, SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1, /* this dainlink has playback support */
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
 	 },
 #endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
-		
+#ifdef CONFIG_JACK_AUDIO
+	{
+		.name = "MSM8974 JACK LowLatency",
+		.stream_name = "MultiMedia10",
+		.cpu_dai_name   = "MultiMedia10",
+		.platform_name  = "msm-pcm-dsp.1",
+		.dynamic = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+				SND_SOC_DPCM_TRIGGER_POST},
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA10,
+	},
+#endif
 	/* Primary AUX PCM Backend DAI Links */
 	{
 		.name = LPASS_BE_AUXPCM_RX,
@@ -2869,23 +3011,6 @@ static int msm8974_prepare_mainmic(void)
 	return 0;
 }
 
-static int msm8974_prepare_micbias_to_codec(void)
-{
-	int ret;
-	if (micbias_en_msm_gpio) {
-		pr_debug("%s : micbias en msm gpio request %d", __func__,
-			micbias_en_msm_gpio);
-		ret = gpio_request(micbias_en_msm_gpio, "MICBIAS_TO_CODEC");
-		if (ret) {
-			pr_debug("%s: Failed to request taiko micbias en msm gpio %d error %d\n",
-				__func__, micbias_en_msm_gpio, ret);
-			return ret;
-		}
-		gpio_direction_output(micbias_en_msm_gpio, 0);
-	}
-
-	return 0;
-}
 
 static int msm8974_prepare_spkamp(void)
 {
@@ -2905,28 +3030,23 @@ static int msm8974_prepare_spkamp(void)
 	return 0;
 }
 
-static int msm8974_prepare_lineout_switch(void)
+static int msm8974_prepare_micbias_to_codec(void)
 {
 	int ret;
-	if (lineout_en_gpio) {
-		pr_debug("%s : lineout en gpio request %d", __func__,
-			lineout_en_gpio);
-		ret = gpio_request(lineout_en_gpio, "LINEOUT_EN");
+	if (micbias_en_msm_gpio) {
+		pr_debug("%s : micbias en msm gpio request %d", __func__,
+			micbias_en_msm_gpio);
+		ret = gpio_request(micbias_en_msm_gpio, "MICBIAS_TO_CODEC");
 		if (ret) {
-			pr_debug("%s: Failed to request lineout en gpio %d error %d\n",
-				__func__, lineout_en_gpio, ret);
+			pr_debug("%s: Failed to request taiko micbias en msm gpio %d error %d\n",
+				__func__, micbias_en_msm_gpio, ret);
 			return ret;
 		}
-		gpio_direction_output(lineout_en_gpio, 0);
+		gpio_direction_output(micbias_en_msm_gpio, 0);
 	}
 
 	return 0;
 }
-
-#ifdef CONFIG_MACH_LT03EUR
-extern unsigned int system_rev;
-static struct regulator *ldo22;
-#endif
 
 static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 {
@@ -2935,28 +3055,8 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 	int ret;
 	const char *auxpcm_pri_gpio_set = NULL;
 	const char *prop_name_ult_lo_gpio = "qcom,ext-ult-lo-amp-gpio";
-
-#ifdef CONFIG_MACH_LT03EUR
-	printk("======system_rev=======%d======\n",system_rev);
-	if(system_rev < 9) {
-		ldo22 = regulator_get(NULL, "8941_l22");
-		if (IS_ERR(ldo22)) {
-			pr_err("pm8941 : could not get ldo22, rc = %ld\n", PTR_ERR(ldo22));
-			ldo22 = NULL;
-		}
-	   
-	   if(ldo22 != NULL) {
-			ret = regulator_set_voltage(ldo22, 3300000, 3300000);
-			if (ret)
-				pr_err("set_voltage ldo22 failed, rc=%d\n", ret);
-			else {
-				ret = regulator_enable(ldo22); /*3.3V*/
-				if (ret)
-					pr_err("enable ldo22 failed, rc=%d\n", ret);
-			}
-		}
-	}
-#endif
+	struct resource	*pri_muxsel;
+	struct resource	*sec_muxsel;
 
 	if (!pdev->dev.of_node) {
 		dev_err(&pdev->dev, "No platform supplied from device tree\n");
@@ -2968,24 +3068,6 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 	if (!pdata) {
 		dev_err(&pdev->dev, "Can't allocate msm8974_asoc_mach_data\n");
 		return -ENOMEM;
-	}
-
-	/* Parse Primary AUXPCM info from DT */
-	ret = msm8974_dtparse_auxpcm(pdev, &pdata->pri_auxpcm_ctrl,
-					msm_prim_auxpcm_gpio_name);
-	if (ret) {
-		dev_err(&pdev->dev,
-		"%s: Primary Auxpcm pin data parse failed\n", __func__);
-		goto err;
-	}
-
-	/* Parse Secondary AUXPCM info from DT */
-	ret = msm8974_dtparse_auxpcm(pdev, &pdata->sec_auxpcm_ctrl,
-					msm_sec_auxpcm_gpio_name);
-	if (ret) {
-		dev_err(&pdev->dev,
-		"%s: Secondary Auxpcm pin data parse failed\n", __func__);
-		goto err;
 	}
 
 	card->dev = &pdev->dev;
@@ -3028,26 +3110,9 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	ext_ult_lo_amp_gpio = of_get_named_gpio(pdev->dev.of_node,
-						prop_name_ult_lo_gpio, 0);
-	if (!gpio_is_valid(ext_ult_lo_amp_gpio)) {
-		dev_dbg(&pdev->dev,
-			"Couldn't find %s property in node %s, %d\n",
-			prop_name_ult_lo_gpio, pdev->dev.of_node->full_name,
-			ext_ult_lo_amp_gpio);
-	} else {
-		ret = gpio_request(ext_ult_lo_amp_gpio, "US_AMP_GPIO");
-		if (ret) {
-			dev_err(card->dev,
-				"%s: Failed to request US amp gpio %d\n",
-				__func__, ext_ult_lo_amp_gpio);
-			goto err;
-		}
-	}
-
 	ret = msm8974_prepare_codec_mclk(card);
 	if (ret)
-		goto err1;
+		goto err;
 
 	if (of_property_read_bool(pdev->dev.of_node, "qcom,hdmi-audio-rx")) {
 		dev_info(&pdev->dev, "%s(): hdmi audio support present\n",
@@ -3067,6 +3132,57 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 		card->dai_link	= msm8974_common_dai_links;
 		card->num_links	= ARRAY_SIZE(msm8974_common_dai_links);
 	}
+	mutex_init(&cdc_mclk_mutex);
+	atomic_set(&prim_auxpcm_rsc_ref, 0);
+	atomic_set(&sec_auxpcm_rsc_ref, 0);
+	spdev = pdev;
+	ext_spk_amp_regulator = NULL;
+	msm8974_liquid_dock_dev = NULL;
+
+	ret = snd_soc_register_card(card);
+	if (ret == -EPROBE_DEFER)
+		goto err;
+	else if (ret) {
+		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
+			ret);
+		goto err;
+	}
+
+	/* Parse Primary AUXPCM info from DT */
+	ret = msm8974_dtparse_auxpcm(pdev, &pdata->pri_auxpcm_ctrl,
+					msm_prim_auxpcm_gpio_name);
+	if (ret) {
+		dev_err(&pdev->dev,
+		"%s: Primary Auxpcm pin data parse failed\n", __func__);
+		goto err;
+	}
+
+	/* Parse Secondary AUXPCM info from DT */
+	ret = msm8974_dtparse_auxpcm(pdev, &pdata->sec_auxpcm_ctrl,
+					msm_sec_auxpcm_gpio_name);
+	if (ret) {
+		dev_err(&pdev->dev,
+		"%s: Secondary Auxpcm pin data parse failed\n", __func__);
+		goto err;
+	}
+
+
+	ext_ult_lo_amp_gpio = of_get_named_gpio(pdev->dev.of_node,
+						prop_name_ult_lo_gpio, 0);
+	if (!gpio_is_valid(ext_ult_lo_amp_gpio)) {
+		dev_dbg(&pdev->dev,
+			"Couldn't find %s property in node %s, %d\n",
+			prop_name_ult_lo_gpio, pdev->dev.of_node->full_name,
+			ext_ult_lo_amp_gpio);
+	} else {
+		ret = gpio_request(ext_ult_lo_amp_gpio, "US_AMP_GPIO");
+		if (ret) {
+			dev_err(card->dev,
+				"%s: Failed to request US amp gpio %d\n",
+				__func__, ext_ult_lo_amp_gpio);
+			goto err;
+		}
+	}
 
 	pdata->us_euro_gpio = of_get_named_gpio(pdev->dev.of_node,
 				"qcom,us-euro-gpios", 0);
@@ -3085,6 +3201,7 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 		dev_err(&pdev->dev, "msm8974_prepare_us_euro failed (%d)\n",
 			ret);
 
+	/* the ldo of main mic bias */
 	mainmic_bias_gpio = of_get_named_gpio(pdev->dev.of_node,
 				"qcom,mainmic-bias-gpio", 0);
 	if (mainmic_bias_gpio < 0) {
@@ -3093,7 +3210,7 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 			pdev->dev.of_node->full_name);
 	} else {
 		pr_info("%s : mic bias = %d\n", __func__, mainmic_bias_gpio);
-		
+
 		ret = msm8974_prepare_mainmic();
 		if (ret) {
 			dev_err(&pdev->dev, "msm8974_prepare_mainmic failed (%d)\n",
@@ -3103,15 +3220,50 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 		}
 	}
 
+#if defined(CONFIG_MACH_KLTE_KOR) || defined(CONFIG_MACH_KLTE_JPN)
+	/* enable FSA8039 for jack detection */
+	pr_info("%s: Check to enable FSA8039\n", __func__);
+	fsa_en_gpio = of_get_named_gpio(pdev->dev.of_node,
+					"qcom,earjack-fsa_en-gpio", 0);
+	if (fsa_en_gpio < 0)
+		of_property_read_u32(pdev->dev.of_node,
+			"qcom,earjack-fsa_en-expander-gpio", &fsa_en_gpio);
+	if (fsa_en_gpio < 0)
+		pr_info("%s: No support FSA8039 chip\n", __func__);
+	else
+		pr_info("%s: earjack-fsa_en-gpio =%d\n",
+						__func__, fsa_en_gpio);
+
+	if (fsa_en_gpio > 0) {
+		ret = gpio_request(fsa_en_gpio, "fsa_en");
+		if (ret) {
+			pr_err("%s : gpio_request failed for %d, ret %d\n",
+				__func__, fsa_en_gpio, ret);
+			goto err;
+		}
+		gpio_direction_output(fsa_en_gpio, 1);
+	}
+#endif
+	/* the switch to connect the main mic to the codec or es705 */
+#if defined(CONFIG_MACH_KLTE_JPN)
+#if defined(CONFIG_MACH_KLTE_MAX77828_JPN)
 	micbias_en_msm_gpio = of_get_named_gpio(pdev->dev.of_node,
 				"qcom,micbias-en-msm-gpio", 0);
+#else
+	micbias_en_msm_gpio = of_get_named_gpio(pdev->dev.of_node,
+				"qcom,micbias-en-msm-jpn-gpio", 0);
+#endif
+#else
+	micbias_en_msm_gpio = of_get_named_gpio(pdev->dev.of_node,
+				"qcom,micbias-en-msm-gpio", 0);
+#endif
 	if (micbias_en_msm_gpio < 0) {
 		dev_err(&pdev->dev, "Looking up %s property in node %s failed",
 			"qcom,micbias-en-msm-gpio",
 			pdev->dev.of_node->full_name);
 	} else {
 		pr_info("%s : micbias en msm = %d\n", __func__, micbias_en_msm_gpio);
-		
+
 		ret = msm8974_prepare_micbias_to_codec();
 		if (ret) {
 			dev_err(&pdev->dev, "msm8974_prepare_micbias_to_codec failed (%d)\n",
@@ -3120,7 +3272,7 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 			micbias_en_msm_gpio = 0;
 		}
 	}
-	
+
 	spkamp_en_gpio = of_get_named_gpio(pdev->dev.of_node,
 				"qcom,spkamp-en-gpio", 0);
 	if (spkamp_en_gpio < 0) {
@@ -3129,7 +3281,7 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 			pdev->dev.of_node->full_name);
 	} else {
 		pr_info("%s : spkamp_en_ gpio = %d\n", __func__, spkamp_en_gpio);
-		
+
 		ret = msm8974_prepare_spkamp();
 		if (ret) {
 			dev_err(&pdev->dev, "msm8974_prepare_spkamp_en_ gpio failed (%d)\n",
@@ -3138,38 +3290,7 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 			spkamp_en_gpio = 0;
 		}
 	}
-	
-	lineout_en_gpio = of_get_named_gpio(pdev->dev.of_node,
-				"qcom,lineout-en-gpio", 0);
-	if (lineout_en_gpio < 0) {
-		dev_err(&pdev->dev, "Looking up %s property in node %s failed",
-			"qcom,lineout-en-gpio",
-			pdev->dev.of_node->full_name);
-	} else {
-		pr_info("%s : lineout_en_gpio = %d\n", __func__, lineout_en_gpio);
-		
-		ret = msm8974_prepare_lineout_switch();
-		if (ret) {
-			dev_err(&pdev->dev, "msm8974_prepare_lineout_switch failed (%d)\n",
-				ret);
-			gpio_free(lineout_en_gpio);
-			lineout_en_gpio = 0;
-		}
-	}	
-	
-	mutex_init(&cdc_mclk_mutex);
-	atomic_set(&prim_auxpcm_rsc_ref, 0);
-	atomic_set(&sec_auxpcm_rsc_ref, 0);
-	spdev = pdev;
-	ext_spk_amp_regulator = NULL;
-	msm8974_liquid_dock_dev = NULL;
 
-	ret = snd_soc_register_card(card);
-	if (ret) {
-		dev_err(&pdev->dev, "snd_soc_register_card failed (%d)\n",
-			ret);
-		goto err1;
-	}
 
 	ret = of_property_read_string(pdev->dev.of_node,
 			"qcom,prim-auxpcm-gpio-set", &auxpcm_pri_gpio_set);
@@ -3180,34 +3301,57 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 		goto err1;
 	}
 	if (!strcmp(auxpcm_pri_gpio_set, "prim-gpio-prim")) {
-		lpaif_pri_muxsel_virt_addr = ioremap(LPAIF_PRI_MODE_MUXSEL, 4);
+		pri_muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"lpaif_pri_mode_muxsel");
 	} else if (!strcmp(auxpcm_pri_gpio_set, "prim-gpio-tert")) {
-		lpaif_pri_muxsel_virt_addr = ioremap(LPAIF_TER_MODE_MUXSEL, 4);
+		pri_muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"lpaif_tert_mode_muxsel");
 	} else {
 		dev_err(&pdev->dev, "Invalid value %s for AUXPCM GPIO set\n",
 			auxpcm_pri_gpio_set);
 		ret = -EINVAL;
 		goto err1;
 	}
-	if (lpaif_pri_muxsel_virt_addr == NULL) {
-		pr_err("%s Pri muxsel virt addr is null\n", __func__);
-		ret = -EINVAL;
-		goto err1;
+	if (!pri_muxsel) {
+		dev_err(&pdev->dev, "MUX addr invalid for primary AUXPCM\n");
+			ret = -ENODEV;
+			goto err1;
+	} else {
+		pdata->pri_auxpcm_ctrl->mux = ioremap(pri_muxsel->start,
+						    resource_size(pri_muxsel));
+		if (pdata->pri_auxpcm_ctrl->mux == NULL) {
+			pr_err("%s Pri muxsel virt addr is null\n", __func__);
+			ret = -EINVAL;
+			goto err1;
+		}
 	}
 #ifdef CONFIG_PCM_ROUTE_VOICE_STUB
-	lpaif_sec_muxsel_virt_addr = ioremap(LPAIF_QUAD_MODE_MUXSEL, 4);
+      sec_muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"lpaif_quat_mode_muxsel");
 #else
-	lpaif_sec_muxsel_virt_addr = ioremap(LPAIF_SEC_MODE_MUXSEL, 4);
+	sec_muxsel = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"lpaif_sec_mode_muxsel");
 #endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
-	if (lpaif_sec_muxsel_virt_addr == NULL) {
+
+	if (!sec_muxsel) {
+		dev_err(&pdev->dev, "MUX addr invalid for secondary AUXPCM\n");
+		ret = -ENODEV;
+		goto err2;
+	}
+	pdata->sec_auxpcm_ctrl->mux = ioremap(sec_muxsel->start,
+					     resource_size(sec_muxsel));
+	if (pdata->sec_auxpcm_ctrl->mux == NULL) {
 		pr_err("%s Sec muxsel virt addr is null\n", __func__);
 		ret = -EINVAL;
-		goto err1;
+		goto err2;
 	}
 	return 0;
 
+err2:
+	iounmap(pdata->pri_auxpcm_ctrl->mux);
 err1:
-	gpio_free(ext_ult_lo_amp_gpio);
+	if (ext_ult_lo_amp_gpio >= 0)
+		gpio_free(ext_ult_lo_amp_gpio);
 	ext_ult_lo_amp_gpio = -1;
 err:
 	if (pdata->mclk_gpio > 0) {
@@ -3222,6 +3366,7 @@ err:
 		gpio_free(pdata->us_euro_gpio);
 		pdata->us_euro_gpio = 0;
 	}
+	mutex_destroy(&cdc_mclk_mutex);
 	devm_kfree(&pdev->dev, pdata);
 	return ret;
 }
@@ -3230,9 +3375,6 @@ static int __devexit msm8974_asoc_machine_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 	struct msm8974_asoc_mach_data *pdata = snd_soc_card_get_drvdata(card);
-#ifdef CONFIG_MACH_LT03EUR
-	int ret;
-#endif
 
 	if (ext_spk_amp_regulator)
 		regulator_put(ext_spk_amp_regulator);
@@ -3260,20 +3402,9 @@ static int __devexit msm8974_asoc_machine_remove(struct platform_device *pdev)
 		msm8974_liquid_dock_dev = NULL;
 	}
 
-	iounmap(lpaif_pri_muxsel_virt_addr);
-	iounmap(lpaif_sec_muxsel_virt_addr);
+	iounmap(pdata->pri_auxpcm_ctrl->mux);
+	iounmap(pdata->sec_auxpcm_ctrl->mux);
 	snd_soc_unregister_card(card);
-
-#ifdef CONFIG_MACH_LT03EUR
-	if(system_rev < 9) {
-		if(ldo22 != NULL) {
-			ret = regulator_disable(ldo22);
-			if (ret)
-				pr_err("enable ldo22 failed, rc=%d\n", ret);
-		}
-		ldo22 = NULL;
-	}
-#endif
 
 	return 0;
 }

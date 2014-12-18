@@ -47,6 +47,8 @@
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/wakelock.h>
+#include <linux/types.h>
+#include <asm/byteorder.h>
 #include <mach/board.h>
 #include <mach/msm_serial_hs_lite.h>
 #include <mach/msm_bus.h>
@@ -64,14 +66,15 @@ enum uart_core_type {
 	BLSP_HSUART,
 };
 
-#if defined(CONFIG_MACH_LT03EUR)
-enum uart_gpio_type {
-	FUNC_GPIO,
-	FUNC_UART,
-};
+#if defined(CONFIG_MACH_KLTE_JPN) && defined(CONFIG_SEC_FACTORY)
+#define CONFIG_DUMP_UART_PACKET_DISABLE 1
 #endif
 
+#if defined(CONFIG_DUMP_UART_PACKET_DISABLE)
+#define DUMP_UART_PACKET 0
+#else
 #define DUMP_UART_PACKET 1
+#endif
 #define FULL_DUMP_UART_PACKET 0
 
 #if DUMP_UART_PACKET
@@ -181,12 +184,17 @@ static inline void wait_for_xmitr(struct uart_port *port);
 static inline void msm_hsl_write(struct uart_port *port,
 				 unsigned int val, unsigned int off)
 {
-	iowrite32(val, port->membase + off);
+	__iowmb();
+	__raw_writel_no_log((__force __u32)cpu_to_le32(val),
+		port->membase + off);
 }
 static inline unsigned int msm_hsl_read(struct uart_port *port,
 		     unsigned int off)
 {
-	return ioread32(port->membase + off);
+	unsigned int v = le32_to_cpu((__force __le32)__raw_readl_no_log(
+		port->membase + off));
+	__iormb();
+	return v;
 }
 
 static unsigned int msm_serial_hsl_has_gsbi(struct uart_port *port)
@@ -531,6 +539,10 @@ static void msm_hsl_start_tx(struct uart_port *port)
 {
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 
+	if (port->suspended) {
+		pr_err("%s: System is in Suspend state\n", __func__);
+		return;
+	}
 	msm_hsl_port->imr |= UARTDM_ISR_TXLEV_BMSK;
 	msm_hsl_write(port, msm_hsl_port->imr,
 		regmap[msm_hsl_port->ver_id][UARTDM_IMR]);
@@ -1474,7 +1486,6 @@ static void wait_for_xmitr(struct uart_port *port)
 	struct msm_hsl_port *msm_hsl_port = UART_TO_MSM(port);
 	unsigned int vid = msm_hsl_port->ver_id;
 	int count = 0;
-
 	if (!(msm_hsl_read(port, regmap[vid][UARTDM_SR]) &
 			UARTDM_SR_TXEMT_BMSK)) {
 		while (!(msm_hsl_read(port, regmap[vid][UARTDM_ISR]) &
@@ -1485,8 +1496,13 @@ static void wait_for_xmitr(struct uart_port *port)
 			touch_nmi_watchdog();
 			cpu_relax();
 			if (++count == msm_hsl_port->tx_timeout) {
+				pr_info("%s: UART TX Stuck, Resetting TX\n",
+								__func__);
+				msm_hsl_write(port, RESET_TX,
+								regmap[vid][UARTDM_CR]);
+				mb();
 				dump_hsl_regs(port);
-				panic("MSM HSL wait_for_xmitr is stuck!");
+				break;
 			}
 		}
 		msm_hsl_write(port, CLEAR_TX_READY, regmap[vid][UARTDM_CR]);
@@ -1946,30 +1962,6 @@ static int __devexit msm_serial_hsl_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#if defined(CONFIG_MACH_LT03EUR)
-static void msm_serial_hsl_set_gpios(struct device *dev, enum uart_gpio_type type)
-{
-	struct platform_device *pdev = to_platform_device(dev);
-	struct msm_serial_hslite_platform_data *pdata;
-	pdata = pdev->dev.platform_data;
-	
-	if (pdata->config_gpio) {
-		switch (type) {
-		case FUNC_GPIO:
-			pr_err("set uart as gpio\n");
-			gpio_tlmm_config(GPIO_CFG(pdata->uart_tx_gpio, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
-			gpio_tlmm_config(GPIO_CFG(pdata->uart_rx_gpio, 0, GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
-			break;
-		case FUNC_UART:
-			pr_err("restore to uart\n");
-			gpio_tlmm_config(GPIO_CFG(pdata->uart_tx_gpio, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
-			gpio_tlmm_config(GPIO_CFG(pdata->uart_rx_gpio, 2, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);		
-			break;
-		}
-	}	
-}
-#endif
-	
 #ifdef CONFIG_PM
 static int msm_serial_hsl_suspend(struct device *dev)
 {
@@ -1987,9 +1979,6 @@ static int msm_serial_hsl_suspend(struct device *dev)
 			enable_irq_wake(port->irq);
 	}
 
-#if defined(CONFIG_MACH_LT03EUR)
-	msm_serial_hsl_set_gpios(dev, FUNC_GPIO);
-#endif
 	return 0;
 }
 
@@ -2008,10 +1997,6 @@ static int msm_serial_hsl_resume(struct device *dev)
 		if (is_console(port))
 			msm_hsl_init_clock(port);
 	}
-
-#if defined(CONFIG_MACH_LT03EUR)
-	msm_serial_hsl_set_gpios(dev, FUNC_UART);
-#endif
 
 	return 0;
 }

@@ -33,7 +33,7 @@
 
 /* Rx buffer size. i.e ST,TMPS,H1X,H1Y,H1Z*/
 #define SENSOR_DATA_SIZE		8
-#define AK8963C_DEFAULT_DELAY		200
+#define AK8963C_DEFAULT_DELAY		200000000LL
 
 #define I2C_M_WR                        0 /* for i2c Write */
 #define I2c_M_RD                        1 /* for i2c Read */
@@ -273,7 +273,7 @@ static void ak8963c_work_func(struct work_struct *work)
 	struct ak8963c_v mag;
 	struct ak8963c_p *data = container_of((struct delayed_work *)work,
 			struct ak8963c_p, work);
-	unsigned long delay = msecs_to_jiffies(atomic_read(&data->delay));
+	unsigned long delay = nsecs_to_jiffies(atomic_read(&data->delay));
 
 	ak8963c_read_mag_xyz(data, &mag);
 	input_report_rel(data->input, REL_X, mag.x);
@@ -293,7 +293,7 @@ static void ak8963c_set_enable(struct ak8963c_p *data, int enable)
 		if (pre_enable == 0) {
 			ak8963c_ecs_set_mode(data, AK8963C_CNTL1_SNG_MEASURE);
 			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
+				nsecs_to_jiffies(atomic_read(&data->delay)));
 			atomic_set(&data->enable, 1);
 		}
 	} else {
@@ -355,7 +355,7 @@ static ssize_t ak8963c_delay_store(struct device *dev,
 		return ret;
 	}
 
-	atomic_set(&data->delay, (unsigned int)delay);
+	atomic_set(&data->delay, (int64_t)delay);
 	pr_info("[SENSOR]: %s - poll_delay = %lld\n", __func__, delay);
 
 	return size;
@@ -759,7 +759,11 @@ static int ak8963c_setup_pin(struct ak8963c_p *data)
 			__func__, data->m_rst_n, ret);
 		goto exit_reset_gpio;
 	}
+
+	gpio_set_value(data->m_rst_n, 0);
+	udelay(10);
 	gpio_set_value(data->m_rst_n, 1);
+	udelay(100);
 
 	ret = gpio_request(data->m_sensor_int, "M_SENSOR_INT");
 	if (ret < 0) {
@@ -1006,7 +1010,7 @@ static int ak8963c_resume(struct device *dev)
 	if (atomic_read(&data->enable) == 1) {
 		ak8963c_ecs_set_mode(data, AK8963C_CNTL1_SNG_MEASURE);
 		schedule_delayed_work(&data->work,
-		msecs_to_jiffies(atomic_read(&data->delay)));
+		nsecs_to_jiffies(atomic_read(&data->delay)));
 	}
 
 	return 0;

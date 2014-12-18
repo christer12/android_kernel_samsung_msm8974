@@ -62,9 +62,7 @@
 #define GPIO_IF_CON_SENSE_18		76
 /*#define GPIO_TA_INT					29*/
 
-#ifndef CONFIG_OF
 #define MSM_FUELGAUGE_I2C_BUS_ID	19
-#endif
 
 static unsigned int sec_bat_recovery_mode;
 static sec_charging_current_t charging_current_table[] = {
@@ -103,7 +101,7 @@ static int sec_bat_adc_ap_read(unsigned int channel)
 
 	switch (channel) {
 	case SEC_BAT_ADC_CHANNEL_TEMP:
-		rc = qpnp_vadc_read(LR_MUX5_PU2_AMUX_THM2, &results);
+		rc = qpnp_vadc_read(NULL, LR_MUX5_PU2_AMUX_THM2, &results);
 		if (rc) {
 			pr_err("%s: Unable to read batt temperature rc=%d\n",
 				__func__, rc);
@@ -187,9 +185,16 @@ static void sec_bat_initial_check(void)
 		pr_err("%s: ta_int_gpio is 0 or not assigned yet\n", __func__);
 	} else {
 		if (cable_type == POWER_SUPPLY_TYPE_BATTERY &&
-			!gpio_get_value_cansleep(ta_int_gpio) && !mhl_connection_state()) {
-			pr_info("%s : VBUS IN\n", __func__);
+			!gpio_get_value_cansleep(ta_int_gpio)) {
+#if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
+			if (!mhl_connection_state()) {
+				value.intval = POWER_SUPPLY_TYPE_UARTOFF<<ONLINE_TYPE_MAIN_SHIFT;
+				pr_info("%s : VBUS IN\n", __func__);
+			}
+#else
 			value.intval = POWER_SUPPLY_TYPE_UARTOFF<<ONLINE_TYPE_MAIN_SHIFT;
+			pr_info("%s : VBUS IN\n", __func__);
+#endif
 		}
 		if (value.intval)
 				psy_do_property("battery", set,
@@ -223,7 +228,12 @@ int sec_bat_check_cable_callback(void)
 	if (ta_int_gpio == 0) {
 		pr_err("%s: ta_int_gpio is 0 or not assigned yet(cable_type(%d))\n",
 			__func__, current_cable_type);
-	} else if (!mhl_connection_state()){
+	}
+#if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
+	else if (!mhl_connection_state()) {
+#else
+	else {
+#endif
 		if (current_cable_type == POWER_SUPPLY_TYPE_BATTERY &&
 			!gpio_get_value_cansleep(ta_int_gpio)) {
 			pr_info("%s : VBUS IN\n", __func__);
@@ -313,8 +323,8 @@ static int sec_bat_get_cable_from_extended_cable_type(
 				break;
 			case ONLINE_POWER_TYPE_MHL_900:
 				cable_type = POWER_SUPPLY_TYPE_MISC;
-				charge_current_max = 700;
-				charge_current = 700;
+				charge_current_max = 500;
+				charge_current = 500;
 				break;
 			case ONLINE_POWER_TYPE_MHL_1500:
 				cable_type = POWER_SUPPLY_TYPE_MISC;
@@ -462,8 +472,8 @@ static int polling_time_table[] = {
 static struct battery_data_t samsung_battery_data[] = {
 	/* SDI battery data */
 	{
-		.Capacity = 0x4844, /* 9250mAh */
-		.low_battery_comp_voltage = 3600,
+		.Capacity = 0x4A8E,
+		.low_battery_comp_voltage = 3500,
 		.low_battery_table = {
 			/* range, slope, offset */
 			{-5000,	0,	0},	/* dummy for top limit */
@@ -481,35 +491,6 @@ static struct battery_data_t samsung_battery_data[] = {
 		.type_str = "SDI",
 	}
 };
-
-static void sec_bat_check_batt_id(void)
-{
-#if defined(CONFIG_SENSORS_QPNP_ADC_VOLTAGE)
-	int rc = -1, data =  -1;
-	struct qpnp_vadc_result results;
-
-	rc = qpnp_vadc_read(LR_MUX9_PU2_AMUX_THM5, &results);
-	if (rc) {
-		pr_err("%s: Unable to read batt id rc=%d\n",
-			__func__, rc);
-		return;
-	}
-	data = results.adc_code;
-
-	pr_info("%s: batt_id_adc = (%d)\n", __func__, data);
-
-	/* SDI: 28500, ATL: 31000 */
-	if (data > 31000) {
-		sec_battery_pdata.vendor = "ATL ATL";
-		samsung_battery_data[0].Capacity = 0x4958;
-		samsung_battery_data[0].type_str = "ATL";
-	}
-
-	pr_err("%s: batt_type(%s), batt_id(%d), cap(0x%x), type(%s)\n",
-		__func__, sec_battery_pdata.vendor, data,
-		samsung_battery_data[0].Capacity, samsung_battery_data[0].type_str);
-#endif
-}
 
 /* temp, same with board-8974-sec.c */
 #define IF_PMIC_IRQ_BASE	353 /* temp val */
@@ -565,7 +546,6 @@ sec_battery_platform_data_t sec_battery_pdata = {
 	.cable_adc_value = cable_adc_value_table,
 	.charging_current = charging_current_table,
 	.polling_time = polling_time_table,
-	.check_batt_id = sec_bat_check_batt_id,
 	/* NO NEED TO BE CHANGED */
 
 	.pmic_name = SEC_BATTERY_PMIC_NAME,
@@ -618,47 +598,18 @@ sec_battery_platform_data_t sec_battery_pdata = {
 
 	.temp_check_type = SEC_BATTERY_TEMP_CHECK_TEMP,
 	.temp_check_count = 1,
-
-#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_V2LTEEUR)
-	.temp_high_threshold_event = 550,
-	.temp_high_recovery_event = 410,
-	.temp_low_threshold_event = -40,
-	.temp_low_recovery_event = 10,
-	.temp_high_threshold_normal = 550,
-	.temp_high_recovery_normal = 410,
-	.temp_low_threshold_normal = -40,
-	.temp_low_recovery_normal = 10,
-	.temp_high_threshold_lpm = 550,
-	.temp_high_recovery_lpm = 410,
-	.temp_low_threshold_lpm = -40,
-	.temp_low_recovery_lpm = 10,
-#elif defined(CONFIG_MACH_VIENNAVZW)
-	.temp_high_threshold_event = 500,
-	.temp_high_recovery_event = 450,
-	.temp_low_threshold_event = -20,
-	.temp_low_recovery_event = 0,
-	.temp_high_threshold_normal = 500,
-	.temp_high_recovery_normal = 450,
-	.temp_low_threshold_normal = -20,
-	.temp_low_recovery_normal = 0,
-	.temp_high_threshold_lpm = 500,
-	.temp_high_recovery_lpm = 450,
-	.temp_low_threshold_lpm = -20,
-	.temp_low_recovery_lpm = 0,
-#else
-	.temp_high_threshold_event = 600,
+	.temp_high_threshold_event = 700,
 	.temp_high_recovery_event = 420,
 	.temp_low_threshold_event = -50,
 	.temp_low_recovery_event = 0,
-	.temp_high_threshold_normal = 500,
+	.temp_high_threshold_normal = 700,
 	.temp_high_recovery_normal = 420,
 	.temp_low_threshold_normal = -50,
 	.temp_low_recovery_normal = 0,
-	.temp_high_threshold_lpm = 500,
+	.temp_high_threshold_lpm = 700,
 	.temp_high_recovery_lpm = 420,
 	.temp_low_threshold_lpm = -50,
 	.temp_low_recovery_lpm = 0,
-#endif
 
 	.full_check_type = SEC_BATTERY_FULLCHARGED_FG_CURRENT,
 	.full_check_type_2nd = SEC_BATTERY_FULLCHARGED_TIME,
@@ -668,7 +619,7 @@ sec_battery_platform_data_t sec_battery_pdata = {
 	.full_condition_type = SEC_BATTERY_FULL_CONDITION_SOC |
 		SEC_BATTERY_FULL_CONDITION_NOTIMEFULL |
 		SEC_BATTERY_FULL_CONDITION_VCELL,
-	.full_condition_soc = 95,
+	.full_condition_soc = 97,
 	.full_condition_vcell = 4300,
 
 	.recharge_check_count = 2,
@@ -715,7 +666,6 @@ static struct platform_device sec_device_battery = {
 	.dev.platform_data = &sec_battery_pdata,
 };
 
-#ifndef CONFIG_OF
 struct platform_device sec_device_fgchg = {
 	.name = "i2c-gpio",
 	.id = MSM_FUELGAUGE_I2C_BUS_ID,
@@ -734,12 +684,9 @@ static struct i2c_board_info sec_brdinfo_fgchg[] __initdata = {
 		.platform_data	= &sec_battery_pdata,
 	},
 };
-#endif
 
 static struct platform_device *samsung_battery_devices[] __initdata = {
-#ifndef CONFIG_OF
 	&sec_device_fgchg,
-#endif
 	&sec_device_battery,
 };
 
@@ -782,12 +729,10 @@ void __init samsung_init_battery(void)
 		samsung_battery_devices,
 		ARRAY_SIZE(samsung_battery_devices));
 
-#ifndef CONFIG_OF
 	i2c_register_board_info(
 		MSM_FUELGAUGE_I2C_BUS_ID,
 		sec_brdinfo_fgchg,
 		ARRAY_SIZE(sec_brdinfo_fgchg));
-#endif
 }
 
 #endif

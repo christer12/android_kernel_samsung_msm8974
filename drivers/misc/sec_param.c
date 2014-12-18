@@ -142,7 +142,12 @@ bool sec_get_param(enum sec_param_index index, void *value)
 	case param_index_boot_alarm_value_h:
 		memcpy(value, &(param_data->boot_alarm_value_h), sizeof(unsigned int));
 		break;
-#endif	
+#endif
+#ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
+	case param_index_normal_poweroff:
+		memcpy(&(param_data->normal_poweroff), value, sizeof(unsigned int));
+		break;
+#endif
 	default:
 		return false;
 	}
@@ -203,7 +208,12 @@ bool sec_set_param(enum sec_param_index index, void *value)
 	case param_index_boot_alarm_value_h:
 		memcpy(&(param_data->boot_alarm_value_h), value, sizeof(unsigned int));
 		break;
-#endif	
+#endif
+#ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
+	case param_index_normal_poweroff:
+		memcpy(&(param_data->normal_poweroff), value, sizeof(unsigned int));
+		break;
+#endif
 	default:
 		return false;
 	}
@@ -280,7 +290,6 @@ int sec_param_sysfs_init(void)
 		pr_err("Failed to create device file!(%s)!\n",
 				dev_attr_movinand_checksum_done.attr.name);
 		ret = -1;
-		goto failed_create_dev_file1;
 	}
 
 	if (device_create_file(sec_param_dev,
@@ -288,19 +297,12 @@ int sec_param_sysfs_init(void)
 		pr_err("Failed to create device file!(%s)!\n",
 				dev_attr_movinand_checksum_pass.attr.name);
 		ret = -1;
-		goto failed_create_dev_file2;
 	}
-
-failed_create_dev_file2:
-	device_remove_file(sec_param_dev, &dev_attr_movinand_checksum_done);
-
-failed_create_dev_file1:
-	device_destroy(sec_param_class,0);
+failed_create_class:
+	return ret;
 
 failed_create_dev:
 	class_destroy(sec_param_class);
-
-failed_create_class:
 	return ret;
 }
 module_init(sec_param_sysfs_init);

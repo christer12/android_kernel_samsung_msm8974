@@ -37,8 +37,6 @@
 #elif defined(CONFIG_CHARGER_BQ24190) || \
 		defined(CONFIG_CHARGER_BQ24191)
 #include <linux/battery/charger/bq24190_charger.h>
-#elif defined(CONFIG_CHARGER_BQ24260)
-#include <linux/battery/charger/bq24260_charger.h>
 #elif defined(CONFIG_CHARGER_NCP1851)
 #include <linux/battery/charger/ncp1851_charger.h>
 #elif defined(CONFIG_CHARGER_TSU8111)
@@ -47,6 +45,20 @@
 #include <linux/battery/charger/max77693_charger.h>
 #elif defined(CONFIG_CHARGER_MAX77803)
 #include <linux/battery/charger/max77803_charger.h>
+#elif defined(CONFIG_CHARGER_MAX77804K)
+#include <linux/battery/charger/max77804k_charger.h>
+#elif defined(CONFIG_CHARGER_MAX77888)
+#include <linux/battery/charger/max77888_charger.h>
+#elif defined(CONFIG_CHARGER_MAX77823)
+#include <linux/battery/charger/max77823_charger.h>
+#endif
+
+#if defined(CONFIG_CHARGER_BQ24260)
+#include <linux/battery/charger/bq24260_charger.h>
+#endif
+
+#if defined(CONFIG_CHARGER_SMB1357)
+#include <linux/battery/charger/smb1357_charger.h>
 #endif
 
 struct sec_charger_info {
@@ -57,6 +69,7 @@ struct sec_charger_info {
 
 	int cable_type;
 	int status;
+	int siop_level;
 	bool is_charging;
 
 	/* charging current : + charging, - OTG */
@@ -67,6 +80,8 @@ struct sec_charger_info {
 	int reg_addr;
 	int reg_data;
 	int irq_base;
+	bool is_slow_charging;
+	struct delayed_work slow_work;
 };
 
 bool sec_hal_chg_init(struct i2c_client *);

@@ -847,9 +847,16 @@ static bool wacom_i2c_coord_range(struct wacom_i2c *wac_i2c, s16 *x, s16 *y)
 }
 
 #ifdef WACOM_USE_SOFTKEY
+#if defined(CONFIG_SEC_VIENNA_PROJECT)
+static int keycode[] = {
+	KEY_RECENT, KEY_BACK,
+};
+#else
 static int keycode[] = {
 	KEY_MENU, KEY_BACK,
 };
+#endif
+
 void wacom_i2c_softkey(struct wacom_i2c *wac_i2c, s16 key, s16 pressed)
 {
 	
@@ -1106,7 +1113,7 @@ int wacom_i2c_coord(struct wacom_i2c *wac_i2c)
 				       "%s: is pressed(%d,%d,%d)(0x%x)\n",
 				       __func__, x, y, pressure, wac_i2c->tool);
 #else
-				dev_dbg(&wac_i2c->client->dev,
+				dev_info(&wac_i2c->client->dev,
 						"%s: pressed\n",
 						__func__);
 #endif
@@ -1121,7 +1128,7 @@ int wacom_i2c_coord(struct wacom_i2c *wac_i2c)
 				       "%s: is released(%d,%d,%d)(0x%x)\n",
 				       __func__, x, y, pressure, wac_i2c->tool);
 #else
-				dev_dbg(&wac_i2c->client->dev,
+				dev_info(&wac_i2c->client->dev,
 						"%s: released\n",
 						__func__);
 #endif

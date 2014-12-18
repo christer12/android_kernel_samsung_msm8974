@@ -40,7 +40,7 @@
 #define BMA280_BW_125HZ                 0x0C
 #define BMA280_BW_250HZ                 0x0D
 #define BMA280_BW_500HZ                 0x0E
-#define BMA280_BW_1000HZ                0x0F
+#define BMA280_No_Filter                0x0F
 
 /* Data Register */
 #define BMA280_CHIP_ID_REG              0x00

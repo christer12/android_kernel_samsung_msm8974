@@ -9,6 +9,14 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
+/****************************** Revision History ******************************************
+ *CH# Product		author		Description				Date
+ *-----------------------------------------------------------------------------------------
+ *01 MSM8x26 & MSM8926  nc.chaudhary	Modified the probe switch-case for	05-Mar-2014
+ *	All				spmi_for_each_container_dev battery
+ *					present IRQ.
+ ******************************************************************************************
+ */
 
 #include <linux/module.h>
 #include <linux/init.h>
@@ -20,6 +28,11 @@
 #include <linux/spmi.h>
 #include <linux/spinlock.h>
 #include <linux/spmi.h>
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+#include <linux/qpnp/qpnp-adc.h>
+#include <linux/power_supply.h>
+#include <linux/battery/sec_charging_common.h>
+#endif
 
 #ifdef CONFIG_RTC_AUTO_PWRON
 #include <linux/reboot.h>
@@ -46,6 +59,10 @@ extern int poweroff_charging;
 #define REG_OFFSET_RTC_WRITE	0x40
 #define REG_OFFSET_RTC_CTRL	0x46
 #define REG_OFFSET_RTC_READ	0x48
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+#define INT_ADD			0x10
+#define BATT_PRES_IRQ		BIT(0)
+#endif
 #define REG_OFFSET_PERP_SUBTYPE	0x05
 
 /* RTC_CTRL register bit fields */
@@ -57,21 +74,43 @@ extern int poweroff_charging;
 /* RTC/ALARM peripheral subtype values */
 #define RTC_PERPH_SUBTYPE       0x1
 #define ALARM_PERPH_SUBTYPE     0x3
+#define RTC_BATT_PRES_IRQ	0x33
 
 #define NUM_8_BIT_RTC_REGS	0x4
 
 #define TO_SECS(arr)		(arr[0] | (arr[1] << 8) | (arr[2] << 16) | \
 							(arr[3] << 24))
 
+/* Module parameter to control power-on-alarm */
+static bool poweron_alarm;
+module_param(poweron_alarm, bool, 0644);
+MODULE_PARM_DESC(poweron_alarm, "Enable/Disable power-on alarm");
+
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+static enum power_supply_property pm8926_battery_props[] = {
+        POWER_SUPPLY_PROP_PRESENT,
+};
+#endif
+
 /* rtc driver internal structure */
 struct qpnp_rtc {
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	bool battery_present;
+#endif
 	u8  rtc_ctrl_reg;
 	u8  alarm_ctrl_reg1;
 	u16 rtc_base;
 	u16 alarm_base;
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	u16 bat_base;
+#endif
 	u32 rtc_write_enable;
 	u32 rtc_alarm_powerup;
 	int rtc_alarm_irq;
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	int bat_pres_irq;
+	struct power_supply psy_pm8926;
+#endif
 	struct device *rtc_dev;
 	struct rtc_device *rtc;
 	struct spmi_device *spmi;
@@ -88,6 +127,7 @@ struct qpnp_rtc {
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
 static struct workqueue_struct*	sapa_workq;
 static struct delayed_work		sapa_load_param;
+static struct delayed_work		sapa_reboot_work;
 static struct wake_lock			sapa_wakelock;
 static int kparam_loaded, shutdown_loaded;
 #endif
@@ -450,7 +490,16 @@ rtc_rw_fail:
 }
 
 #ifdef CONFIG_RTC_AUTO_PWRON
+static void sapa_reboot(struct work_struct *work)
+{
+	//machine_restart(NULL);
+	kernel_restart(NULL);
+	//panic("Test panic");
+}
+
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
+static struct device *			sapa_rtc_dev;
+static int qpnp_rtc0_resetbootalarm(struct device *dev);
 static void sapa_load_kparam(struct work_struct *work)
 {
 	int temp1, temp2, temp3;
@@ -475,6 +524,8 @@ static void sapa_load_kparam(struct work_struct *work)
 		rtc_time_to_tm( pwron_time, &sapa_saved_time.time );
 		print_time("[SAPA] saved_time", &sapa_saved_time.time, pwron_time);
 	}
+	/* Bug fix : USB cable or IRQ is disabled in LPM chg */
+	qpnp_rtc0_resetbootalarm(sapa_rtc_dev);
 }
 #endif
 
@@ -792,9 +843,7 @@ static irqreturn_t qpnp_alarm_trigger(int irq, void *dev_id)
 			wake_lock(&sapa_wakelock);
 			rtc_dd->alarm_irq_flag = true;
 			pr_info("%s [SAPA] Restart since RTC \n",__func__);
-			//machine_restart(NULL);
-			//kernel_restart(NULL);
-			//panic("Test panic");
+			queue_delayed_work(sapa_workq, &sapa_reboot_work, (1*HZ));
 		}
 		else {
 			pr_info("%s [SAPA] not power on alarm.\n", __func__);
@@ -808,10 +857,92 @@ rtc_alarm_handled:
 	return IRQ_HANDLED;
 }
 
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+static int pm8926_bat_set_property(struct power_supply *psy,
+                                enum power_supply_property psp,
+                                const union power_supply_propval *val)
+{
+        struct qpnp_rtc *rtc_dd =
+                container_of(psy, struct qpnp_rtc, psy_pm8926);
+
+       switch (psp) {
+       case POWER_SUPPLY_PROP_PRESENT:
+                rtc_dd->battery_present = val->intval;
+                pr_err("rtc: battery_present = %d \n",rtc_dd->battery_present);
+
+	default:
+                return -EINVAL;
+        }
+
+        return 0;
+
+}
+
+static int pm8926_bat_get_property(struct power_supply *psy,
+                                enum power_supply_property psp,
+                                union power_supply_propval *val)
+{
+        struct qpnp_rtc *rtc_dd =
+                container_of(psy, struct qpnp_rtc, psy_pm8926);
+
+        switch (psp) {
+        case POWER_SUPPLY_PROP_PRESENT:
+                val->intval = rtc_dd->battery_present;
+		pr_err("rtc: battery_present = %d \n",rtc_dd->battery_present);
+                break;
+
+        default:
+                return -EINVAL;
+        }
+
+        return 0;
+
+}
+
+
+static irqreturn_t qpnp_batt_pres_irq_handler(int irq, void *dev_id)
+{
+	struct qpnp_rtc *rtc_dd = dev_id;
+	union power_supply_propval val;
+	u8 reg;
+	int rc;
+
+	pr_info("##############################\n");
+	pr_info("%s [SAPA] BAT_PRES TRIGGER\n",__func__);
+	pr_info("##############################\n");
+
+	rc = qpnp_read_wrapper(rtc_dd, &reg,
+				rtc_dd->bat_base + INT_ADD, 1);
+	if (rc < 0) {
+		pr_err("%s qpnp read failed!\n",__func__);
+	}
+
+	reg = reg & BATT_PRES_IRQ;
+
+	if(reg){
+		pr_info("%s [SAPA] BATTERY PRESENT\n",__func__);
+		rtc_dd->battery_present = 1;
+	}else{
+		pr_info("%s [SAPA] BATTERY ABSENT\n",__func__);
+		rtc_dd->battery_present = 0;
+	}
+
+	val.intval = rtc_dd->battery_present;
+
+	psy_do_property("battery", set,
+                                POWER_SUPPLY_PROP_PRESENT, val);
+
+	return IRQ_HANDLED;
+}
+#endif
+
 static int __devinit qpnp_rtc_probe(struct spmi_device *spmi)
 {
 	int rc;
 	u8 subtype;
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	u8 reg;
+#endif
 	struct qpnp_rtc *rtc_dd;
 	struct resource *resource;
 	struct spmi_resource *spmi_resource;
@@ -888,10 +1019,21 @@ static int __devinit qpnp_rtc_probe(struct spmi_device *spmi)
 				goto fail_rtc_enable;
 			}
 			break;
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+		case RTC_BATT_PRES_IRQ:
+			rtc_dd->bat_base = resource->start;
+			rtc_dd->bat_pres_irq = spmi_get_irq(spmi, spmi_resource, 0);
+			break;
+#else
+		case RTC_BATT_PRES_IRQ:
+			break;
+#endif
 		default:
 			dev_err(&spmi->dev, "Invalid peripheral subtype\n");
 			rc = -EINVAL;
 			goto fail_rtc_enable;
+
+
 		}
 	}
 
@@ -918,6 +1060,11 @@ static int __devinit qpnp_rtc_probe(struct spmi_device *spmi)
 		goto fail_rtc_enable;
 	}
 
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	reg = 0xFF;
+	spmi_ext_register_writel(rtc_dd->spmi->ctrl, rtc_dd->spmi->sid, rtc_dd->bat_base + 0x48, &reg, 1);
+#endif
+
 	if (rtc_dd->rtc_write_enable == true)
 		qpnp_rtc_ops.set_time = qpnp_rtc_set_time;
 
@@ -940,9 +1087,21 @@ static int __devinit qpnp_rtc_probe(struct spmi_device *spmi)
 	if (rc) {
 		dev_err(&spmi->dev, "Request IRQ failed (%d)\n", rc);
 		goto fail_req_irq;
+        }
+
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	rc = request_any_context_irq(rtc_dd->bat_pres_irq,
+				 qpnp_batt_pres_irq_handler, IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING
+				| IRQF_SHARED | IRQF_ONESHOT,
+				"batt-pres", rtc_dd);
+	if (rc) {
+		dev_err(&spmi->dev, "Request IRQ BATT_PRES failed (%d)\n", rc);
+		goto fail_req_irq;
 	}
+#endif
 
 #ifdef CONFIG_RTC_AUTO_PWRON_PARAM
+	sapa_rtc_dev = rtc_dd->rtc_dev;
 	sapa_workq = create_singlethread_workqueue("pwron_alarm_resume");
 	if (sapa_workq == NULL) {
 		pr_err("[SAPA] pwron_alarm work creating failed (%d)\n", rc);
@@ -950,12 +1109,35 @@ static int __devinit qpnp_rtc_probe(struct spmi_device *spmi)
 	wake_lock_init(&sapa_wakelock, WAKE_LOCK_SUSPEND, "alarm_trigger");
 #endif
 
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	/* Initialize battery present */
+	rtc_dd->battery_present = 1;
+
+	rtc_dd->psy_pm8926.name = "pm8926",
+        rtc_dd->psy_pm8926.type = POWER_SUPPLY_TYPE_BATTERY,
+        rtc_dd->psy_pm8926.properties = pm8926_battery_props,
+        rtc_dd->psy_pm8926.num_properties = ARRAY_SIZE(pm8926_battery_props),
+        rtc_dd->psy_pm8926.get_property = pm8926_bat_get_property,
+        rtc_dd->psy_pm8926.set_property = pm8926_bat_set_property,
+
+	rc = power_supply_register(&spmi->dev, &rtc_dd->psy_pm8926);
+        if (rc) {
+		dev_err(&spmi->dev,
+                        "%s: Failed to Register psy_pm8926 \n", __func__);
+                goto fail_supply_unreg_pm8926;
+        }
+
+	dev_dbg(&spmi->dev,"Power-supply pm8926 registered successfully \n");
+#endif
+
 #ifdef CONFIG_SEC_PM
 	wake_lock_init(&resume_wakelock, WAKE_LOCK_SUSPEND, "resume_wakelock");
 #endif
-
 	device_init_wakeup(&spmi->dev, 1);
 	enable_irq_wake(rtc_dd->rtc_alarm_irq);
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	enable_irq_wake(rtc_dd->bat_pres_irq);
+#endif
 
 	dev_dbg(&spmi->dev, "Probe success !!\n");
 
@@ -965,13 +1147,18 @@ static int __devinit qpnp_rtc_probe(struct spmi_device *spmi)
 	/* To read saved power on alarm time */
 	if ( poweroff_charging ) {
 		INIT_DELAYED_WORK(&sapa_load_param, sapa_load_kparam);
-		queue_delayed_work(sapa_workq, &sapa_load_param, (10*HZ));
+		INIT_DELAYED_WORK(&sapa_reboot_work, sapa_reboot);
+		queue_delayed_work(sapa_workq, &sapa_load_param, (15*HZ));
 	}
 #endif
 	return 0;
 
 fail_req_irq:
 	rtc_device_unregister(rtc_dd->rtc);
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+fail_supply_unreg_pm8926:
+	power_supply_unregister(&rtc_dd->psy_pm8926);
+#endif
 fail_rtc_enable:
 	dev_set_drvdata(&spmi->dev, NULL);
 
@@ -1045,6 +1232,9 @@ static int __devexit qpnp_rtc_remove(struct spmi_device *spmi)
 
 	device_init_wakeup(&spmi->dev, 0);
 	free_irq(rtc_dd->rtc_alarm_irq, rtc_dd);
+#if defined(CONFIG_PM8926_BATTERY_CHECK_INTERRUPT)
+	free_irq(rtc_dd->bat_pres_irq, rtc_dd);
+#endif
 	rtc_device_unregister(rtc_dd->rtc);
 	dev_set_drvdata(&spmi->dev, NULL);
 
@@ -1096,7 +1286,7 @@ static void qpnp_rtc_shutdown(struct spmi_device *spmi)
 	struct qpnp_rtc *rtc_dd = dev_get_drvdata(&spmi->dev);
 	bool rtc_alarm_powerup = rtc_dd->rtc_alarm_powerup;
 
-	if (!rtc_alarm_powerup) {
+	if (!rtc_alarm_powerup && !poweron_alarm) {
 		spin_lock_irqsave(&rtc_dd->alarm_ctrl_lock, irq_flags);
 		dev_dbg(&spmi->dev, "Disabling alarm interrupts\n");
 

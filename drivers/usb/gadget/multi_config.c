@@ -32,12 +32,15 @@ static int interfaceCount;
  */
 unsigned set_config_number(unsigned num)
 {
-	if (num != 0)
+	if (is_multi_configuration()){
 		USB_DBG_ESS("multi config_num=%d(zero base)\n", num);
-	else
-		USB_DBG_ESS("single config\n");
+		if(num < MAX_MULTI_CONFIG_NUM)
+			multi = num;	/* save config number from Host request */
+	} else {
+		USB_DBG_ESS("single config num=%d\n", num);
+		multi = 0; /* single config */
+	}
 
-	multi = num;	/* save config number from Host request */
 	return 0;	/* always return 0 config */
 }
 
@@ -259,13 +262,12 @@ void set_string_mode(u16 w_length)
 		USB_DBG("initialize string mode\n");
 		stringMode = OTHER_REQUEST;
 	}
-	printk(KERN_INFO "usb: %s %d \n", __func__, w_length);
 }
 
 /* Description  : Set config mode
  *		  This mode will be used for deciding other interface.
  * Parameter    : u16 w_length
- *		- 4 means MAC request
+ *		- 4 means MAC request 
  *		- Windows and Linux PC always request Maxconfig size.
  */
 void set_config_mode(u16 w_length)
@@ -277,7 +279,6 @@ void set_config_mode(u16 w_length)
 		USB_DBG("initialize string mode\n");
 		configMode = OTHER_REQUEST;
 	}
-	printk(KERN_INFO "usb: %s %d \n", __func__, w_length);
 }
 
 /* Description  : Get Host OS type

@@ -308,7 +308,7 @@ UINT rtvTDMB_GetAntennaLevel(U32 dwCER)
 	UINT nPrevLevel = g_nTdmbPrevAntennaLevel;
 	const UINT aAntLvlTbl[TDMB_MAX_NUM_ANTENNA_LEVEL] = {
 		/*       0    1    2    3   4    5    6 */
-			900, 600, 300, 100, 30, 10, 0};
+			900, 800, 700, 600, 500, 400, 0};
 
 	if (dwCER == TDMB_MAX_CER_VALUE)
 		return 0;
@@ -1435,10 +1435,13 @@ static void tdmb_InitDemod(void)
 	rtvOEM_ConfigureInterrupt();
 }
 
-INT rtvTDMB_Initialize(void)
+INT rtvTDMB_Initialize(unsigned long interface)
 {
 	INT nRet;
 
+#if defined(RTV_IF_SPI)
+	mtv319_set_port_if(interface);
+#endif
 	g_nOpenedSubChNum = 0;
 	g_nRegSubChArrayIdxBits = 0x0;
 

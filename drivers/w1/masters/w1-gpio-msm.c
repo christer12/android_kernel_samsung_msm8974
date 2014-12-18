@@ -20,6 +20,8 @@
 #include <linux/of.h>
 #include <linux/delay.h>
 
+#include <linux/input.h>
+
 #include "../w1.h"
 #include "../w1_int.h"
 
@@ -195,13 +197,13 @@ static u8 w1_gpio_read_bit(void *data)
 	/* sample timing is critical here */
 	write_bit(data, 0);
 	write_bit(data, 1);
-	
+
 	result = w1_gpio_read_bit_val(data);
 
 	(pdata->slave_speed == 0)? w1_delay(55) : w1_delay(8);
 
 	spin_unlock_irqrestore(&w1_gpio_msm_lock, irq_flags);
-	
+
 	return result & 0x1;
 }
 
@@ -334,9 +336,18 @@ static u8 w1_gpio_reset_bus(void *data)
 	 */
 	/* w1_delay(410); min required time */
 	(pdata->slave_speed == 0)? msleep(1) : w1_delay(40);
-	
+
 	spin_unlock_irqrestore(&w1_gpio_msm_lock, irq_flags);
 	return result;
+}
+
+static int hall_open(struct input_dev *input)
+{
+	return 0;
+}
+
+static void hall_close(struct input_dev *input)
+{
 }
 
 static struct of_device_id w1_gpio_msm_dt_ids[] = {
@@ -371,6 +382,7 @@ static int w1_gpio_msm_probe(struct platform_device *pdev)
 {
 	struct w1_bus_master *master;
 	struct w1_gpio_msm_platform_data *pdata;
+	struct input_dev *input;
 	int err;
 
 	printk(KERN_ERR "\nw1_gpio_msm_probe start\n");
@@ -396,12 +408,42 @@ static int w1_gpio_msm_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	/* add for sending uevent */
+	input = input_allocate_device();
+	if (!input) {
+		err = -ENODEV;
+		goto free_master;
+		/* need to change*/
+	}
+	master->input = input;
+
+	input_set_drvdata(input, master);
+
+	input->name = "w1";
+	input->phys = "w1";
+	input->dev.parent = &pdev->dev;
+
+	input->evbit[0] |= BIT_MASK(EV_SW);
+	input_set_capability(input, EV_SW, SW_W1);
+
+	input->open = hall_open;
+	input->close = hall_close;
+
+	/* Enable auto repeat feature of Linux input subsystem */
+	__set_bit(EV_REP, input->evbit);
+
+	err = input_register_device(input);
+	if(err) {
+		dev_err(&pdev->dev, "input_register_device failed!\n");
+		goto free_input;
+	}
+
 	spin_lock_init(&w1_gpio_msm_lock);
 
 	err = gpio_request(pdata->pin, "w1");
 	if (err) {
 		dev_err(&pdev->dev, "gpio_request (pin) failed\n");
-		goto free_master;
+		goto free_input;
 	}
 
 	if (gpio_is_valid(pdata->ext_pullup_enable_pin)) {
@@ -454,6 +496,8 @@ free_gpio_ext_pu:
 		gpio_free(pdata->ext_pullup_enable_pin);
 free_gpio:
 	gpio_free(pdata->pin);
+free_input:
+	kfree(input);
 free_master:
 	kfree(master);
 
@@ -469,7 +513,7 @@ static int w1_gpio_msm_remove(struct platform_device *pdev)
 		pdata->enable_external_pullup(0);
 
 	if (gpio_is_valid(pdata->ext_pullup_enable_pin))
- 		gpio_set_value_msm(pdata->ext_pullup_enable_pin, 0);
+		gpio_set_value_msm(pdata->ext_pullup_enable_pin, 0);
 
 	w1_remove_master_device(master);
 	gpio_free(pdata->pin);
@@ -486,7 +530,7 @@ static int w1_gpio_msm_suspend(struct platform_device *pdev, pm_message_t state)
 
 	if (pdata->enable_external_pullup)
 		pdata->enable_external_pullup(0);
-	
+
 	gpio_tlmm_config(GPIO_CFG(pdata->pin, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
 	gpio_direction_input(pdata->pin);
 	return 0;
@@ -531,7 +575,7 @@ static void __exit w1_gpio_msm_exit(void)
 	platform_driver_unregister(&w1_gpio_msm_driver);
 }
 
-module_init(w1_gpio_msm_init);
+late_initcall(w1_gpio_msm_init);
 module_exit(w1_gpio_msm_exit);
 
 MODULE_DESCRIPTION("MSM GPIO w1 bus master driver");

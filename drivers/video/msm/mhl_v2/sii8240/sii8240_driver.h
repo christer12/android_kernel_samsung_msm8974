@@ -29,6 +29,10 @@
 #include <linux/switch.h>
 #include <linux/wakelock.h>
 
+#ifdef CONFIG_EXTCON
+#include <linux/extcon.h>
+#endif
+
 #include "sii8240_rcp.h"
 #include "../../mdss/mdss_hdmi_util.h"
 
@@ -214,8 +218,8 @@
  * while sending SET_INT, use these Offset[0x21...0x23]. */
 
 /* 0xC8: CBUS Device Capability Registers */
-#define MHL_VER_MAJOR			(1<<1) /* Most Significant 4-bits */
-#define MHL_VER_MINOR			(1<<0) /* Least significant 4-bits */
+#define MHL_VER_MAJOR			(CONFIG_MHL_VERSION >> 4) /* Most Significant 4-bits */
+#define MHL_VER_MINOR			(CONFIG_MHL_VERSION & 0x0F) /* Least significant 4-bits */
 
 #define DEV_TYPE_SOURCE			0x02
 #define DEV_TYPE_SINK			0x01
@@ -431,7 +435,7 @@
 /* Host Device capabilities values */
 #define DEV_STATE			0
 /* MHL Version 1.2 */
-#define DEV_MHL_VERSION			((MHL_VER_MAJOR<<4) | MHL_VER_MINOR)
+#define DEV_MHL_VERSION			CONFIG_MHL_VERSION
 /* A source kind of device which will not provide power across VBUS */
 #define DEV_CAT_SOURCE_NO_PWR		(DEV_POW_SUPPLY | DEV_TYPE_SOURCE)
 #define DEV_ADOPTER_ID_H		0x01	/* Samsung's Adopter ID? */
@@ -958,7 +962,19 @@ struct mhl_timing {
 	u8 avi_infoframe[HDMI_VFRMT_MAX];
 	u8 d_format[HDMI_VFRMT_MAX];
 };
+
 struct sii8240_data;
+#ifdef CONFIG_EXTCON
+struct sec_mhl_cable {
+	struct work_struct work;
+	struct notifier_block nb;
+	struct extcon_specific_cable_nb extcon_nb;
+	struct extcon_dev *edev;
+	enum extcon_cable_name cable_type;
+	unsigned long cable_state;
+};
+#endif
+
 struct sii8240_data {
 	struct sii8240_platform_data            *pdata;
 	/* single device entry-point,e.g. /dev/mhl; all the factory-related
@@ -968,8 +984,9 @@ struct sii8240_data {
 	/* Notifier block for registering MHL callback function.The callback
 	* function will serve as entry-point into the MHL driver from Board
 	* file or connector drivers(USB-type, 30-pin or 11-pin) */
+#ifndef CONFIG_EXTCON
 	struct notifier_block                   mhl_nb;
-
+#endif
 	struct mutex                            lock;
 	struct mutex                            msc_lock;
 	struct mutex				restart_lock;
@@ -1047,8 +1064,9 @@ struct sii8240_data {
 
 	bool				tmds_enable;
 	bool				ap_hdcp_success;
-
+	void (*mhl_ddc_bypass)(bool bypass_on);
 };
+
 uint8_t *sii8240_get_mhl_edid(void);
 u8 sii8240_mhl_get_version(void);
 u8 sii8240_support_packedpixel(void);

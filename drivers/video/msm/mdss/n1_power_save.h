@@ -1,5 +1,5 @@
-#ifndef __V1_POWER_SAVE_H__
-#define __V1_POWER_SAVE_H__
+#ifndef __N1_POWER_SAVE_H__
+#define __N1_POWER_SAVE_H__
 
 #define TCON_AUTO_BR_MAX	2
 #define TCON_LEVEL_MAX	3
@@ -156,7 +156,7 @@ struct tcon_reg_info TCON_BLACK_IMAGE_BLU_ENABLE = {
 		},
 };
 
-struct tcon_reg_info *v1_tune_value[TCON_AUTO_BR_MAX][TCON_LEVEL_MAX][TCON_MODE_MAX] = {
+struct tcon_reg_info *power_save_tune_value[TCON_AUTO_BR_MAX][TCON_LEVEL_MAX][TCON_MODE_MAX] = {
 		/*
 			UI_APP = 0,
 			VIDEO_APP,

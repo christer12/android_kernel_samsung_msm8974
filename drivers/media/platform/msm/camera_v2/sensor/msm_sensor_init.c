@@ -121,10 +121,15 @@ char cam_fw_ver[25] = "NULL NULL\n"; //"D13QSGF01OA D13QSGF01OA\n"
 static ssize_t back_camera_firmware_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
+	|| defined(CONFIG_MACH_KS01LGT)
 #if defined(CONFIG_MACH_KS01EUR)
 	char cam_fw[] = "O13Q0SAGC01 O13Q0SAGC01\n";/*Camsys_module,13mega_pixel,Qualcomm_isp,Sony_sensor*/
 	return snprintf(buf, sizeof(cam_fw), "%s", cam_fw);
+#else
+	CDBG("[FW_DBG] cam_fw_ver : %s\n", cam_fw_ver);
+	return snprintf(buf, sizeof(cam_fw_ver), "%s", cam_fw_ver);
+#endif
 #else // multi module case
 	CDBG("[FW_DBG] cam_fw_ver : %s\n", cam_fw_ver);
 	return snprintf(buf, sizeof(cam_fw_ver), "%s", cam_fw_ver);
@@ -159,7 +164,7 @@ static ssize_t back_camera_firmware_load_store(struct device *dev,
 static ssize_t front_camera_firmware_show(struct device *dev,
 			struct device_attribute *attr, char *buf)
 {
-	char cam_fw[] = "S5K6B2YX S5K6B2YX\n";
+	char cam_fw[] = "S5K6B2YX N\n";
 
 	return  snprintf(buf, sizeof(cam_fw), "%s", cam_fw);
 }

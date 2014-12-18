@@ -17,3 +17,12 @@ config VIDEO_MHL_SII8246
         Support for MHL(SII8246) version2 chipset driver. This is a new
         version of mhl which has the required functionality to support
         mhl 2.0 spec required. Say Y here if this support mhl_version2
+
+config MHL_VERSION
+	hex "Number of MHL Version"
+	default 0x20
+	---help---
+	MHL Version
+	For example, those device compliant
+	with MHL Specification version 2.0
+	shell set this MHL_VERSION to 0x20

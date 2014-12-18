@@ -14,7 +14,7 @@
 
 #include <linux/kernel.h>
 #include <asm/unaligned.h>
-#include <mach/cpufreq.h>
+//#include <mach/cpufreq.h>
 #include <linux/input/mt.h>
 #include <linux/of_gpio.h>
 #include <linux/regulator/consumer.h>
@@ -40,8 +40,9 @@
 #include <linux/uaccess.h>
 
 #include "issp_extern.h"
+#include "coreriver_extern.h"
 #include <linux/mfd/pm8xxx/pm8921.h>
-
+/*
 #define CYPRESS_GEN		0X00
 #define CYPRESS_FW_VER		0X01
 #define CYPRESS_MODULE_VER	0X02
@@ -72,7 +73,7 @@
 #undef DO_NOT_USE_FUNC_PARAM
 
 #define KEYCODE_REG		0x00
-
+*/
 /* bit masks*/
 #define PRESS_BIT_MASK		0X08
 #define KEYCODE_BIT_MASK	0X07
@@ -81,8 +82,7 @@
 #define TOUCHKEY_LOG(k, v) dev_notice(&info->client->dev, "key[%d] %d\n", k, v);
 #define FUNC_CALLED dev_notice(&info->client->dev, "%s: called.\n", __func__);
 */
-#define NUM_OF_RETRY_UPDATE	3
-/*#define NUM_OF_KEY		4*/
+
 #ifdef USE_OPEN_CLOSE
 static int cypress_input_open(struct input_dev *dev);
 static void cypress_input_close(struct input_dev *dev);
@@ -277,14 +277,12 @@ static int tkey_i2c_check(struct cypress_touchkey_info *info)
 	ret = cypress_touchkey_i2c_read(info->client, KEYCODE_REG, data, 4);
 	if (ret < 0) {
 		dev_err(&client->dev, "Failed to read Module version\n");
-		info->ic_fw_ver = 0;
-		info->module_ver = 0;
 		return ret;
 	}
 
 	info->ic_fw_ver = data[1];
 	info->module_ver = data[2];
-	dev_info(&client->dev, "%s: ic_fw_ver = 0x%02x, module_ver = 0x%02x \n",
+	dev_info(&client->dev, "%s: ic_fw_ver = %x, module_ver = %x \n",
 		__func__, info->ic_fw_ver, info->module_ver);
 	return ret;
 }
@@ -780,16 +778,10 @@ static int tkey_fw_update(struct cypress_touchkey_info *info, bool force)
 
 	while (retry--) {
 		if (ISSP_main(info) == 0) {
+			dev_info(&client->dev, "%s : touchkey_update pass!!\n", __func__);
 			msleep(50);
-			cypress_touchkey_auto_cal(info, false);
-			ret = tkey_i2c_check(info);
-			if (ret < 0) {
-				dev_info(&client->dev, "%s : touchkey_update pass but fw crashed.\n", __func__);
-				continue;
-			} else {
-				dev_info(&client->dev, "%s : touchkey_update pass!!\n", __func__);
-				break;
-			}
+			cypress_touchkey_auto_cal(info, false);	
+			break;
 		}
 		msleep(50);
 		dev_err(&client->dev,
@@ -805,7 +797,10 @@ static int tkey_fw_update(struct cypress_touchkey_info *info, bool force)
 
 	msleep(500);
 
-	tkey_i2c_check(info);
+	info->ic_fw_ver = i2c_smbus_read_byte_data(info->client,
+			CYPRESS_FW_VER);
+	dev_info(&client->dev,
+		"%s : FW Ver 0x%02x\n", __func__, info->ic_fw_ver);
 
 	return ret;
 }
@@ -816,8 +811,6 @@ static ssize_t cypress_touchkey_ic_version_read(struct device *dev,
 	struct cypress_touchkey_info *info = dev_get_drvdata(dev);
 	int count;
 
-	info->ic_fw_ver = i2c_smbus_read_byte_data(info->client,
-			CYPRESS_FW_VER);
 	dev_info(&info->client->dev,
 			"%s : FW IC Ver 0x%02x\n", __func__, info->ic_fw_ver);
 
@@ -841,16 +834,17 @@ static ssize_t cypress_touchkey_firm_status_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
 	struct cypress_touchkey_info *info = dev_get_drvdata(dev);
+	int count = 0;
+	char buff[16] = {0};
 	dev_info(&info->client->dev, "%s touchkey_update_status: %d\n",
 			__func__, info->touchkey_update_status);
 	if (info->touchkey_update_status == DOWNLOADING)
-		return snprintf(buf, 13, "Downloading\n");
+		count = snprintf(buff, sizeof(buff), "Downloading\n");
 	else if (info->touchkey_update_status == UPDATE_FAIL)
-		return snprintf(buf, 6, "FAIL\n");
+		count = snprintf(buff, sizeof(buff), "FAIL\n");
 	else if (info->touchkey_update_status == UPDATE_PASS)
-		return snprintf(buf, 6, "PASS\n");
-	else
-		return snprintf(buf, 5, "N/A\n");
+		count = snprintf(buff, sizeof(buff), "PASS\n");
+	return count;
 }
 
 static ssize_t cypress_touchkey_update_write(struct device *dev,
@@ -905,10 +899,9 @@ static ssize_t cypress_touchkey_update_write(struct device *dev,
 		count = coreriver_fw_update(info, false);
 	if (count < 0) {
 		if (info->pdata->gpio_led_en)
-			cypress_touchkey_con_hw(info, false);	
+			cypress_touchkey_con_hw(info, false);		
 		cypress_power_onoff(info, 0);
 		info->touchkey_update_status = UPDATE_FAIL;
-		enable_irq(info->irq);
 		dev_err(&client->dev, "%s: fail to flash fw (%d)\n.", __func__, count);
 		return count;
 	}
@@ -1733,6 +1726,10 @@ static void tkey_check_ic(struct cypress_touchkey_info *info)
 		else
 			info->touchkeyid =CYPRESS_TOUCHKEY;
 	}
+
+//TEST
+	info->touchkeyid =CYPRESS_TOUCHKEY;
+//TEST
 	dev_info(&info->client->dev, "touchkey id = %s\n",
 			info->touchkeyid ? "CYPRESS" : "CORERIVER");
 }
@@ -1823,7 +1820,12 @@ static int __devinit cypress_touchkey_probe(struct i2c_client *client,
 	ret = tkey_i2c_check(info);
 	if (ret < 0) {
 		dev_err(&client->dev, "i2c_check failed\n");
-		bforced = true;
+		#if defined(CONFIG_SEC_FACTORY)
+			info->enabled = false;
+			goto err_i2c_check;
+		#else
+			bforced = true;
+		#endif
 	}
 
 	input_set_drvdata(input_dev, info);
@@ -1939,6 +1941,9 @@ err_gpio_request:
 err_reg_input_dev:
 	input_free_device(input_dev);
 	input_dev = NULL;
+#if defined(CONFIG_SEC_FACTORY)
+err_i2c_check:
+#endif
 	if (info->pdata->gpio_led_en)
 		cypress_touchkey_con_hw(info, false);	
 	cypress_power_onoff(info, 0);
@@ -2009,10 +2014,6 @@ static int cypress_touchkey_resume(struct device *dev)
 				"%s: LED returned on\n", __func__);
 		msleep(30);
 	}
-
-#if defined(CONFIG_SEC_FACTORY)
-	tkey_i2c_check(info);
-#endif
 
 	enable_irq(info->irq);
 
@@ -2099,12 +2100,16 @@ static int __init cypress_touchkey_init(void)
 {
 
 	int ret = 0;
+
 #ifdef CONFIG_SAMSUNG_LPM_MODE
 	if (poweroff_charging) {
 		pr_notice("%s : LPM Charging Mode!!\n", __func__);
 		return 0;
 	}
 #endif
+
+	printk(KERN_ERR "%s\n", __func__);
+
 	ret = i2c_add_driver(&cypress_touchkey_driver);
 	if (ret) {
 		printk(KERN_ERR "cypress touch keypad registration failed. ret= %d\n",
@@ -2120,7 +2125,7 @@ static void __exit cypress_touchkey_exit(void)
 	i2c_del_driver(&cypress_touchkey_driver);
 }
 
-late_initcall(cypress_touchkey_init);
+module_init(cypress_touchkey_init);
 module_exit(cypress_touchkey_exit);
 
 MODULE_DESCRIPTION("Touchkey driver for Cypress touchkey controller ");

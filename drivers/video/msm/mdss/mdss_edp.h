@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -245,7 +245,7 @@ struct edp_statistic {
 	u32 aux_i2c_rx;
 	u32 aux_native_tx;
 	u32 aux_native_rx;
- };
+};
 
 
 #define DPCD_LINK_VOLTAGE_MAX	4
@@ -389,6 +389,8 @@ void mdss_edp_clk_debug(unsigned char *edp_base, unsigned char *mmss_cc_base);
 
 #if defined(CONFIG_FB_MSM_EDP_SAMSUNG)
 int aux_tx(int addr, char *data, int len);
+void tcon_interanl_clock(void);
+void read_firmware_version(char *string);
 void set_global_ep(struct mdss_edp_drv_pdata *ep);
 struct mdss_edp_drv_pdata *get_global_ep(void);
 

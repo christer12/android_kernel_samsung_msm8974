@@ -29,6 +29,7 @@ extern struct class *sec_class;
 #include <linux/earlysuspend.h>
 #include <linux/mutex.h>
 
+#define CONFIG_GLOVE_TOUCH
 #if defined(CONFIG_GLOVE_TOUCH)
 #define TK_BIT_GLOVE 0x40
 #endif
@@ -94,7 +95,7 @@ struct cypress_touchkey_info {
 #ifdef CONFIG_LEDS_CLASS
 	struct led_classdev			leds;
 	enum led_brightness			brightness;
-	struct mutex			touchkey_led_mutex;
+	struct mutex			touchkey_mutex;
 	struct mutex			fw_lock;
 	struct workqueue_struct			*led_wq;
 	struct work_struct			led_work;

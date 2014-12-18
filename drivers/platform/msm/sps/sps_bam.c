@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -76,7 +76,9 @@ static const struct sps_bam_opt_event_table opt_event_table[] = {
 	{SPS_EVENT_INACTIVE, SPS_O_INACTIVE, BAM_PIPE_IRQ_TIMER},
 	{SPS_EVENT_OUT_OF_DESC, SPS_O_OUT_OF_DESC,
 		BAM_PIPE_IRQ_OUT_OF_DESC},
-	{SPS_EVENT_ERROR, SPS_O_ERROR, BAM_PIPE_IRQ_ERROR}
+	{SPS_EVENT_ERROR, SPS_O_ERROR, BAM_PIPE_IRQ_ERROR},
+	{SPS_EVENT_RST_ERROR, SPS_O_RST_ERROR, BAM_PIPE_IRQ_RST_ERROR},
+	{SPS_EVENT_HRESP_ERROR, SPS_O_HRESP_ERROR, BAM_PIPE_IRQ_HRESP_ERROR}
 };
 
 /* Pipe event source handler */
@@ -167,6 +169,7 @@ static irqreturn_t bam_isr(int irq, void *ctxt)
 	list_for_each_entry(pipe, &dev->pipes_q, list) {
 		/* Check this pipe's bit in the source mask */
 		if (BAM_PIPE_IS_ASSIGNED(pipe)
+				&& (!pipe->disconnecting)
 				&& (source & pipe->pipe_index_mask)) {
 			/* This pipe has an interrupt pending */
 			pipe_handler(dev, pipe);
@@ -260,7 +263,8 @@ int sps_bam_enable(struct sps_bam *dev)
 				  dev->props.options);
 	else
 		/* No, so just verify that it is enabled */
-		rc = bam_check(dev->base, &dev->version, &num_pipes);
+		rc = bam_check(dev->base, &dev->version,
+				dev->props.ee, &num_pipes);
 
 	if (rc) {
 		SPS_ERR("sps:Fail to init BAM 0x%x IRQ %d\n",
@@ -442,6 +446,10 @@ int sps_bam_disable(struct sps_bam *dev)
 	if ((dev->props.manage & SPS_BAM_MGR_DEVICE_REMOTE)) {
 		/* No, so just mark it disabled */
 		dev->state &= ~BAM_STATE_ENABLED;
+		if ((dev->state & BAM_STATE_IRQ) && (dev->props.irq > 0)) {
+			free_irq(dev->props.irq, dev);
+			dev->state &= ~BAM_STATE_IRQ;
+		}
 		return 0;
 	}
 
@@ -578,6 +586,7 @@ static void pipe_clear(struct sps_pipe *pipe)
 	pipe->mode = -1;
 	pipe->num_descs = 0;
 	pipe->desc_size = 0;
+	pipe->disconnecting = false;
 	memset(&pipe->sys, 0, sizeof(pipe->sys));
 	INIT_LIST_HEAD(&pipe->sys.events_q);
 }
@@ -1283,14 +1292,19 @@ int sps_bam_pipe_transfer_one(struct sps_bam *dev,
 
 	desc->addr = addr;
 	desc->size = size;
+
 	if ((flags & SPS_IOVEC_FLAG_DEFAULT) == 0) {
-		desc->flags = flags & BAM_IOVEC_FLAG_MASK;
+		desc->flags = (flags & BAM_IOVEC_FLAG_MASK)
+				| DESC_UPPER_ADDR(flags);
 	} else {
 		if (pipe->mode == SPS_MODE_SRC)
-			desc->flags = SPS_IOVEC_FLAG_INT;
+			desc->flags = SPS_IOVEC_FLAG_INT
+					| DESC_UPPER_ADDR(flags);
 		else
-			desc->flags = SPS_IOVEC_FLAG_INT | SPS_IOVEC_FLAG_EOT;
+			desc->flags = (SPS_IOVEC_FLAG_INT | SPS_IOVEC_FLAG_EOT)
+					| DESC_UPPER_ADDR(flags);
 	}
+
 #ifdef SPS_BAM_STATISTICS
 	if ((flags & SPS_IOVEC_FLAG_INT))
 		pipe->sys.int_flags++;
@@ -1759,6 +1773,30 @@ static void pipe_handler(struct sps_bam *dev, struct sps_pipe *pipe)
 		pipe_handler_generic(dev, pipe,
 					     SPS_EVENT_OUT_OF_DESC);
 		status &= ~SPS_O_OUT_OF_DESC;
+		if (status == 0)
+			return;
+	}
+
+	if ((status & SPS_O_RST_ERROR) && enhd_pipe) {
+		SPS_ERR("sps:bam 0x%x ;pipe 0x%x irq status=0x%x.\n"
+				"sps: BAM_PIPE_IRQ_RST_ERROR\n",
+				BAM_ID(dev), pipe_index, status);
+		bam_output_register_content(dev->base, dev->props.ee);
+		pipe_handler_generic(dev, pipe,
+					     SPS_EVENT_RST_ERROR);
+		status &= ~SPS_O_RST_ERROR;
+		if (status == 0)
+			return;
+	}
+
+	if ((status & SPS_O_HRESP_ERROR) && enhd_pipe) {
+		SPS_ERR("sps:bam 0x%x ;pipe 0x%x irq status=0x%x.\n"
+				"sps: BAM_PIPE_IRQ_HRESP_ERROR\n",
+				BAM_ID(dev), pipe_index, status);
+		bam_output_register_content(dev->base, dev->props.ee);
+		pipe_handler_generic(dev, pipe,
+					     SPS_EVENT_HRESP_ERROR);
+		status &= ~SPS_O_HRESP_ERROR;
 		if (status == 0)
 			return;
 	}

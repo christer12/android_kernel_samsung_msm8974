@@ -70,11 +70,16 @@ enum host_notify_event {
 	HNOTIFY_SMARTDOCK_OFF,
 	HNOTIFY_AUDIODOCK_ON,
 	HNOTIFY_AUDIODOCK_OFF,
+	HNOTIFY_LANHUB_ON,
+	HNOTIFY_LANHUB_OFF,
+	HNOTIFY_LANHUBTA_ON,
+	HNOTIFY_LANHUBTA_OFF,
 };
 
 enum host_notify_data {
 	HNOTIFY_EVENT,
 	HNOTIFY_MODE,
+	HNOTIFY_BOOSTER,
 };
 
 extern int sec_otg_notify(int event);

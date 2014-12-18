@@ -43,7 +43,6 @@ enum {
 	MAX77803_MUIC_DOCK_CARDOCK,
 	MAX77803_MUIC_DOCK_AUDIODOCK = 7,
 	MAX77803_MUIC_DOCK_SMARTDOCK = 8,
-	MAX77803_MUIC_DOCK_HMT = 11,
 };
 
 /* MAX77686 regulator IDs */
@@ -81,12 +80,12 @@ struct max77803_charger_platform_data {
 #define DIVIDER_256			0x3
 
 struct max77803_haptic_platform_data {
-	u16 max_timeout;
-	u16 duty;
-	u16 period;
-	u16 reg2;
+	u32 max_timeout;
+	u32 duty;
+	u32 period;
+	u32 reg2;
 	char *regulator_name;
-	unsigned int pwm_id;
+	u32 pwm_id;
 
 	void (*init_hw) (void);
 	void (*motor_en) (bool);

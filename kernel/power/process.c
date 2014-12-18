@@ -27,7 +27,8 @@
 
 static int try_to_freeze_tasks(bool user_only)
 {
-	struct task_struct *g, *p, *q;
+	struct task_struct *g, *p;
+	struct task_struct *q = NULL;
 	unsigned long end_time;
 	unsigned int todo;
 	bool wq_busy = false;
@@ -47,7 +48,6 @@ static int try_to_freeze_tasks(bool user_only)
 		todo = 0;
 		read_lock(&tasklist_lock);
 		do_each_thread(g, p) {
-			cpu_relax();
 			if (p == current || !freeze_task(p))
 				continue;
 
@@ -102,8 +102,9 @@ static int try_to_freeze_tasks(bool user_only)
 		 */
 		if(wakeup) {
 			printk("\n");
-			printk(KERN_ERR "Freezing of %s aborted (%s)\n",
-					user_only ? "user space " : "tasks ", q ? q->comm : "NONE");
+			printk(KERN_ERR "Freezing of %s aborted (%d) (%s)\n",
+					user_only ? "user space " : "tasks ",
+					q ? q->pid : 0, q ? q->comm : "NONE");
 		}
 		else {
 			printk("\n");

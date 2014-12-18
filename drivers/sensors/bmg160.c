@@ -42,7 +42,7 @@
 #define SELFTEST_DATA_AMOUNT               64
 #define SELFTEST_LIMITATION_OF_ERROR       5250
 
-#define BMG160_DEFAULT_DELAY               200
+#define BMG160_DEFAULT_DELAY               200000000LL
 #define	BMG160_CHIP_ID                     0x0F
 
 #define BMG160_TOP_UPPER_RIGHT             0
@@ -68,12 +68,13 @@ struct bmg160_v {
 struct bmg160_p {
 	struct i2c_client *client;
 	struct input_dev *input;
-	struct delayed_work work;
 	struct device *factory_device;
 	struct bmg160_v gyrodata;
 	struct bmg160_v caldata;
-
-	atomic_t delay;
+	struct work_struct work;
+	struct hrtimer gyro_timer;
+	struct workqueue_struct *gyro_wq;
+	ktime_t poll_delay;
 	atomic_t enable;
 
 	u32 chip_pos;
@@ -425,41 +426,44 @@ static int bmg160_read_gyro_xyz(struct bmg160_p *data, struct bmg160_v *gyro)
 	return ret;
 }
 
+static enum hrtimer_restart bmg160_timer_func(struct hrtimer *timer)
+{
+	struct bmg160_p *data = container_of(timer,
+					struct bmg160_p, gyro_timer);
+
+	if (!work_pending(&data->work))
+		queue_work(data->gyro_wq, &data->work);
+
+	hrtimer_forward_now(&data->gyro_timer, data->poll_delay);
+
+	return HRTIMER_RESTART;
+}
+
 static void bmg160_work_func(struct work_struct *work)
 {
+	int ret;
 	struct bmg160_v gyro;
-	struct bmg160_p *data = container_of((struct delayed_work *)work,
-			struct bmg160_p, work);
-	unsigned long delay = msecs_to_jiffies(atomic_read(&data->delay));
+	struct bmg160_p *data = container_of(work, struct bmg160_p, work);
 
-	bmg160_read_gyro_xyz(data, &gyro);
+	ret = bmg160_read_gyro_xyz(data, &gyro);
+	if (ret < 0)
+		return;
+
 	input_report_rel(data->input, REL_RX, gyro.x - data->caldata.x);
 	input_report_rel(data->input, REL_RY, gyro.y - data->caldata.y);
 	input_report_rel(data->input, REL_RZ, gyro.z - data->caldata.z);
 	input_sync(data->input);
 	data->gyrodata = gyro;
-
-	schedule_delayed_work(&data->work, delay);
 }
 
 static void bmg160_set_enable(struct bmg160_p *data, int enable)
 {
-	int pre_enable = atomic_read(&data->enable);
-
-	if (enable) {
-		if (pre_enable == OFF) {
-			bmg160_open_calibration(data);
-			bmg160_set_mode(data, BMG160_MODE_NORMAL);
-			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
-			atomic_set(&data->enable, ON);
-		}
+	if (enable == ON) {
+		hrtimer_start(&data->gyro_timer, data->poll_delay,
+		      HRTIMER_MODE_REL);
 	} else {
-		if (pre_enable == ON) {
-			bmg160_set_mode(data, BMG160_MODE_SUSPEND);
-			cancel_delayed_work_sync(&data->work);
-			atomic_set(&data->enable, OFF);
-		}
+		hrtimer_cancel(&data->gyro_timer);
+		cancel_work_sync(&data->work);
 	}
 }
 
@@ -475,7 +479,7 @@ static ssize_t bmg160_enable_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	u8 enable;
-	int ret;
+	int ret, pre_enable;
 	struct bmg160_p *data = dev_get_drvdata(dev);
 
 	ret = kstrtou8(buf, 2, &enable);
@@ -485,8 +489,22 @@ static ssize_t bmg160_enable_store(struct device *dev,
 	}
 
 	pr_info("[SENSOR]: %s - new_value = %u\n", __func__, enable);
-	if ((enable == 0) || (enable == 1))
-		bmg160_set_enable(data, (int)enable);
+	pre_enable = atomic_read(&data->enable);
+
+	if (enable) {
+		if (pre_enable == OFF) {
+			bmg160_open_calibration(data);
+			bmg160_set_mode(data, BMG160_MODE_NORMAL);
+			atomic_set(&data->enable, ON);
+			bmg160_set_enable(data, ON);
+		}
+	} else {
+		if (pre_enable == ON) {
+			atomic_set(&data->enable, OFF);
+			bmg160_set_mode(data, BMG160_MODE_SUSPEND);
+			bmg160_set_enable(data, OFF);
+		}
+	}
 
 	return size;
 }
@@ -496,7 +514,8 @@ static ssize_t bmg160_delay_show(struct device *dev,
 {
 	struct bmg160_p *data = dev_get_drvdata(dev);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->delay));
+	return snprintf(buf, PAGE_SIZE, "%lld\n",
+			ktime_to_ns(data->poll_delay));
 }
 
 static ssize_t bmg160_delay_store(struct device *dev,
@@ -512,19 +531,20 @@ static ssize_t bmg160_delay_store(struct device *dev,
 		return ret;
 	}
 
-	if (delay <= 5)
-		bmg160_set_bw(data, BMG160_BW_230Hz);
-	else if (delay <= 10)
+	if (delay <= 5000000LL)
 		bmg160_set_bw(data, BMG160_BW_116Hz);
-	else if (delay <= 20)
-		bmg160_set_bw(data, BMG160_BW_64Hz);
-	else if (delay <= 70)
-		bmg160_set_bw(data, BMG160_BW_23Hz);
 	else
-		bmg160_set_bw(data, BMG160_BW_12Hz);
+		bmg160_set_bw(data, BMG160_BW_32Hz);
 
-	atomic_set(&data->delay, (unsigned int)delay);
+	data->poll_delay = ns_to_ktime(delay);
 	pr_info("[SENSOR]: %s - poll_delay = %lld\n", __func__, delay);
+
+	if (atomic_read(&data->enable) == ON) {
+		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
+		bmg160_set_enable(data, OFF);
+		bmg160_set_mode(data, BMG160_MODE_NORMAL);
+		bmg160_set_enable(data, ON);
+	}
 
 	return size;
 }
@@ -692,7 +712,7 @@ static ssize_t bmg160_calibration_store(struct device *dev,
 		return ret;
 
 	if (atomic_read(&data->enable) == ON)
-		cancel_delayed_work_sync(&data->work);
+		bmg160_set_enable(data, OFF);
 	else
 		bmg160_set_mode(data, BMG160_MODE_NORMAL);
 
@@ -706,8 +726,7 @@ static ssize_t bmg160_calibration_store(struct device *dev,
 	bmg160_save_calibration(data);
 
 	if (atomic_read(&data->enable) == ON)
-		schedule_delayed_work(&data->work,
-			msecs_to_jiffies(atomic_read(&data->delay)));
+		bmg160_set_enable(data, ON);
 	else
 		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
 
@@ -812,7 +831,7 @@ static unsigned char bmg160_selftest(struct bmg160_p *data)
 
 	pr_info("[SENSOR]: %s - rate %u, bist %u\n", __func__, rateok, bist);
 
-	return bist;
+	return (rateok && bist);
 }
 
 static int bmg160_selftest_show(struct device *dev,
@@ -827,7 +846,7 @@ static int bmg160_selftest_show(struct device *dev,
 	struct bmg160_p *data = dev_get_drvdata(dev);
 
 	if (atomic_read(&data->enable) == ON)
-		cancel_delayed_work_sync(&data->work);
+		bmg160_set_enable(data, OFF);
 	else
 		bmg160_set_mode(data, BMG160_MODE_NORMAL);
 
@@ -876,8 +895,7 @@ static int bmg160_selftest_show(struct device *dev,
 	}
 
 	if (atomic_read(&data->enable) == ON)
-		schedule_delayed_work(&data->work,
-			msecs_to_jiffies(atomic_read(&data->delay)));
+		bmg160_set_enable(data, ON);
 	else
 		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
 
@@ -914,7 +932,7 @@ static struct device_attribute *sensor_attrs[] = {
 	NULL,
 };
 
-static int bmg160_setup_pin(struct bmg160_p *data)
+static void bmg160_setup_pin(struct bmg160_p *data)
 {
 	int ret;
 
@@ -922,38 +940,25 @@ static int bmg160_setup_pin(struct bmg160_p *data)
 	if (ret < 0) {
 		pr_err("[SENSOR] %s - gpio %d request failed (%d)\n",
 			__func__, data->gyro_int, ret);
-		goto exit;
-	}
-
-	ret = gpio_direction_input(data->gyro_int);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - failed to set gpio %d as input (%d)\n",
-			__func__, data->gyro_int, ret);
-		goto exit_gyro_int;
+	} else {
+		ret = gpio_direction_input(data->gyro_int);
+		if (ret < 0)
+			pr_err("[SENSOR]: %s - failed to set gpio %d as input"
+				" (%d)\n", __func__, data->gyro_int, ret);
+		gpio_free(data->gyro_int);
 	}
 
 	ret = gpio_request(data->gyro_drdy, "GYRO_DRDY");
 	if (ret < 0) {
 		pr_err("[SENSOR]: %s - gpio %d request failed (%d)\n",
 			__func__, data->gyro_drdy, ret);
-		goto exit_gyro_int;
+	} else {
+		ret = gpio_direction_input(data->gyro_drdy);
+		if (ret < 0)
+			pr_err("[SENSOR]: %s - failed to set gpio %d as input"
+				" (%d)\n", __func__, data->gyro_drdy, ret);
+		gpio_free(data->gyro_drdy);
 	}
-
-	ret = gpio_direction_input(data->gyro_drdy);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - failed to set gpio %d as input (%d)\n",
-			__func__, data->gyro_drdy, ret);
-		goto exit_gyro_drdy;
-	}
-
-	goto exit;
-
-exit_gyro_drdy:
-	gpio_free(data->gyro_drdy);
-exit_gyro_int:
-	gpio_free(data->gyro_int);
-exit:
-	return ret;
 }
 
 static int bmg160_input_init(struct bmg160_p *data)
@@ -999,33 +1004,30 @@ static int bmg160_input_init(struct bmg160_p *data)
 	return 0;
 }
 
-static int bmg160_parse_dt(struct bmg160_p *data, struct device *dev)
+static void bmg160_parse_dt(struct bmg160_p *data, struct device *dev)
 {
 	struct device_node *dNode = dev->of_node;
 	enum of_gpio_flags flags;
 
-	if (dNode == NULL)
-		return -ENODEV;
-
-	data->gyro_int = of_get_named_gpio_flags(dNode,
-		"bmg160-i2c,gyro_int-gpio", 0, &flags);
-	if (data->gyro_int < 0) {
-		pr_err("[SENSOR]: %s - get gyro_int error\n", __func__);
-		return -ENODEV;
-	}
-
-	data->gyro_drdy = of_get_named_gpio_flags(dNode,
-		"bmg160-i2c,gyro_drdy-gpio", 0, &flags);
-	if (data->gyro_drdy < 0) {
-		pr_err("[SENSOR]: %s - gyro_drdy error\n", __func__);
-		return -ENODEV;
+	if (dNode == NULL) {
+		pr_err("[SENSOR]: %s - can't find dNode\n", __func__);
+		data->chip_pos = BMG160_TOP_LOWER_RIGHT;
+		return;
 	}
 
 	if (of_property_read_u32(dNode,
 			"bmg160-i2c,chip_pos", &data->chip_pos) < 0)
 		data->chip_pos = BMG160_TOP_LOWER_RIGHT;
 
-	return 0;
+	data->gyro_int = of_get_named_gpio_flags(dNode,
+		"bmg160-i2c,gyro_int-gpio", 0, &flags);
+	if (data->gyro_int < 0)
+		pr_err("[SENSOR]: %s - get gyro_int error\n", __func__);
+
+	data->gyro_drdy = of_get_named_gpio_flags(dNode,
+		"bmg160-i2c,gyro_drdy-gpio", 0, &flags);
+	if (data->gyro_drdy < 0)
+		pr_err("[SENSOR]: %s - gyro_drdy error\n", __func__);
 }
 
 static int bmg160_probe(struct i2c_client *client,
@@ -1048,29 +1050,21 @@ static int bmg160_probe(struct i2c_client *client,
 		goto exit_kzalloc;
 	}
 
-	ret = bmg160_parse_dt(data, &client->dev);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - of_node error\n", __func__);
-		ret = -ENODEV;
-		goto exit_of_node;
-	}
-
-	ret = bmg160_setup_pin(data);
-	if (ret) {
-		pr_err("[SENSOR]: %s - could not setup pin\n", __func__);
-		goto exit_setup_pin;
-	}
-
-	/* read chip id */
-	ret = i2c_smbus_read_word_data(client, BMG160_CHIP_ID_REG);
-	if ((ret & 0x00ff) != BMG160_CHIP_ID) {
-		pr_err("[SENSOR]: %s - chip id failed %d\n", __func__, ret);
-		ret = -ENODEV;
-		goto exit_read_chipid;
-	}
+	bmg160_parse_dt(data, &client->dev);
+	bmg160_setup_pin(data);
 
 	i2c_set_clientdata(client, data);
 	data->client = client;
+
+	/* read chip id */
+	bmg160_set_mode(data, BMG160_MODE_NORMAL);
+	ret = i2c_smbus_read_word_data(data->client, BMG160_CHIP_ID_REG);
+	if ((ret & 0x00ff) != BMG160_CHIP_ID) {
+		pr_err("[SENSOR]: %s - chip id failed 0x%x\n",
+				__func__, (unsigned int)ret & 0x00ff);
+		ret = -ENODEV;
+		goto exit_read_chipid;
+	}
 
 	/* input device init */
 	ret = bmg160_input_init(data);
@@ -1078,27 +1072,40 @@ static int bmg160_probe(struct i2c_client *client,
 		goto exit_input_init;
 
 	sensors_register(data->factory_device, data, sensor_attrs, MODULE_NAME);
+	/* gyro_timer settings. we poll for light values using a timer. */
+	hrtimer_init(&data->gyro_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	data->poll_delay = ns_to_ktime(BMG160_DEFAULT_DELAY);
+	data->gyro_timer.function = bmg160_timer_func;
+
+	/* the timer just fires off a work queue request.  we need a thread
+	   to read the i2c (can be slow and blocking). */
+	data->gyro_wq = create_singlethread_workqueue("gyro_wq");
+	if (!data->gyro_wq) {
+		ret = -ENOMEM;
+		pr_err("[SENSOR]: %s - could not create workqueue\n", __func__);
+		goto exit_create_workqueue;
+	}
 
 	/* workqueue init */
-	INIT_DELAYED_WORK(&data->work, bmg160_work_func);
-	atomic_set(&data->delay, BMG160_DEFAULT_DELAY);
+	INIT_WORK(&data->work, bmg160_work_func);
 	atomic_set(&data->enable, OFF);
 
 	data->gyro_dps = BMG160_RANGE_500DPS;
 	bmg160_set_range(data, data->gyro_dps);
-	bmg160_set_bw(data, BMG160_BW_47Hz);
+	bmg160_set_bw(data, BMG160_BW_32Hz);
 	bmg160_set_mode(data, BMG160_MODE_SUSPEND);
 	pr_info("[SENSOR]: %s - Probe done!(chip pos : %d)\n",
 		__func__, data->chip_pos);
 
 	return 0;
 
+exit_create_workqueue:
+	sensors_unregister(data->factory_device, sensor_attrs);
+	sensors_remove_symlink(&data->input->dev.kobj, data->input->name);
+	sysfs_remove_group(&data->input->dev.kobj, &bmg160_attribute_group);
+	input_unregister_device(data->input);
 exit_input_init:
 exit_read_chipid:
-	gpio_free(data->gyro_int);
-	gpio_free(data->gyro_drdy);
-exit_setup_pin:
-exit_of_node:
 	kfree(data);
 exit_kzalloc:
 exit:
@@ -1113,7 +1120,10 @@ static void bmg160_shutdown(struct i2c_client *client)
 
 	pr_info("[SENSOR]: %s\n", __func__);
 	if (atomic_read(&data->enable) == ON)
-		cancel_delayed_work_sync(&data->work);
+		bmg160_set_enable(data, OFF);
+
+	atomic_set(&data->enable, OFF);
+	bmg160_set_mode(data, BMG160_MODE_SUSPEND);
 }
 
 static int __devexit bmg160_remove(struct i2c_client *client)
@@ -1123,16 +1133,14 @@ static int __devexit bmg160_remove(struct i2c_client *client)
 	if (atomic_read(&data->enable) == ON)
 		bmg160_set_enable(data, OFF);
 
-	cancel_delayed_work_sync(&data->work);
+	atomic_set(&data->enable, OFF);
+	bmg160_set_mode(data, BMG160_MODE_SUSPEND);
+
 	sensors_unregister(data->factory_device, sensor_attrs);
 	sensors_remove_symlink(&data->input->dev.kobj, data->input->name);
 
 	sysfs_remove_group(&data->input->dev.kobj, &bmg160_attribute_group);
 	input_unregister_device(data->input);
-
-	gpio_free(data->gyro_int);
-	gpio_free(data->gyro_drdy);
-
 	kfree(data);
 
 	return 0;
@@ -1144,7 +1152,7 @@ static int bmg160_suspend(struct device *dev)
 
 	if (atomic_read(&data->enable) == ON) {
 		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
-		cancel_delayed_work_sync(&data->work);
+		bmg160_set_enable(data, OFF);
 	}
 
 	return 0;
@@ -1156,8 +1164,7 @@ static int bmg160_resume(struct device *dev)
 
 	if (atomic_read(&data->enable) == ON) {
 		bmg160_set_mode(data, BMG160_MODE_NORMAL);
-		schedule_delayed_work(&data->work,
-			msecs_to_jiffies(atomic_read(&data->delay)));
+		bmg160_set_enable(data, ON);
 	}
 
 	return 0;

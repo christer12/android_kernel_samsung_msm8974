@@ -448,6 +448,8 @@ int msm_camera_get_dt_power_setting_data(struct device_node *of_node,
 				ps[i].seq_val = SENSOR_GPIO_EXT_VANA_POWER;
 			else if (!strcmp(seq_name, "sensor_gpio_ext_vio_power"))
 				ps[i].seq_val = SENSOR_GPIO_EXT_VIO_POWER;
+			else if (!strcmp(seq_name, "sensor_gpio_ext_vcore_power"))
+				ps[i].seq_val = SENSOR_GPIO_EXT_VCORE_POWER;
 			else
 				rc = -EILSEQ;
 			break;
@@ -624,6 +626,8 @@ int msm_camera_get_dt_power_off_setting_data(struct device_node *of_node,
 				ps[i].seq_val = SENSOR_GPIO_EXT_VANA_POWER;
 			else if (!strcmp(seq_name, "sensor_gpio_ext_vio_power"))
 				ps[i].seq_val = SENSOR_GPIO_EXT_VIO_POWER;
+			else if (!strcmp(seq_name, "sensor_gpio_ext_vcore_power"))
+				ps[i].seq_val = SENSOR_GPIO_EXT_VCORE_POWER;
 			else
 				rc = -EILSEQ;
 			break;
@@ -937,6 +941,22 @@ int msm_camera_init_gpio_pin_tbl(struct device_node *of_node,
 					gpio_array[val];
 			CDBG("%s qcom,gpio-ext-vio-power %d\n", __func__,
 					gconf->gpio_num_info->gpio_num[SENSOR_GPIO_EXT_VIO_POWER]);
+	}
+	if (of_property_read_bool(of_node, "qcom,gpio-ext-vcore-power") == true) {
+			rc = of_property_read_u32(of_node, "qcom,gpio-ext-vcore-power", &val);
+			if (rc < 0) {
+					pr_err("%s:%d read qcom,gpio-ext-vcore-power failed rc %d\n",
+							__func__, __LINE__, rc);
+					goto ERROR;
+			} else if (val >= gpio_array_size) {
+					pr_err("%s:%d qcom,gpio-ext-vcore-power invalid %d\n",
+							__func__, __LINE__, val);
+					goto ERROR;
+			}
+			gconf->gpio_num_info->gpio_num[SENSOR_GPIO_EXT_VCORE_POWER] =
+					gpio_array[val];
+			CDBG("%s qcom,gpio-ext-vcore-power %d\n", __func__,
+					gconf->gpio_num_info->gpio_num[SENSOR_GPIO_EXT_VCORE_POWER]);
 	}
 	if (of_property_read_bool(of_node, "qcom,gpio-ext-torch-en") == true) {
 			rc = of_property_read_u32(of_node, "qcom,gpio-ext-torch-en", &val);

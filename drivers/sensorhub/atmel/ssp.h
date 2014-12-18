@@ -243,6 +243,8 @@ enum {
 	GEOMAGNETIC_RAW,
 	ORIENTATION_SENSOR,
 	SIG_MOTION_SENSOR,
+	STEP_DETECTOR,
+	STEP_COUNTER,
 	SENSOR_MAX,
 };
 
@@ -265,6 +267,12 @@ enum {
 	SENSOR_FACTORY_MAX,
 };
 
+enum {
+	STORE_SUCCESS = 0,
+	FILE_OPEN_FAIL,
+	OFFSET_CAL_DATA,
+};
+
 struct sensor_value {
 	union {
 		struct {
@@ -281,7 +289,9 @@ struct sensor_value {
 		u8 prox[4];
 		s16 data[9];
 		s32 pressure[3];
+		u8 step_det;
 		u8 sig_motion;
+		u32 step_diff;
 	};
 };
 
@@ -311,6 +321,8 @@ struct ssp_data {
 	struct input_dev *mag_input_dev;
 	struct input_dev *gesture_input_dev;
 	struct input_dev *sig_motion_input_dev;
+	struct input_dev *step_det_input_dev;
+	struct input_dev *step_cnt_input_dev;
 	struct i2c_client *client;
 	struct wake_lock ssp_wake_lock;
 	struct miscdevice akmd_device;
@@ -371,7 +383,7 @@ struct ssp_data {
 	unsigned int uFactoryProxAvg[4];
 	unsigned int uFactorydataReady;
 	s32 iPressureCal;
-
+	u64 step_count_total;
 	atomic_t aSensorEnable;
 	int64_t adDelayBuf[SENSOR_MAX];
 
@@ -411,6 +423,10 @@ struct ssp_data {
 	int sns_combination;
 	struct regulator *reg_hub;
 	struct regulator *reg_sns;
+
+	unsigned char prox_state;
+	unsigned char proximity_highThreshold;
+	unsigned char proximity_lowThreshold;
 };
 
 void ssp_enable(struct ssp_data *, bool);
@@ -485,6 +501,8 @@ void report_prox_data(struct ssp_data *, struct sensor_value *);
 void report_prox_raw_data(struct ssp_data *, struct sensor_value *);
 void report_geomagnetic_raw_data(struct ssp_data *, struct sensor_value *);
 void report_sig_motion_data(struct ssp_data *, struct sensor_value *);
+void report_step_det_data(struct ssp_data *, struct sensor_value *);
+void report_step_cnt_data(struct ssp_data *, struct sensor_value *);
 int print_mcu_debug(char *, int *, int);
 void report_temp_humidity_data(struct ssp_data *, struct sensor_value *);
 unsigned int get_module_rev(struct ssp_data *data);

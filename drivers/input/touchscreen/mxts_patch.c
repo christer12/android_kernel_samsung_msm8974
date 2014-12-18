@@ -5,8 +5,9 @@
 
 #define MXT_PATCH_LOCK_CHECK		1
 #define MXT_PATCH_SUPP_CHECK		1
+#define MXT_PATCH_STAGE_RESET		1
 
-#define TIME_WRAP_AROUND(x, y) 		(((y)>(x)) ? (y)-(x) : (0-(x))+(y))
+#define TIME_WRAP_AROUND(x, y)		(((y)>(x)) ? (y)-(x) : (0-(x))+(y))
 
 #define MXT_PATCH_MAGIC				0x52296416
 #define MXT_PATCH_VERSION			1
@@ -97,12 +98,14 @@ struct patch_header{ // 32b
 };
 
 struct stage_def{	// 8b
-	u8	stage_id;				
+	u8	stage_id;
 	u8  option;
 	u16 stage_period;
 	u8	cfg_cnt;
 	u8	test_cnt;
-	u8	reserved[2];
+#if MXT_PATCH_STAGE_RESET
+	u16	reset_period;
+#endif
 };
 
 struct stage_cfg{	// 4b
@@ -857,27 +860,35 @@ static int mxt_patch_parse_test_line(struct mxt_data *data,
 					*check_cnt = *check_cnt+1;
 					if(*check_cnt == ptline->check_cnt){
 						test_action = true;
-						__mxt_patch_debug(data, "STAGE:%d TEST %d MATCHED", 
+						__mxt_patch_debug(data, "STAGE:%d TEST %d MATCHED",
 							data->patch.cur_stage, ptline->test_id);
-						mxt_patch_dump_source(data, test_action);							
+						mxt_patch_dump_source(data, test_action);
 
 						if(ptline->option&0x01){
 							*check_cnt=0;
 							__mxt_patch_ddebug(data, "CHEK CNT CLEAR\n");
-						}												
-					}	
+						}
+					}
 				}
+			}
+		}
+		else{
+			if(data->patch.option&0x04){
+			    if(do_action&&psrc_item){// Skip if any item was failed
+				    __mxt_patch_ddebug(data, "SKIP REMAINED ITEMS %d\n", i);
+				    return 0;
+			    }
 			}
 		}
 		ulpos += sizeof(struct test_item);
 	}
-	
+
 	for(i=0; i <ptline->cfg_cnt; i++){ /* Test Line Action config */
 		pacfg = (struct action_cfg*)(ppatch+ulpos);
 		if(!do_action){
 			__mxt_patch_debug(data, "|-- ACTION_CFG: OBJ:%d"
-				" OFFSET:%d VAL:%d OPT:%d\n", 
-				pacfg->obj_type, pacfg->offset, 
+				" OFFSET:%d VAL:%d OPT:%d\n",
+				pacfg->obj_type, pacfg->offset,
 				pacfg->val, pacfg->option);
 		}
 		mxt_patch_write_action_cfg(data, pacfg, test_action);
@@ -897,22 +908,22 @@ static int mxt_patch_parse_stage(struct mxt_data *data,
 	u32 i=0, ulpos=0;
 
 	psdef = (struct stage_def*)ppatch;
-	
+
 	if(!do_action){
-		__mxt_patch_debug(data, 
-			"STAGE_ID:%d OPT:%d PERIOD:%d CFG_CNT:%d TEST_CNT:%d\n",
-			psdef->stage_id, psdef->option, psdef->stage_period, 
-			psdef->cfg_cnt, psdef->test_cnt);
+		__mxt_patch_debug(data,
+			"STAGE_ID:%d OPT:%d PERIOD:%d CFG_CNT:%d TST_CNT:%d RESET:%d\n",
+			psdef->stage_id, psdef->option, psdef->stage_period,
+			psdef->cfg_cnt, psdef->test_cnt, psdef->reset_period);//MXT_PATCH_STAGE_RESET
 	}
 	mxt_patch_stage_timer(data, psdef->stage_period, do_action);
 	ulpos += sizeof(struct stage_def);
-	
+
 	for(i=0; i < psdef->cfg_cnt; i++){ /* Stage Config Parsing */
 		pscfg = (struct stage_cfg*)(ppatch+ulpos);
 		if(!do_action){
-			__mxt_patch_debug(data, 
-				"|- STAGE_CFG: OBJ:%d OFFSET:%d VAL:%d OPT:%d\n", 
-				pscfg->obj_type, pscfg->offset, 
+			__mxt_patch_debug(data,
+				"|- STAGE_CFG: OBJ:%d OFFSET:%d VAL:%d OPT:%d\n",
+				pscfg->obj_type, pscfg->offset,
 				pscfg->val, pscfg->option);
 		}
 		mxt_patch_write_stage_cfg(data, pscfg, do_action);
@@ -1194,23 +1205,32 @@ static int mxt_patch_run_stage(struct mxt_data *data)
 	data->patch.tline_cnt = tline_cnt;
 	data->patch.run_stage = 1;
 	data->patch.skip_test = 0;
-		
-	return 0;		
+#if MXT_PATCH_STAGE_RESET
+	data->patch.stage_timestamp = jiffies_to_msecs(jiffies);
+	__mxt_patch_ddebug(data, "Stage[%d] %d\n",
+		cur_stage, data->patch.stage_timestamp);
+#endif
+	return 0;
 }
 
 static int mxt_patch_test_source(struct mxt_data *data, u16* psrc_item)
-{	
+{
 	int i;
 	u8* ppatch = data->patch.patch;
-	u16* pstage_addr = data->patch.stage_addr;		
-	u8 	cur_stage = data->patch.cur_stage;
+	u16* pstage_addr = data->patch.stage_addr;
+	u8	cur_stage = data->patch.cur_stage;
+#if MXT_PATCH_STAGE_RESET
+	u32 curr_time = jiffies_to_msecs(jiffies);
+	u32 time_diff = TIME_WRAP_AROUND(data->patch.stage_timestamp, curr_time);
+	struct stage_def* psdef=NULL;
+#endif
 
 	if(!ppatch || !pstage_addr){
 		dev_err(&data->client->dev, "%s pstage_addr is null\n", __func__);
 		return 1;
-	}		
-	if(!data->patch.run_stage){	
-		mxt_patch_run_stage(data);			
+	}
+	if(!data->patch.run_stage){
+		mxt_patch_run_stage(data);
 	}
 	if(data->patch.run_stage){
 		for(i=0; i< data->patch.tline_cnt; i++){
@@ -1219,12 +1239,26 @@ static int mxt_patch_test_source(struct mxt_data *data, u16* psrc_item)
 			if(!ptline_addr || !pcheck_cnt){
 				dev_err(&data->client->dev, "ptline_addr is null\n");
 				return 1;
-			}		
+			}
 			__mxt_patch_ddebug(data, "STAGE:%d, TEST:%d\n", cur_stage, i);
-				
-			mxt_patch_parse_test_line(data, 
-				ppatch+pstage_addr[cur_stage]+ptline_addr[i], 
-				psrc_item, &pcheck_cnt[i], true);			
+
+			mxt_patch_parse_test_line(data,
+				ppatch+pstage_addr[cur_stage]+ptline_addr[i],
+				psrc_item, &pcheck_cnt[i], true);
+
+#if MXT_PATCH_STAGE_RESET
+			psdef = (struct stage_def*)(ppatch+pstage_addr[cur_stage]);
+			if(psdef->reset_period){
+				if(time_diff > psdef->reset_period*10){
+					pcheck_cnt[i] = 0;
+					__mxt_patch_ddebug(data,
+						"RESET CNT STAGE:%d, TEST:%d RESET:%d DIF:%d\n",
+						cur_stage, i,
+						psdef->reset_period, time_diff);
+					data->patch.stage_timestamp = jiffies_to_msecs(jiffies);
+				}
+			}
+#endif
 			if(data->patch.skip_test){
 				__mxt_patch_debug(data, "REMAINED TEST SKIP\n");
 				return 0;

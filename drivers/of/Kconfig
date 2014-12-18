@@ -113,4 +113,17 @@ config OF_CORESIGHT
 	help
 	  OpenFirmware CoreSight accessors
 
+config OF_BATTERYDATA
+	def_bool y
+	help
+	  OpenFirmware BatteryData accessors
+
+config OF_SUBCMDLINE_PARSE
+	bool "subcmdline"
+	default n
+	depends on W1
+	help
+	  OpenFirmware subcmdline parsing, it is add to meet
+		many customized bootargs.
+
 endmenu # OF

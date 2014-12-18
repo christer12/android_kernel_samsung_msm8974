@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -22,8 +22,10 @@
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/hrtimer.h>
+#include <linux/sched.h>
 #include <mach/msm_bus_board.h>
 #include <mach/msm_bus.h>
+#include <trace/events/power.h>
 #include "msm_bus_core.h"
 
 #define MAX_BUFF_SIZE 4096
@@ -59,12 +61,6 @@ struct msm_bus_fab_list {
 LIST_HEAD(fabdata_list);
 LIST_HEAD(cl_list);
 
-struct thresh {
-	int id;
-	u64 th;
-	bool trigger;
-};
-
 /**
  * The following structures and funtions are used for
  * the test-client which can be created at run-time.
@@ -73,7 +69,6 @@ struct thresh {
 static struct msm_bus_vectors init_vectors[1];
 static struct msm_bus_vectors current_vectors[1];
 static struct msm_bus_vectors requested_vectors[1];
-static struct thresh threshold;
 
 static struct msm_bus_paths shell_client_usecases[] = {
 	{
@@ -226,24 +221,6 @@ static int msm_bus_dbg_ab_set(void  *data, u64 val)
 }
 DEFINE_SIMPLE_ATTRIBUTE(shell_client_ab_fops, msm_bus_dbg_ab_get,
 	msm_bus_dbg_ab_set, "%llu\n");
-
-static int msm_bus_dbg_th_get(void  *data, u64 *val)
-{
-	*val = msm_bus_get_thresh(1);
-	MSM_BUS_DBG("Get th: %llu\n", *val);
-	return 0;
-}
-
-static int msm_bus_dbg_th_set(void  *data, u64 val)
-{
-	threshold.th = val;
-	MSM_BUS_DBG("Set th: %llu\n", val);
-	msm_bus_set_thresh(1, threshold.th);
-	msm_bus_set_thresh(2, threshold.th);
-	return 0;
-}
-DEFINE_SIMPLE_ATTRIBUTE(shell_client_th_fops, msm_bus_dbg_th_get,
-	msm_bus_dbg_th_set, "%llu\n");
 
 static int msm_bus_dbg_ib_get(void  *data, u64 *val)
 {
@@ -398,6 +375,8 @@ static int msm_bus_dbg_fill_cl_buffer(const struct msm_bus_scale_pdata *pdata,
 	ts = ktime_to_timespec(ktime_get());
 	i += scnprintf(buf + i, MAX_BUFF_SIZE - i, "\n%d.%d\n",
 		(int)ts.tv_sec, (int)ts.tv_nsec);
+	i += scnprintf(buf + i, MAX_BUFF_SIZE - i, "Process:%s, PID:%d\n",
+			current->comm, current->pid);
 	i += scnprintf(buf + i, MAX_BUFF_SIZE - i, "curr   : %d\n", index);
 	i += scnprintf(buf + i, MAX_BUFF_SIZE - i, "masters: ");
 
@@ -417,6 +396,14 @@ static int msm_bus_dbg_fill_cl_buffer(const struct msm_bus_scale_pdata *pdata,
 		i += scnprintf(buf + i, MAX_BUFF_SIZE - i, "%llu  ",
 			pdata->usecase[index].vectors[j].ib);
 	i += scnprintf(buf + i, MAX_BUFF_SIZE - i, "\n");
+
+	for (j = 0; j < pdata->usecase->num_paths; j++)
+		trace_bus_update_request((int)ts.tv_sec, (int)ts.tv_nsec,
+		pdata->name, index,
+		pdata->usecase[index].vectors[j].src,
+		pdata->usecase[index].vectors[j].dst,
+		pdata->usecase[index].vectors[j].ab,
+		pdata->usecase[index].vectors[j].ib);
 
 	cldata->size = i;
 	return i;
@@ -676,9 +663,6 @@ static int __init msm_bus_debugfs_init(void)
 	if (debugfs_create_file("ib", S_IRUGO | S_IWUSR, shell_client, &val,
 		&shell_client_ib_fops) == NULL)
 		goto err;
-	if (debugfs_create_file("threshold", S_IRUGO | S_IWUSR, shell_client, &val,
-		&shell_client_th_fops) == NULL)
-		goto err;
 	if (debugfs_create_file("ab", S_IRUGO | S_IWUSR, shell_client, &val,
 		&shell_client_ab_fops) == NULL)
 		goto err;
@@ -707,6 +691,7 @@ static int __init msm_bus_debugfs_init(void)
 			commit, (void *)fablist->name, &fabric_data_fops);
 		if (fablist->file == NULL) {
 			MSM_BUS_DBG("Cannot create files for commit data\n");
+			mutex_unlock(&msm_bus_dbg_fablist_lock);
 			goto err;
 		}
 	}

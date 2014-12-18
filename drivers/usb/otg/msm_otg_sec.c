@@ -19,8 +19,8 @@
 #ifdef CONFIG_USB_SWITCH_FSA9485
 #include <linux/i2c/fsa9485.h>
 #endif
-#ifdef CONFIG_MFD_MAX77803
-#include <linux/mfd/max77803.h>
+#ifdef CONFIG_MFD_MAX77693
+#include <linux/mfd/max77693.h>
 #endif
 
 #ifdef pr_fmt
@@ -28,62 +28,96 @@
 #endif
 #define pr_fmt(fmt) "otg %s %d: " fmt, __func__, __LINE__
 
-#define SM_WORK_TIMER_FREQ	(jiffies + msecs_to_jiffies(1000))
-
-#if 0
-#define MSM_OTG_LATE_INIT
-#define MSM_OTG_DIRECT_VBUS
-#endif
-
-static void msm_otg_set_vbus_state(int online);
-static void msm_hsusb_vbus_power(struct msm_otg *motg, bool on);
 static int ulpi_write(struct usb_phy *phy, u32 val, u32 reg);
 static int ulpi_read(struct usb_phy *phy, u32 reg);
+static void msm_hsusb_vbus_power(struct msm_otg *motg, bool on);
+
+#if defined(CONFIG_MUIC_SM5502_SUPPORT_LANHUB_TA)
+extern bool lanhub_ta_case;
+#endif
+int sec_battery_otg_control(int enable)
+{
+	union power_supply_propval value;
+	struct power_supply *psy;
+	int current_cable_type;
+	int ret = 0;
+
+	pr_info("%s: enable(%d)\n", __func__, enable);
+
+	psy = power_supply_get_by_name("battery");
+	if (!psy) {
+		pr_err("%s: ERROR! failed to get battery!\n", __func__);
+		return -1;
+	}
+
+#if defined(CONFIG_MUIC_SM5502_SUPPORT_LANHUB_TA)
+if (enable) {
+		current_cable_type = lanhub_ta_case ? POWER_SUPPLY_TYPE_LAN_HUB : POWER_SUPPLY_TYPE_OTG;
+		pr_info("%s: LANHUB+TA Case cable type change for the (%d) \n",
+								__func__,current_cable_type);
+}
+#else
+	if (enable)
+		current_cable_type = POWER_SUPPLY_TYPE_OTG;
+#endif
+	else
+		current_cable_type = POWER_SUPPLY_TYPE_BATTERY;
+
+	value.intval = current_cable_type;
+	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
+
+	if (ret) {
+		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
+			__func__, ret);
+	}
+	return ret;
+}
+
+struct booster_data sec_booster = {
+	.name = "sec_battery",
+	.boost = sec_battery_otg_control,
+};
 
 static int msm_otg_sec_power(bool on)
 {
-#ifdef CONFIG_MFD_MAX77803
+	int ret = 0;
+	pr_info("msm_otg_sec_power: %d\n", on);
+#ifdef CONFIG_MFD_MAX77693
 	muic_otg_control(on);
-#endif
-	return 0;
-}
-
-#if 1
-static int msm_otg_set_id_state_pbatest(int id, struct host_notify_dev *ndev)
-{
-	struct msm_otg *motg = container_of(ndev, struct msm_otg, ndev);
-
-#ifdef MSM_OTG_DIRECT_VBUS
-	pr_info("[OTG] %s %d, id: %d\n", __func__, __LINE__, id);
-	msm_hsusb_vbus_power(motg, id);
 #else
-	struct usb_phy *phy = &motg->phy;
-
-	pr_info("[OTG] %s %d, id: %d\n", __func__, __LINE__, id);
-	if (atomic_read(&motg->in_lpm))
-		pm_runtime_resume(phy->dev);
-
-	if (!id)
-		set_bit(ID, &motg->inputs);
-	else
-		clear_bit(ID, &motg->inputs);
-
-	schedule_work(&motg->sm_work);
+	ret = sec_battery_otg_control(on);
 #endif
-
-#ifdef CONFIG_USB_SWITCH_FSA9485
-	if (!id)
-		fsa9485_otg_detach();
-#endif
-	return 0;
+	return ret;
 }
-#endif
+
+static void msm_otg_late_power_work(struct work_struct *w)
+{
+	struct msm_otg *motg = container_of((struct delayed_work *)w,
+				struct msm_otg, late_power_work);
+	int booster = sec_get_notification(HNOTIFY_BOOSTER);
+
+	pr_info("%s, ID=%d, booster=%d\n", __func__,
+			test_bit(ID, &motg->inputs), booster);
+
+	if (!test_bit(ID, &motg->inputs) && (booster == NOTIFY_POWER_OFF)) {
+		msm_hsusb_vbus_power(motg, 0);
+		msleep(100);
+		msm_hsusb_vbus_power(motg, 1);
+	}
+}
 
 static void msm_otg_host_phy_tune(struct msm_otg *otg,
-		u32 paramb, u32 paramc)
+		u32 paramb, u32 paramc, u32 paramd)
 {
+	pr_info("ULPI 0x%x: 0x%x: 0x%x: 0x%x - orig\n",
+			ulpi_read(&otg->phy, 0x80),
+			ulpi_read(&otg->phy, 0x81),
+			ulpi_read(&otg->phy, 0x82),
+			ulpi_read(&otg->phy, 0x83));
+
 	ulpi_write(&otg->phy, paramb, 0x81);
 	ulpi_write(&otg->phy, paramc, 0x82);
+	ulpi_write(&otg->phy, paramd, 0x83);
 
 	pr_info("ULPI 0x%x: 0x%x: 0x%x: 0x%x\n",
 			ulpi_read(&otg->phy, 0x80),
@@ -110,12 +144,19 @@ static void msm_otg_host_notify(struct msm_otg *motg, int on)
 	pr_info("host_notify: %d, dock %d\n", on, motg->smartdock);
 
 	if (on)
-		msm_otg_host_phy_tune(motg, 0x33, 0x14);
+		msm_otg_host_phy_tune(motg, 0x33, 0xB, 0x13);
 }
 
 static int msm_host_notify_init(struct device *dev, struct msm_otg *motg)
 {
-	sec_otg_set_booster(msm_otg_set_id_state_pbatest);
+	sec_otg_register_booster(&sec_booster);
+	INIT_DELAYED_WORK(&motg->late_power_work, msm_otg_late_power_work);
+	return 0;
+}
+
+static int msm_host_notify_exit(struct device *dev, struct msm_otg *motg)
+{
+	cancel_delayed_work_sync(&motg->late_power_work);
 	return 0;
 }
 
@@ -142,8 +183,8 @@ void sec_otg_set_dock_state(int enable)
 			pr_info("clear B_SESS_VLD\n");
 			clear_bit(B_SESS_VLD, &motg->inputs);
 		}
-
-		schedule_work(&motg->sm_work);
+		/* use use non-reentrant wq, so that we don't run sm_work on multiple cpus */
+		queue_work(system_nrt_wq, &motg->sm_work);
 
 	} else {
 		pr_info("DOCK : detached\n");
@@ -159,7 +200,7 @@ void sec_otg_set_id_state(int id)
 	struct msm_otg *motg = the_msm_otg;
 	struct usb_phy *phy = &motg->phy;
 
-	pr_info("msm_otg_set_id_state is called, ID =%d\n", id);
+	pr_info("msm_otg_set_id_state is called, ID : %d\n", id);
 
 	if (id)
 		set_bit(ID, &motg->inputs);
@@ -170,8 +211,14 @@ void sec_otg_set_id_state(int id)
 		pr_info("msm_otg_set_id_state : in LPM\n");
 		pm_runtime_resume(phy->dev);
 	}
-
-	schedule_work(&motg->sm_work);
+	/* defer work-handling until pm_resume callback is handled */
+	if (motg->phy.state != OTG_STATE_UNDEFINED) {
+		if (atomic_read(&motg->pm_suspended))
+			motg->sm_work_pending = true;
+		else
+		/* use use non-reentrant wq, so that we don't run sm_work on multiple cpus */
+			queue_work(system_nrt_wq, &motg->sm_work);
+	}
 }
 EXPORT_SYMBOL(sec_otg_set_id_state);
 

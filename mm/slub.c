@@ -1387,7 +1387,9 @@ static struct page *new_slab(struct kmem_cache *s, gfp_t flags, int node)
 	}
 	setup_object(s, page, last);
 	set_freepointer(s, last, NULL);
-
+#ifdef CONFIG_TIMA_RKP_30
+	tima_send_cmd3(page_to_phys(page), compound_order(page), 1, 0x3f826221);
+#endif
 	page->freelist = start;
 	page->inuse = page->objects;
 	page->frozen = 1;
@@ -1440,6 +1442,9 @@ static void rcu_free_slab(struct rcu_head *h)
 
 static void free_slab(struct kmem_cache *s, struct page *page)
 {
+#ifdef CONFIG_TIMA_RKP_30
+	tima_send_cmd3(page_to_phys(page), compound_order(page), 0, 0x3f826221);
+#endif
 	if (unlikely(s->flags & SLAB_DESTROY_BY_RCU)) {
 		struct rcu_head *head;
 
@@ -2313,13 +2318,18 @@ static __always_inline void *slab_alloc(struct kmem_cache *s,
 		return NULL;
 
 redo:
-
 	/*
 	 * Must read kmem_cache cpu data via this cpu ptr. Preemption is
 	 * enabled. We may switch back and forth between cpus while
 	 * reading from one cpu area. That does not matter as long
 	 * as we end up on the original cpu again when doing the cmpxchg.
+	 *
+	 * Preemption is disabled for the retrieval of the tid because that
+	 * must occur from the current processor. We cannot allow rescheduling
+	 * on a different processor between the determination of the pointer
+	 * and the retrieval of the tid.
 	 */
+	preempt_disable();
 	c = __this_cpu_ptr(s->cpu_slab);
 
 	/*
@@ -2329,7 +2339,7 @@ redo:
 	 * linked list in between.
 	 */
 	tid = c->tid;
-	barrier();
+	preempt_enable();
 
 	object = c->freelist;
 	if (unlikely(!object || !node_match(c, node)))
@@ -2575,10 +2585,11 @@ redo:
 	 * data is retrieved via this pointer. If we are on the same cpu
 	 * during the cmpxchg then the free will succedd.
 	 */
+	preempt_disable();
 	c = __this_cpu_ptr(s->cpu_slab);
 
 	tid = c->tid;
-	barrier();
+	preempt_enable();
 
 	if (likely(page == c->page)) {
 		set_freepointer(s, object, c->freelist);
@@ -3458,6 +3469,7 @@ out_unlock:
 }
 EXPORT_SYMBOL(verify_mem_not_deleted);
 #endif
+
 #ifdef CONFIG_SEC_DEBUG_DOUBLE_FREE
 void kfree(const void *y)
 #else

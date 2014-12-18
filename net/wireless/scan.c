@@ -360,11 +360,12 @@ static int cmp_bss_core(struct cfg80211_bss *a,
 {
 	int r;
 
-#if !(defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE) || defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE))
+#if !(defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE) \
+	|| defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) \
+	|| defined(CONFIG_BCM4354) || defined(CONFIG_BCM4354_MODULE))
 	if (a->channel != b->channel)
 		return b->channel->center_freq - a->channel->center_freq;
-#endif /* CONFIG_BCM4339 */
-
+#endif /* CONFIG_BCM4335 || CONFIG_BCM4339 || CONFIG_BCM4354 */
 	if (is_mesh_bss(a) && is_mesh_bss(b)) {
 		r = cmp_ies(WLAN_EID_MESH_ID,
 			    a->information_elements,
@@ -381,12 +382,14 @@ static int cmp_bss_core(struct cfg80211_bss *a,
 	}
 
 	r = memcmp(a->bssid, b->bssid, ETH_ALEN);
-#if defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE) || defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE)
+#if (defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE) \
+	|| defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) \
+	|| defined(CONFIG_BCM4354) || defined(CONFIG_BCM4354_MODULE))
 	if (r)
 		return r;
 	if (a->channel != b->channel)
 		return b->channel->center_freq - a->channel->center_freq;
-#endif /* CONFIG_BCM4339 */
+#endif /* CONFIG_BCM4335 || CONFIG_BCM4339 || CONFIG_BCM4354 */
 	return r;
 }
 

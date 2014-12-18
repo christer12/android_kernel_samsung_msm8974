@@ -76,7 +76,7 @@ void sync_sensor_state(struct ssp_data *data)
 
 	udelay(10);
 
-	for (uSensorCnt = 0; uSensorCnt < (SENSOR_MAX - 1); uSensorCnt++) {
+	for (uSensorCnt = 0; uSensorCnt < SENSOR_MAX; uSensorCnt++) {
 		if (atomic_read(&data->aSensorEnable) & (1 << uSensorCnt)) {
 			uBuf[1] = (u8)get_msdelay(data->adDelayBuf[uSensorCnt]);
 			uBuf[0] = (u8)get_delay_cmd(uBuf[1]);
@@ -136,6 +136,16 @@ static void print_sensordata(struct ssp_data *data, unsigned int uSensor)
 			data->buf[uSensor].sig_motion,
 			get_msdelay(data->adDelayBuf[uSensor]));
 		break;
+	case STEP_DETECTOR:
+		ssp_dbg("[SSP] %u : %u(%ums)\n", uSensor,
+			data->buf[uSensor].step_det,
+			get_msdelay(data->adDelayBuf[uSensor]));
+		break;
+	case STEP_COUNTER:
+		ssp_dbg("[SSP] %u : %u(%ums)\n", uSensor,
+			data->buf[uSensor].step_diff,
+			get_msdelay(data->adDelayBuf[uSensor]));
+		break;
 	default:
 		ssp_dbg("[SSP] Wrong sensorCnt: %u\n", uSensor);
 		break;
@@ -162,7 +172,7 @@ static void debug_work_func(struct work_struct *work)
 		return;
 	}
 
-	for (uSensorCnt = 0; uSensorCnt < (SENSOR_MAX - 1); uSensorCnt++)
+	for (uSensorCnt = 0; uSensorCnt < SENSOR_MAX; uSensorCnt++)
 		if (atomic_read(&data->aSensorEnable) & (1 << uSensorCnt))
 			print_sensordata(data, uSensorCnt);
 

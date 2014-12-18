@@ -51,7 +51,8 @@ enum mdss_mdp_wb_node_state {
 	REGISTERED,
 	IN_FREE_QUEUE,
 	IN_BUSY_QUEUE,
-	WITH_CLIENT
+	WITH_CLIENT,
+	WB_BUFFER_READY,
 };
 
 struct mdss_mdp_wb_data {
@@ -60,10 +61,13 @@ struct mdss_mdp_wb_data {
 	struct msmfb_data buf_info;
 	struct mdss_mdp_data buf_data;
 	int state;
+	bool user_alloc;
 };
 
 static DEFINE_MUTEX(mdss_mdp_wb_buf_lock);
 static struct mdss_mdp_wb mdss_mdp_wb_info;
+
+static void mdss_mdp_wb_free_node(struct mdss_mdp_wb_data *node);
 
 #ifdef DEBUG_WRITEBACK
 /* for debugging: writeback output buffer to allocated memory */
@@ -123,6 +127,34 @@ struct mdss_mdp_data *mdss_mdp_wb_debug_buffer(struct msm_fb_data_type *mfd)
 }
 #endif
 
+/*
+ * mdss_mdp_get_secure() - Queries the secure status of a writeback session
+ * @mfd:                   Frame buffer device structure
+ * @enabled:               Pointer to convey if session is secure
+ *
+ * This api enables an entity (userspace process, driver module, etc.) to
+ * query the secure status of a writeback session. The secure status is
+ * then supplied via a pointer.
+ */
+int mdss_mdp_wb_get_secure(struct msm_fb_data_type *mfd, uint8_t *enabled)
+{
+	struct mdss_mdp_wb *wb = mfd_to_wb(mfd);
+	if (!wb)
+		return -EINVAL;
+	*enabled = wb->is_secure;
+	return 0;
+}
+
+/*
+ * mdss_mdp_set_secure() - Updates the secure status of a writeback session
+ * @mfd:                   Frame buffer device structure
+ * @enable:                New secure status (1: secure, 0: non-secure)
+ *
+ * This api enables an entity to modify the secure status of a writeback
+ * session. If enable is 1, we allocate a secure pipe so that MDP is
+ * allowed to write back into the secure buffer. If enable is 0, we
+ * deallocate the secure pipe (if it was allocated previously).
+ */
 int mdss_mdp_wb_set_secure(struct msm_fb_data_type *mfd, int enable)
 {
 	struct mdss_mdp_wb *wb = mfd_to_wb(mfd);
@@ -130,16 +162,29 @@ int mdss_mdp_wb_set_secure(struct msm_fb_data_type *mfd, int enable)
 	struct mdss_mdp_pipe *pipe;
 	struct mdss_mdp_mixer *mixer;
 
+	if (enable == ctl->is_secure)
+		return 0;
+
 	pr_debug("setting secure=%d\n", enable);
-	
-    // add for ctl null check
-    if (!ctl) {
-        pr_err("ctl is null, the wb device is already closed.\n");
-        return 0;
-    }
-    
+	if ((enable != 1) && (enable != 0)) {
+		pr_err("Invalid enable value = %d\n", enable);
+		return -EINVAL;
+	}
+
+	if (!ctl || !ctl->mdata) {
+		pr_err("%s : ctl is NULL", __func__);
+		return -EINVAL;
+	}
+
+	if (!wb) {
+		pr_err("unable to start, writeback is not initialized\n");
+		return -ENODEV;
+	}
+
 	ctl->is_secure = enable;
 	wb->is_secure = enable;
+
+	mdss_mdp_secure_vote(enable);
 
 	/* newer revisions don't require secure src pipe for secure session */
 	if (ctl->mdata->mdp_rev > MDSS_MDP_HW_REV_100)
@@ -248,12 +293,16 @@ static int mdss_mdp_wb_terminate(struct msm_fb_data_type *mfd)
 		struct mdss_mdp_wb_data *node, *temp;
 		list_for_each_entry_safe(node, temp, &wb->register_queue,
 					 registered_entry) {
+			mdss_mdp_wb_free_node(node);
 			list_del(&node->registered_entry);
 			kfree(node);
 		}
 	}
 
-	wb->is_secure = false;
+	if (wb->is_secure) {
+		mdss_mdp_secure_vote(0);
+		wb->is_secure = false;
+	}
 	if (wb->secure_pipe)
 		mdss_mdp_pipe_destroy(wb->secure_pipe);
 	mutex_unlock(&wb->lock);
@@ -306,6 +355,7 @@ static int mdss_mdp_wb_register_node(struct mdss_mdp_wb *wb,
 		pr_err("Invalid wb node\n");
 		return -EINVAL;
 	}
+
 	node->state = REGISTERED;
 	list_add_tail(&node->registered_entry, &wb->register_queue);
 
@@ -358,11 +408,24 @@ static struct mdss_mdp_wb_data *get_local_node(struct mdss_mdp_wb *wb,
 static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 						struct msmfb_data *data)
 {
-
+#if defined(CONFIG_FB_MSM_CMD_MODE)
+	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd); 
+#endif
 	struct mdss_mdp_wb *wb = mfd_to_wb(mfd);
 	struct mdss_mdp_wb_data *node;
 	struct mdss_mdp_img_data *buf;
 	int ret;
+
+	if (!list_empty(&wb->register_queue)) {
+		list_for_each_entry(node, &wb->register_queue, registered_entry)
+			if ((node->buf_info.memory_id == data->memory_id) &&
+					(node->buf_info.offset == data->offset)) {
+				pr_debug("found node fd=%x off=%x addr=%x\n",
+						data->memory_id, data->offset,
+						node->buf_data.p[0].addr);
+				return node;
+			}
+	}
 
 	node = kzalloc(sizeof(struct mdss_mdp_wb_data), GFP_KERNEL);
 	if (node == NULL) {
@@ -370,10 +433,17 @@ static struct mdss_mdp_wb_data *get_user_node(struct msm_fb_data_type *mfd,
 		return NULL;
 	}
 
+	node->user_alloc = true;
 	node->buf_data.num_planes = 1;
 	buf = &node->buf_data.p[0];
 	if (wb->is_secure)
 		buf->flags |= MDP_SECURE_OVERLAY_SESSION;
+
+#if defined(CONFIG_FB_MSM_CMD_MODE)
+	if (!is_mdss_iommu_attached()) 
+		mdss_iommu_attach(ctl->mdata); 
+#endif
+
 	ret = mdss_mdp_get_img(data, buf);
 	if (IS_ERR_VALUE(ret)) {
 		pr_err("error getting buffer info\n");
@@ -397,6 +467,22 @@ register_fail:
 	return NULL;
 }
 
+static void mdss_mdp_wb_free_node(struct mdss_mdp_wb_data *node)
+{
+	struct mdss_mdp_img_data *buf;
+
+	if (node->user_alloc) {
+		buf = &node->buf_data.p[0];
+		pr_debug("free user node mem_id=%d offset=%u addr=0x%x\n",
+				node->buf_info.memory_id,
+				node->buf_info.offset,
+				buf->addr);
+
+		mdss_mdp_put_img(&node->buf_data.p[0]);
+		node->user_alloc = false;
+	}
+}
+
 static int mdss_mdp_wb_queue(struct msm_fb_data_type *mfd,
 				struct msmfb_data *data, int local)
 {
@@ -417,13 +503,37 @@ static int mdss_mdp_wb_queue(struct msm_fb_data_type *mfd,
 	if (node == NULL)
 		node = get_user_node(mfd, data);
 
-	if (!node || node->state == IN_BUSY_QUEUE ||
-	    node->state == IN_FREE_QUEUE) {
-		pr_err("memory not registered or Buffer already with us\n");
-		ret = -EINVAL;
+	if (!node) {
+		pr_err("memory not registered\n");
+		ret = -ENOENT;
 	} else {
-		list_add_tail(&node->active_entry, &wb->free_queue);
-		node->state = IN_FREE_QUEUE;
+		struct mdss_mdp_img_data *buf = &node->buf_data.p[0];
+
+		switch (node->state) {
+		case IN_FREE_QUEUE:
+			pr_err("node 0x%pa was already queueued before\n",
+					&buf->addr);
+			ret = -EINVAL;
+			break;
+		case IN_BUSY_QUEUE:
+			pr_err("node 0x%pa still in busy state\n", &buf->addr);
+			ret = -EBUSY;
+			break;
+		case WB_BUFFER_READY:
+			pr_debug("node 0x%pa re-queueded without dequeue\n",
+				&buf->addr);
+			list_del(&node->active_entry);
+		case WITH_CLIENT:
+		case REGISTERED:
+			list_add_tail(&node->active_entry, &wb->free_queue);
+			node->state = IN_FREE_QUEUE;
+			break;
+		default:
+			pr_err("Invalid node 0x%pa state %d\n",
+				&buf->addr, node->state);
+			ret = -EINVAL;
+			break;
+		}
 	}
 	mutex_unlock(&wb->lock);
 
@@ -482,26 +592,20 @@ static int mdss_mdp_wb_dequeue(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
-static void mdss_mdp_wb_callback(void *arg)
-{
-	if (arg)
-		complete((struct completion *) arg);
-}
-
 int mdss_mdp_wb_kickoff(struct msm_fb_data_type *mfd)
 {
 	struct mdss_mdp_wb *wb = mfd_to_wb(mfd);
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
 	struct mdss_mdp_wb_data *node = NULL;
 	int ret = 0;
-	DECLARE_COMPLETION_ONSTACK(comp);
 	struct mdss_mdp_writeback_arg wb_args = {
-		.callback_fnc = mdss_mdp_wb_callback,
-		.priv_data = &comp,
+		.data = NULL,
 	};
 
 	if (!ctl->power_on)
 		return 0;
+
+	memset(&wb_args, 0, sizeof(wb_args));
 
 	mutex_lock(&mdss_mdp_wb_buf_lock);
 	if (wb) {
@@ -530,24 +634,27 @@ int mdss_mdp_wb_kickoff(struct msm_fb_data_type *mfd)
 		pr_err("unable to get writeback buf ctl=%d\n", ctl->num);
 		/* drop buffer but don't return error */
 		ret = 0;
+		mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_DONE);
 		goto kickoff_fail;
 	}
 
-	ret = mdss_mdp_display_commit(ctl, &wb_args);
+	ret = mdss_mdp_writeback_display_commit(ctl, &wb_args);
 	if (ret) {
 		pr_err("error on commit ctl=%d\n", ctl->num);
+		/* output buffer was not used put it back to free_queue */
+		if (node) {
+			mutex_lock(&wb->lock);
+			list_add(&node->active_entry, &wb->free_queue);
+			node->state = IN_FREE_QUEUE;
+			mutex_unlock(&wb->lock);
+		}
 		goto kickoff_fail;
 	}
-
-	ret = wait_for_completion_timeout(&comp, KOFF_TIMEOUT);
-	if (ret == 0)
-		WARN(1, "wfd kick off time out=%d ctl=%d", ret, ctl->num);
-	else
-		ret = 0;
 
 	if (wb && node) {
 		mutex_lock(&wb->lock);
 		list_add_tail(&node->active_entry, &wb->busy_queue);
+		node->state = WB_BUFFER_READY;
 		mutex_unlock(&wb->lock);
 		wake_up(&wb->wait_q);
 	}
@@ -583,6 +690,39 @@ int mdss_mdp_wb_set_mirr_hint(struct msm_fb_data_type *mfd, int hint)
 	}
 }
 
+int mdss_mdp_wb_get_format(struct msm_fb_data_type *mfd,
+					struct mdp_mixer_cfg *mixer_cfg)
+{
+	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
+
+	if (!ctl) {
+		pr_err("No panel data!\n");
+		return -EINVAL;
+	} else {
+		mixer_cfg->writeback_format = ctl->dst_format;
+ 	}
+
+	return 0;
+}
+
+int mdss_mdp_wb_set_format(struct msm_fb_data_type *mfd, u32 dst_format)
+{
+	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
+
+	if (!ctl) {
+		pr_err("No panel data!\n");
+		return -EINVAL;
+	} else if (dst_format >= MDP_IMGTYPE_LIMIT2) {
+		pr_err("Invalid dst format=%u\n", dst_format);
+		return -EINVAL;
+	} else {
+		ctl->dst_format = dst_format;
+ 	}
+
+	pr_debug("wfd format %d\n", ctl->dst_format);
+	return 0;
+}
+
 int mdss_mdp_wb_ioctl_handler(struct msm_fb_data_type *mfd, u32 cmd,
 				void *arg)
 {
@@ -601,7 +741,8 @@ int mdss_mdp_wb_ioctl_handler(struct msm_fb_data_type *mfd, u32 cmd,
 		break;
 	case MSMFB_WRITEBACK_QUEUE_BUFFER:
 		if (!copy_from_user(&data, arg, sizeof(data))) {
-			ret = mdss_mdp_wb_queue(mfd, arg, false);
+			ret = mdss_mdp_wb_queue(mfd, &data, false);
+			ret = copy_to_user(arg, &data, sizeof(data));
 		} else {
 			pr_err("wb queue buf failed on copy_from_user\n");
 			ret = -EFAULT;
@@ -609,7 +750,8 @@ int mdss_mdp_wb_ioctl_handler(struct msm_fb_data_type *mfd, u32 cmd,
 		break;
 	case MSMFB_WRITEBACK_DEQUEUE_BUFFER:
 		if (!copy_from_user(&data, arg, sizeof(data))) {
-			ret = mdss_mdp_wb_dequeue(mfd, arg);
+			ret = mdss_mdp_wb_dequeue(mfd, &data);
+			ret = copy_to_user(arg, &data, sizeof(data));
 		} else {
 			pr_err("wb dequeue buf failed on copy_from_user\n");
 			ret = -EFAULT;

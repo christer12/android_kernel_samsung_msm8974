@@ -36,57 +36,18 @@
 #include <linux/wait.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include <linux/power_supply.h>
-#include <linux/battery/sec_charger.h>
 #include <video/edid.h>
-#include "../../../../video/edid.h"
 #include <linux/input.h>
-#include "../../mdss/mdss_panel.h"
-#include "../../mdss/mdss_hdmi_tx.h"
-#include "../../mdss/mdss_hdmi_hdcp.h"
 #include "sii8240_rcp.h"
+#include "sii8240_platform.h"
 #include "sii8240_driver.h"
-#include <linux/ctype.h>
-#include <linux/barcode_emul.h>
+/*#include <linux/barcode_emul.h>*/
 #if defined(CONFIG_OF)
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #ifdef SII8240_CHECK_MONITOR
 #include <mach/scm.h>
 #endif
-#ifdef CONFIG_MFD_MAX77803
-#include <linux/mfd/max77803-private.h>
-#endif
-#include <mach/gpiomux.h>
-
-static struct gpiomux_setting hdmi_active_1_cfg = {
-	.func = GPIOMUX_FUNC_1,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_UP,
-};
-
-static struct gpiomux_setting hdmi_suspend_cfg = {
-	.func = GPIOMUX_FUNC_GPIO,
-	.drv = GPIOMUX_DRV_2MA,
-	.pull = GPIOMUX_PULL_DOWN,
-};
-
-static struct msm_gpiomux_config msm_hdmi_ddc_configs[] = {
-	{
-		.gpio = 32,
-		.settings = {
-			[GPIOMUX_ACTIVE]    = &hdmi_active_1_cfg,
-			[GPIOMUX_SUSPENDED] = &hdmi_suspend_cfg,
-		},
-	},
-	{
-		.gpio = 33,
-		.settings = {
-			[GPIOMUX_ACTIVE]    = &hdmi_active_1_cfg,
-			[GPIOMUX_SUSPENDED] = &hdmi_suspend_cfg,
-		},
-	},
-};
 
 
 #undef pr_debug
@@ -98,6 +59,14 @@ static struct msm_gpiomux_config msm_hdmi_ddc_configs[] = {
 
 #define CONFIG_MHL_SWING_LEVEL 1
 
+#ifdef CONFIG_EXTCON
+static struct sec_mhl_cable support_cable_list[] = {
+	{ .cable_type = EXTCON_MHL, },
+	{ .cable_type = EXTCON_MHL_VB, },
+	{ .cable_type = EXTCON_SMARTDOCK, },
+};
+#endif
+
 static struct device *sii8240_mhldev;
 static struct sii8240_data *g_sii8240;
 #ifdef SII8240_CHECK_MONITOR
@@ -105,63 +74,7 @@ static struct hdcp_auth_status g_monitor_cmd;
 #endif
 
 struct class *sec_mhl;
-#define FPGA_GPIO_MHL_EN 0
-#define FPGA_GPIO_MHL_RST 8
 EXPORT_SYMBOL(sec_mhl);
-#ifdef CONFIG_ARCH_MSM8974
-extern struct hdmi_hdcp_ctrl *hdcp_ctrl_global;
-#endif
-static bool check_vbus_present(void);
-
-static struct qpnp_pin_cfg  MHL_PIN_PM_GPIO_WAKE =
-{
-	.mode = 1, /*QPNP_PIN_MODE_DIG_OUT*/
-	.output_type = 0, /*QPNP_PIN_OUT_BUF_CMOS*/
-	.invert = 0, /*QPNP_PIN_INVERT_DISABLE*/
-	.pull = 5, /* QPNP_PIN_PULL_NO */
-	.vin_sel = 2,
-	.out_strength = 3, /*QPNP_PIN_OUT_STRENGTH_HIGH*/
-	.src_sel = 0, /*QPNP_PIN_SEL_FUNC_CONSTANT*/
-	.master_en = 1,
-};
-
-static struct qpnp_pin_cfg  MHL_PIN_PM_MPP_WAKE =
-{
-	.mode = 1, /*QPNP_PIN_MODE_DIG_OUT*/
-	.output_type = 0, /*QPNP_PIN_OUT_BUF_CMOS*/
-	.invert = 0, /*QPNP_PIN_INVERT_DISABLE*/
-	.pull = 1, /*PM8XXX_MPP_BI_PULLUP_OPEN*/
-	.vin_sel = 2,
-	.out_strength = 3, /*QPNP_PIN_OUT_STRENGTH_HIGH*/
-	.src_sel = 0, /*QPNP_PIN_SEL_FUNC_CONSTANT*/
-	.master_en = 1,
-};
-
-
-static struct qpnp_pin_cfg  MHL_PIN_PM_GPIO_SLEEP =
-{
-	.mode = 0, /*QPNP_PIN_MODE_DIG_IN*/
-	.output_type = 0, /*QPNP_PIN_OUT_BUF_CMOS*/
-	.invert = 0, /*QPNP_PIN_INVERT_DISABLE*/
-	.pull = 5, /* QPNP_PIN_PULL_NO */
-	.vin_sel = 2,
-	.out_strength = 3, /*QPNP_PIN_OUT_STRENGTH_HIGH*/
-	.src_sel = 0, /*QPNP_PIN_SEL_FUNC_CONSTANT*/
-	.master_en = 1,
-};
-
-static struct qpnp_pin_cfg  MHL_PIN_PM_MPP_SLEEP =
-{
-	.mode = 0, /*QPNP_PIN_MODE_DIG_IN*/
-	.output_type = 0, /*QPNP_PIN_OUT_BUF_CMOS*/
-	.invert = 0, /*QPNP_PIN_INVERT_DISABLE*/
-	.pull = 1, /*PM8XXX_MPP_BI_PULLUP_OPEN*/
-	.vin_sel = 2,
-	.out_strength = 3, /*QPNP_PIN_OUT_STRENGTH_HIGH*/
-	.src_sel = 0, /*QPNP_PIN_SEL_FUNC_CONSTANT*/
-	.master_en = 1,
-};
-
 
 static int mhl_write_byte_reg(struct i2c_client *client, u32 offset,
 			u8 value)
@@ -369,8 +282,7 @@ static int set_mute_mode(struct sii8240_data *sii8240, bool mute)
 					__func__, __LINE__);
 			return ret;
 		}
-	}
-	else {
+	} else {
 		ret = mhl_modify_reg(tpi, 0x1A, AV_MUTE_MASK, AV_MUTE_NORMAL);
 		if (unlikely(ret < 0)) {
 			pr_err("[ERROR]sii8240: %s():%d failed !\n",
@@ -398,7 +310,7 @@ void mhl_ddc_bypass(bool bypass_on)
 	int ret = 0;
 	struct i2c_client *tmds = g_sii8240->pdata->tmds_client;
 
-	pr_info("sii8240: ddc bypass - %s\n", bypass_on ? "on":"off");
+	pr_info("sii8240: ddc bypass - %s\n", bypass_on ? "on" : "off");
 
 	if (bypass_on == true) {
 		ret = mhl_set_reg(tmds, DCTL_REG, EXT_DDC_SEL);
@@ -413,32 +325,6 @@ void mhl_ddc_bypass(bool bypass_on)
 	}
 }
 
-#ifdef CONFIG_ARCH_MSM8974
-static int ap_hdmi_hdcp_auth(struct sii8240_data *sii8240)
-{
-	int ret = 0;
-
-	if(!sii8240->ap_hdcp_success) {
-		if(!hdmi_hpd_status())
-		{
-			pr_info("sii8240: HDMI hpd is low\n");
-			return 0;
-		}
-		mhl_ddc_bypass(true);
-		hdcp_ctrl_global->hdcp_state = HDCP_STATE_AUTHENTICATING;
-		ret = hdmi_hdcp_authentication_part1(hdcp_ctrl_global);
-		mhl_ddc_bypass(false);
-		if (ret) {
-			pr_err("%s: HDMI HDCP Auth Part I failed\n", __func__);
-			return ret;
-		}
-		hdcp_ctrl_global->hdcp_state = HDCP_STATE_AUTHENTICATED;
-		sii8240->ap_hdcp_success = true;
-		msleep(100);
-	}
-	return ret;
-}
-#endif
 static int sii8240_hdcp_on(struct sii8240_data *sii8240, bool hdcp_on)
 {
 	int ret = 0;
@@ -449,7 +335,7 @@ static int sii8240_hdcp_on(struct sii8240_data *sii8240, bool hdcp_on)
 #ifdef CONFIG_ARCH_MSM8974
 		/* execute AP HDCP if HW rev > 06 and no KS01*/
 		if (sii8240->pdata->drm_workaround)
-			ap_hdmi_hdcp_auth(sii8240);
+			platform_ap_hdmi_hdcp_auth(sii8240);
 #endif
 		ret = mhl_modify_reg(tpi, HDCP_CTRL,
 			BIT_TPI_HDCP_CONTROL_DATA_DOUBLE_RI_CHECK_MASK |
@@ -513,7 +399,7 @@ static int sii8240_tmds_active_hdcp(struct sii8240_data *sii8240)
 		pr_err("[ERROR] %s() mhl_modify_reg fail %d\n", __func__, __LINE__);
 		return ret;
 	}
-	pr_info("sii8240 : %s\n",__func__);
+	pr_info("sii8240 : %s\n", __func__);
 	ret = sii8240_send_avi_infoframe(sii8240);
 	if (unlikely(ret < 0)) {
 		pr_err("[ERROR] %s() sii8240_send_avi_infoframe fail %d\n", __func__, __LINE__);
@@ -1886,15 +1772,7 @@ static int sii8240_init_regs(struct sii8240_data *sii8240)
 		return ret;
 	}
 
-	/* TODO: Why writing the same register two times?? */
 	ret = mhl_write_byte_reg(hdmi, 0x4C, 0xD0);
-	if (unlikely(ret < 0)) {
-		pr_err("[ERROR] sii8240: %s():%d Fail to set register\n",
-			__func__, __LINE__);
-		return ret;
-	}
-
-	ret = mhl_write_byte_reg(hdmi, 0x4C, 0xE0);
 	if (unlikely(ret < 0)) {
 		pr_err("[ERROR] sii8240: %s():%d Fail to set register\n",
 			__func__, __LINE__);
@@ -1949,10 +1827,12 @@ static int sii8240_init_regs(struct sii8240_data *sii8240)
 	}
 
 	/*This code is for disable RGND open interrupt */
-	/*ret = mhl_write_byte_reg(disc, 0x13, 0xAC);
-	 *if (unlikely(ret < 0))
-	 *	return ret;
+	/*
+	ret = mhl_write_byte_reg(disc, 0x13, 0xAC);
+	if (unlikely(ret < 0))
+		return ret;
 	*/
+
 	ret = mhl_write_byte_reg(hdmi, TPI_PACKET_FILTER_REG,
 					DROP_GCP_PKT | DROP_AVI_PKT |
 					DROP_MPEG_PKT | DROP_SPIF_PKT |
@@ -2059,22 +1939,30 @@ static int sii8240_init_regs(struct sii8240_data *sii8240)
 static int sii8240_msc_req_locked(struct sii8240_data *sii8240, u8 req_type,
 				  u8 offset, u8 first_data, u8 second_data)
 {
-	int ret;
+	int ret = 1;
 	struct i2c_client *cbus = sii8240->pdata->cbus_client;
-	bool write_offset = req_type & (START_READ_DEVCAP |
+	bool write_offset;
+	bool write_first_data;
+	bool write_second_data;
+
+	mutex_unlock(&sii8240->lock);
+	mutex_lock(&sii8240->msc_lock);
+
+	write_offset = req_type & (START_READ_DEVCAP |
 			START_WRITE_STAT_SET_INT | START_WRITE_BURST);
-	bool write_first_data = req_type &
+	write_first_data = req_type &
 		(START_WRITE_STAT_SET_INT | START_MSC_MSG);
-	bool write_second_data = req_type & START_MSC_MSG;
+	write_second_data = req_type & START_MSC_MSG;
 
 	pr_info("%s() SEND:offset = 0x%x\n", __func__, offset);
+	init_completion(&sii8240->cbus_complete);
 
 	if (write_offset) {
 		ret = mhl_write_byte_reg(cbus, MSC_CMD_OR_OFFSET_REG, offset);
 		if (unlikely(ret < 0)) {
 			pr_err("[ERROR] sii8240: %s():%d failed !\n",
 					__func__, __LINE__);
-			return ret;
+			goto err_exit;
 		}
 	}
 	if (write_first_data) {
@@ -2082,7 +1970,7 @@ static int sii8240_msc_req_locked(struct sii8240_data *sii8240, u8 req_type,
 		if (unlikely(ret < 0)) {
 			pr_err("[ERROR] sii8240: %s():%d failed !\n",
 					__func__, __LINE__);
-			return ret;
+			goto err_exit;
 		}
 	}
 	if (write_second_data) {
@@ -2090,13 +1978,11 @@ static int sii8240_msc_req_locked(struct sii8240_data *sii8240, u8 req_type,
 		if (unlikely(ret < 0)) {
 			pr_err("[ERROR] sii8240: %s():%d failed !\n",
 					__func__, __LINE__);
-			return ret;
+			goto err_exit;
 		}
 	}
 
-	mutex_unlock(&sii8240->lock);
-	mutex_lock(&sii8240->msc_lock);
-	init_completion(&sii8240->cbus_complete);
+
 	ret = mhl_write_byte_reg(cbus, CBUS_MSC_CMD_START_REG, req_type);
 	if (unlikely(ret < 0)) {
 		pr_err("[ERROR] sii8240: %s():%d failed !\n",
@@ -2104,12 +1990,14 @@ static int sii8240_msc_req_locked(struct sii8240_data *sii8240, u8 req_type,
 		goto err_exit;
 	}
 
-	ret = wait_for_completion_timeout(&sii8240->cbus_complete,
-					  msecs_to_jiffies(2000));
-	if (ret == 0)
-		pr_warn("[WARN] sii8240: %s() timeout. type:0x%X, offset:0x%X\n",
-						__func__, req_type, offset);
-	ret = ret ? 0 : -EIO;
+	if (!completion_done(&sii8240->cbus_complete)) {
+		ret = wait_for_completion_timeout(&sii8240->cbus_complete,
+				msecs_to_jiffies(2000));
+		if (ret == 0)
+			pr_warn("[WARN] sii8240: %s() timeout. type:0x%X, offset:0x%X\n",
+					__func__, req_type, offset);
+		ret = ret ? 0 : -EIO;
+	}
 err_exit:
 	mutex_unlock(&sii8240->msc_lock);
 	mutex_lock(&sii8240->lock);
@@ -2364,14 +2252,14 @@ static void sii8240_setup_charging(struct sii8240_data *sii8240)
 	u16 adopter_id;
 	u8 *peer_devcap = sii8240->regs.peer_devcap;
 
-	if ((peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) == 0x20) {
+	if ((peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) >= 0x20) {
 		dev_cat = peer_devcap[MHL_DEVCAP_DEV_CAT];
 		pr_info("sii8240: DEV_CAT 0x%x\n", dev_cat);
 		if (((dev_cat >> 4) & 0x1) == 1) {
 			plim = ((dev_cat >> 5) & 0x3);
 			pr_info("sii8240 : PLIM 0x%x\n", plim);
-			if (sii8240->pdata->vbus_present)
-				sii8240->pdata->vbus_present(false, plim);
+			if (sii8240->pdata->charger_mhl_cb)
+				sii8240->pdata->charger_mhl_cb(false, plim);
 		}
 	} else if ((peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) == 0x10) {
 		adopter_id = peer_devcap[MHL_DEVCAP_ADOPTER_ID_L] |
@@ -2380,8 +2268,8 @@ static void sii8240_setup_charging(struct sii8240_data *sii8240)
 				adopter_id, peer_devcap[MHL_DEVCAP_RESERVED]);
 
 		if (adopter_id == 321 && peer_devcap[MHL_DEVCAP_RESERVED] == 2) {
-			if (sii8240->pdata->vbus_present)
-				sii8240->pdata->vbus_present(false, 0x01);
+			if (sii8240->pdata->charger_mhl_cb)
+				sii8240->pdata->charger_mhl_cb(false, 0x01);
 		}
 	} else {
 		pr_err("sii8240:%s MHL version error - 0x%X\n", __func__,
@@ -2746,7 +2634,7 @@ static int sii8240_check_avi_info(struct sii8240_data *sii8240)
 			ret = 1;
 	}
 
-	if(ret == 1) {
+	if (ret == 1) {
 		pr_info("%s() current_aviInfoFrame  -------\n", __func__);
 		print_hex_dump(KERN_ERR, "sii8240: avi_info = ",
 			DUMP_PREFIX_NONE, 16, 1,
@@ -3079,11 +2967,7 @@ static int sii8240_bypass_avi_info_locked(struct sii8240_data *sii8240)
 		return ret;
 	}
 
-	/*HDMI input clock is under 75MHz*/
-	if (sii8240->aviInfoFrame[INFO_VIC] < 4)
-		ret = mhl_write_byte_reg(hdmi, 0x4C, 0xE0);
-	else
-		ret = mhl_write_byte_reg(hdmi, 0x4C, 0xD0);
+	ret = mhl_write_byte_reg(hdmi, 0x4C, 0xD0);
 	if (unlikely(ret < 0)) {
 		pr_err("[ERROR] sii8240: %s():%d mhl_write_byte_reg\n",
 				__func__, __LINE__);
@@ -3150,7 +3034,7 @@ static void sii8240_avi_control_thread(struct work_struct *work)
 				pr_info("sii8240: DEVCAP_DEV_CAT read fail\n");
 		}
 
-		if(!sii8240->hpd_status) {
+		if (!sii8240->hpd_status) {
 			pr_err("[ERROR] sii8240: hpd_status false\n");
 			goto exit;
 		}
@@ -3163,9 +3047,13 @@ static void sii8240_avi_control_thread(struct work_struct *work)
 			pr_err("[ERROR] sii8240: edid read failed\n");
 			goto exit;
 		}
-		mhl_hpd_handler(true);
 
-		if (((sii8240->regs.peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) == 0x20)
+		if (sii8240->pdata->hdmi_mhl_ops) {
+			struct msm_hdmi_mhl_ops *hdmi_mhl_ops =	sii8240->pdata->hdmi_mhl_ops;
+			hdmi_mhl_ops->set_upstream_hpd(sii8240->pdata->hdmi_pdev, 1);
+		}
+
+		if (((sii8240->regs.peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) >= 0x20)
 		&& (sii8240->regs.peer_devcap[MHL_DEVCAP_VID_LINK_MODE] &
 					 (MHL_DEV_VID_LINK_SUPP_PPIXEL |
 					MHL_DEV_VID_LINK_SUPPYCBCR422)) &&
@@ -3300,8 +3188,9 @@ static void sii8240_avi_control_thread(struct work_struct *work)
 			goto exit;
 		}
 
-		if (((sii8240->regs.peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) == 0x20)
-			&& (sii8240->regs.peer_devcap[MHL_DEVCAP_VID_LINK_MODE] &
+		if (((sii8240->regs.peer_devcap[MHL_DEVCAP_MHL_VERSION]
+						& 0xF0) >= 0x20) &&
+		(sii8240->regs.peer_devcap[MHL_DEVCAP_VID_LINK_MODE] &
 				 MHL_DEV_VID_LINK_SUPP_PPIXEL) &&
 		(sii8240->regs.peer_devcap[MHL_DEVCAP_VID_LINK_MODE] &
 				 MHL_DEV_VID_LINK_SUPPYCBCR422)) {
@@ -3347,6 +3236,10 @@ static void sii8240_detection_restart(struct work_struct *work)
 	mutex_lock(&sii8240->lock);
 
 	pr_info("sii8240: detection restarted\n");
+	if (sii8240->pdata->hdmi_mhl_ops) {
+		struct msm_hdmi_mhl_ops *hdmi_mhl_ops =	sii8240->pdata->hdmi_mhl_ops;
+		hdmi_mhl_ops->set_upstream_hpd(sii8240->pdata->hdmi_pdev, 0);
+	}
 	if (sii8240->mhl_connected == false) {
 		pr_err("[ERROR] sii8240 : already powered off\n");
 		goto err_exit;
@@ -3396,18 +3289,20 @@ static void sii8240_power_down_process(struct sii8240_data *sii8240)
 				&sii8240->redetect_work);
 	}
 }
-static int sii8240_detection_callback(struct notifier_block *this,
-					unsigned long event, void *ptr)
+
+static int sii8240_mhl_onoff(unsigned long event)
 {
 	int ret;
-	struct sii8240_data *sii8240 = container_of(this, struct sii8240_data,
-							mhl_nb);
+	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
 	int handled = MHL_CON_UNHANDLED;
- 
+
 	if (event == sii8240->muic_state) {
 		pr_info("sii8240 : Same muic event, Ignored!\n");
 		return MHL_CON_UNHANDLED;
 	}
+
+	if (sii8240->pdata->int_gpio_config)
+		sii8240->pdata->int_gpio_config(event);
 
 	if (event) {
 		pr_info("sii8240:detection started\n");
@@ -3418,13 +3313,18 @@ static int sii8240_detection_callback(struct notifier_block *this,
 	} else {
 		pr_info("sii8240:disconnection\n");
 		/* Charging stop when MHL detach */
-		if (sii8240->pdata->vbus_present)
-			sii8240->pdata->vbus_present(false, -1);
-		mhl_hpd_handler(false);
+		if (sii8240->pdata->charger_mhl_cb)
+			sii8240->pdata->charger_mhl_cb(false, -1);
 		sii8240->mhl_connected = false;
 		sii8240->muic_state = MHL_DETACHED;
 		wake_unlock(&sii8240->mhl_wake_lock);
 		mutex_lock(&sii8240->lock);
+
+		if (sii8240->pdata->hdmi_mhl_ops) {
+			struct msm_hdmi_mhl_ops *hdmi_mhl_ops =	sii8240->pdata->hdmi_mhl_ops;
+			hdmi_mhl_ops->set_upstream_hpd(sii8240->pdata->hdmi_pdev, 0);
+		}
+
 		goto power_down;
 	}
 	pr_info("lock M--->%d\n", __LINE__);
@@ -3522,6 +3422,45 @@ power_down:
 	return handled;
 }
 
+#ifdef CONFIG_EXTCON
+static void sii8240_extcon_work(struct work_struct *work)
+{
+	struct sec_mhl_cable *cable =
+		container_of(work, struct sec_mhl_cable, work);
+
+	sii8240_mhl_onoff(cable->cable_state);
+}
+
+static int sii8240_extcon_notifier(struct notifier_block *self,
+		unsigned long event, void *ptr)
+{
+	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
+	struct sec_mhl_cable *cable =
+		container_of(self, struct sec_mhl_cable, nb);
+	pr_info("%s: '%s' is %s\n", extcon_cable_name[cable->cable_type],
+			__func__, event ? "attached" : "detached");
+
+	if (cable->cable_type == EXTCON_MHL) {
+		cable->cable_state = event;
+		sii8240->pdata->is_smartdock = false;
+		schedule_work(&cable->work);
+	} else if (cable->cable_type == EXTCON_MHL_VB) {
+		/*Here, just notify vbus status to mhl driver.*/
+	} else if (cable->cable_type == EXTCON_SMARTDOCK) {
+		cable->cable_state = event;
+		sii8240->pdata->is_smartdock = true;
+		schedule_work(&cable->work);
+	}
+	return NOTIFY_DONE;
+}
+#else
+static int sii8240_detection_callback(struct notifier_block *this,
+					unsigned long event, void *ptr)
+{
+	return sii8240_mhl_onoff(event);
+}
+#endif
+
 static int sii8240_discovery_irq_handler(struct sii8240_data *sii8240, u8 intr)
 {
 	u8 rgnd;
@@ -3614,7 +3553,7 @@ static int sii8240_msc_irq_handler(struct sii8240_data *sii8240, u8 intr)
 			if (temp & HPD_OVERRIDE_EN) {
 				/* TODO:If HPD is overriden,//enable HPD_OUT bit
 				   in upstream register */
-				if(sii8240->hpd_status && hdmi_hpd_status()) {
+				if (sii8240->hpd_status && platform_hdmi_hpd_status()) {
 					pr_err("[ERROR] sii8240: hpd_status already true\n");
 					goto err_exit;
 				}
@@ -3636,6 +3575,11 @@ static int sii8240_msc_irq_handler(struct sii8240_data *sii8240, u8 intr)
 			if (temp & HPD_OVERRIDE_EN) {
 				/* TODO:If HPD is overriden,clear HPD_OUT bit
 				   upstream register */
+				if (sii8240->pdata->hdmi_mhl_ops) {
+					struct msm_hdmi_mhl_ops *hdmi_mhl_ops =	sii8240->pdata->hdmi_mhl_ops;
+					hdmi_mhl_ops->set_upstream_hpd(sii8240->pdata->hdmi_pdev, 0);
+				}
+
 				sii8240->hpd_status = false;
 				sii8240->tmds_enable = false;
 				sii8240->ap_hdcp_success = false;
@@ -4519,8 +4463,8 @@ static irqreturn_t sii8240_irq_thread(int irq, void *data)
 				}
 			}
 		if (sii8240->state == STATE_MHL_CONNECTED) {
-			if(sii8240->pdata->vbus_present)
-				sii8240->pdata->vbus_present(true, 0x03);
+			if (sii8240->pdata->charger_mhl_cb)
+				sii8240->pdata->charger_mhl_cb(true, 0x03);
 			ret = sii8240_init_regs(sii8240);
 			if (unlikely(ret < 0)) {
 				pr_err("[ERROR] %s() sii8240_init_regs\n", __func__);
@@ -4543,10 +4487,11 @@ static irqreturn_t sii8240_irq_thread(int irq, void *data)
 				pr_info("sii8240: interrupt disabled\n");
 			}
 			/* If there is VBUS, charging start */
-			if(check_vbus_present()){
-				if (sii8240->pdata->vbus_present)
-					sii8240->pdata->vbus_present(false, 0x03);
-			}
+			if (sii8240->pdata->vbus_present)
+				if (sii8240->pdata->vbus_present()) {
+					if (sii8240->pdata->charger_mhl_cb)
+						sii8240->pdata->charger_mhl_cb(false, 0x03);
+				}
 			queue_work(sii8240->mhl_detection_workqueue,
 						 &sii8240->redetect_work);
 		}
@@ -4566,6 +4511,11 @@ static irqreturn_t sii8240_irq_thread(int irq, void *data)
 				sii8240->irq_enabled = false;
 				pr_info("sii8240: interrupt disabled\n");
 			}
+			/* CTS 3.3.5.2 */
+			/* OTG should turn off when discovery fail */
+			if(sii8240->pdata->charging_type== POWER_SUPPLY_TYPE_OTG)
+				if (sii8240->pdata->charger_mhl_cb)
+					sii8240->pdata->charger_mhl_cb(false, -1);
 			queue_work(sii8240->mhl_detection_workqueue,
 						 &sii8240->redetect_work);
 		}
@@ -4584,8 +4534,10 @@ static irqreturn_t sii8240_irq_thread(int irq, void *data)
 			pr_info("sii8240 : cbus_disconnected\n");
 			/* CTS 3.3.22.3 */
 			/* If cbus disconnected, OTG should also be stoped */
-			if (sii8240->pdata->muic_otg_set)
-				sii8240->pdata->muic_otg_set(false);
+			if(sii8240->pdata->charging_type== POWER_SUPPLY_TYPE_OTG)
+				if (sii8240->pdata->charger_mhl_cb)
+					sii8240->pdata->charger_mhl_cb(false, -1);
+
 			ret = mhl_write_byte_reg(hdmi, 0x80, 0xD0);
 			if (unlikely(ret < 0)) {
 				pr_err("[ERROR] sii8240: %s():%d failed\n",
@@ -4653,6 +4605,11 @@ static irqreturn_t sii8240_irq_thread(int irq, void *data)
 			} else {
 				pr_info("Sii8240:HPD event low\n");
 				if (sii8240->hpd_status) {
+					if (sii8240->pdata->hdmi_mhl_ops) {
+						struct msm_hdmi_mhl_ops *hdmi_mhl_ops =	sii8240->pdata->hdmi_mhl_ops;
+						hdmi_mhl_ops->set_upstream_hpd(sii8240->pdata->hdmi_pdev, 0);
+					}
+
 					sii8240->hpd_status = false;
 					tmds_control(sii8240, false);
 					ret = mhl_modify_reg(tmds,
@@ -4832,383 +4789,16 @@ static const struct dev_pm_ops sii8240_pm_ops = {
 	.resume         = sii8240_mhl_tx_resume,
 };
 
-#if defined(CONFIG_OF)
-/*FIXME, need to use more common/proper function 
-for checking a VBUS regardless of H/W charger IC*/
-static bool check_vbus_present(void) {
-	bool ret = true;
-#ifdef CONFIG_MFD_MAX77803
-	union power_supply_propval value;
-	psy_do_property("sec-charger", get, POWER_SUPPLY_PROP_ONLINE, value);
-	pr_info("sec-charger : %d\n", value.intval);
-	if (value.intval == POWER_SUPPLY_TYPE_BATTERY
-			|| value.intval == POWER_SUPPLY_TYPE_WIRELESS)
-		ret = false;
-#else
-	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
-	if (sii8240->pdata->gpio_ta_int > 0)
-		ret = gpio_get_value_cansleep(sii8240->pdata->gpio_ta_int) ? 
-								false : true;
-#endif
-	pr_info("VBUS : %s in %s\n", ret ? "IN" : "OUT", __func__);
-	return ret;			
-}
-
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-extern int poweroff_charging;
-#endif
-
-static void sii8240_charger_mhl_cb(bool otg_enable, int charger)
-{
-	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
-	union power_supply_propval value;
-	int i, ret = 0;
-	struct power_supply *psy;
-	int current_cable_type = POWER_SUPPLY_TYPE_MISC;
-	int sub_type = ONLINE_SUB_TYPE_MHL;
-	int power_type = ONLINE_POWER_TYPE_UNKNOWN;
-#ifdef CONFIG_MFD_MAX77803
-	int muic_cable_type = max77803_muic_get_charging_type();
-
-	pr_info("%s: muic cable_type = %d, otg_enable : %d, charger: %d\n",
-			__func__, muic_cable_type, otg_enable, charger);
-
-	switch (muic_cable_type) {
-		case CABLE_TYPE_SMARTDOCK_MUIC:
-		case CABLE_TYPE_SMARTDOCK_TA_MUIC:
-		case CABLE_TYPE_SMARTDOCK_USB_MUIC:
-			return;
-		default:
-			break;
-	}
-#else
-	pr_info("%s, otg_en:%d, charger:%d\n", __func__, otg_enable, charger);
-#endif
-	if (charger == 0x00) {
-		pr_info("%s() TA charger 500mA\n", __func__);
-		power_type = ONLINE_POWER_TYPE_MHL_500;
-	} else if (charger == 0x01) {
-		pr_info("%s() TA charger 900mA\n", __func__);
-		power_type = ONLINE_POWER_TYPE_MHL_900;
-	} else if (charger == 0x02) {
-		pr_info("%s() TA charger 1500mA\n", __func__);
-		power_type = ONLINE_POWER_TYPE_MHL_1500;
-	} else if (charger == 0x03) {
-		pr_info("%s() USB charger\n", __func__);
-		power_type = ONLINE_POWER_TYPE_USB;
-	} else
-		current_cable_type = POWER_SUPPLY_TYPE_BATTERY;
-
-	if (otg_enable) {
-		if(!check_vbus_present()) {
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-			if (!poweroff_charging) {
-#else
-			{
-#endif 
-				if (sii8240->pdata->muic_otg_set)
-					sii8240->pdata->muic_otg_set(true);
-				power_type = ONLINE_POWER_TYPE_UNKNOWN;
-				current_cable_type = POWER_SUPPLY_TYPE_OTG;
-			}
-		}
-	} else {
-		if (sii8240->pdata->muic_otg_set)
-			sii8240->pdata->muic_otg_set(false);
-	}
-
-	for (i = 0; i < 10; i++) {
-		psy = power_supply_get_by_name("battery");
-		if (psy)
-			break;
-	}
-	if (i == 10) {
-		pr_err("[ERROR] %s: fail to get battery ps\n", __func__);
-		return;
-	}
-
-	value.intval = current_cable_type << ONLINE_TYPE_MAIN_SHIFT
-               | sub_type << ONLINE_TYPE_SUB_SHIFT
-               | power_type << ONLINE_TYPE_PWR_SHIFT;
-
-	ret = psy->set_property(psy, POWER_SUPPLY_PROP_ONLINE, &value);
-	if (ret) {
-		pr_err("[ERROR] %s: fail to set power_suppy ONLINE property(%d)\n",
-			__func__, ret);
-		return;
-	}
-}
-
-static void of_sii8240_gpio_init(struct sii8240_platform_data *pdata)
-{
-	if(pdata->gpio_mhl_en > 0) {
-		if (gpio_request(pdata->gpio_mhl_en, "mhl_en")) {
-			pr_err("[ERROR] %s: unable to request gpio_mhl_en [%d]\n",
-					__func__,pdata->gpio_mhl_en);
-			return;
-		}
-		if(gpio_direction_output(pdata->gpio_mhl_en, 0)) {
-			pr_err("[ERROR] %s: unable to  gpio_mhl_en low[%d]\n",
-				__func__,pdata->gpio_mhl_en);
-			return;
-		}
-	}
-
-	if(pdata->gpio_mhl_reset > 0) {
-		if (gpio_request(pdata->gpio_mhl_reset, "mhl_reset")) {
-			pr_err("[ERROR] %s: unable to request gpio_mhl_reset [%d]\n",
-					__func__,pdata->gpio_mhl_reset);
-			return;
-		}
-		if(gpio_direction_output(pdata->gpio_mhl_reset, 0)) {
-			pr_err("[ERROR] %s: unable to gpio_mhl_reset low[%d]\n",
-				__func__,pdata->gpio_mhl_reset);
-			return;
-		}
-	}
-
-	if(pdata->drm_workaround) {
-		msm_gpiomux_install(msm_hdmi_ddc_configs, ARRAY_SIZE(msm_hdmi_ddc_configs));
-	}
-
-	if(pdata->gpio_barcode_emul) {
-		ice_gpiox_get(FPGA_GPIO_MHL_EN);
-		ice_gpiox_get(FPGA_GPIO_MHL_RST);
-	}
-}
-
-static void of_sii8240_gpio_config(enum mhl_sleep_state sleep_status)
-{
-	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
-	int ret;
-
-	pr_info("%s() %s - reset_pin_type(%d), en_pin_type(%d)\n", __func__,
-		sleep_status?"resume":"suspend",
-		sii8240->pdata->gpio_mhl_reset_type, sii8240->pdata->gpio_mhl_en_type);
-
-	if(sii8240->pdata->gpio_barcode_emul) {
-		gpio_tlmm_config(GPIO_CFG(sii8240->pdata->gpio_mhl_reset, 0, GPIO_CFG_OUTPUT,
-			GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
-		gpio_tlmm_config(GPIO_CFG(sii8240->pdata->gpio_mhl_en, 0, GPIO_CFG_INPUT,
-			GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), 1);
-		return;
-	}
-
-	if (sleep_status == MHL_SUSPEND_STATE) {
-		if (sii8240->pdata->gpio_mhl_reset) {
-			switch (sii8240->pdata->gpio_mhl_reset_type) {
-				case MHL_GPIO_AP_GPIO:
-					gpio_tlmm_config(GPIO_CFG(sii8240->pdata->gpio_mhl_reset, 0, GPIO_CFG_INPUT,
-						GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-					break;
-				case MHL_GPIO_PM_GPIO:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_reset, &MHL_PIN_PM_GPIO_SLEEP);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_reset\n", __func__);
-					break;
-				case MHL_GPIO_PM_MPP:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_reset, &MHL_PIN_PM_MPP_SLEEP);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_reset\n", __func__);
-					break;
-				default:
-					pr_err("[ERROR] %s() unknown gpio_mhl_reset's type\n", __func__);
-					break;
-			}
-		} else {
-			pr_err("[ERROR] %s() gpio_mhl_reset is NULL\n", __func__);
-		}
-
-		if (sii8240->pdata->gpio_mhl_en) {
-			switch (sii8240->pdata->gpio_mhl_en_type) {
-				case MHL_GPIO_AP_GPIO:
-					gpio_tlmm_config(GPIO_CFG(sii8240->pdata->gpio_mhl_en, 0, GPIO_CFG_INPUT,
-						GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-					break;
-				case MHL_GPIO_PM_GPIO:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_en, &MHL_PIN_PM_GPIO_SLEEP);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_en\n", __func__);
-					break;
-				case MHL_GPIO_PM_MPP:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_en, &MHL_PIN_PM_MPP_SLEEP);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_en\n", __func__);
-					break;
-				default:
-					pr_err("[ERROR] %s() unknown gpio_mhl_en's type\n", __func__);
-					break;
-			}
-		} else {
-			pr_err("[ERROR] %s() gpio_mhl_en is NULL\n", __func__);
-		}
-
-	/* suspend */
-	} else if (sleep_status == MHL_RESUME_STATE) {
-
-		if (sii8240->pdata->gpio_mhl_reset) {
-			switch (sii8240->pdata->gpio_mhl_reset_type) {
-				case MHL_GPIO_AP_GPIO:
-					gpio_tlmm_config(GPIO_CFG(sii8240->pdata->gpio_mhl_reset, 0, GPIO_CFG_OUTPUT,
-						GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-					break;
-				case MHL_GPIO_PM_GPIO:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_reset, &MHL_PIN_PM_GPIO_WAKE);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_reset\n", __func__);
-					break;
-				case MHL_GPIO_PM_MPP:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_reset, &MHL_PIN_PM_MPP_WAKE);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_reset\n", __func__);
-					break;
-				default:
-					pr_err("[ERROR] %s() unknown gpio_mhl_reset's type\n", __func__);
-					break;
-			}
-		}else {
-			pr_err("[ERROR] %s() gpio_mhl_reset is NULL\n", __func__);
-		}
-
-		if (sii8240->pdata->gpio_mhl_en) {
-			switch (sii8240->pdata->gpio_mhl_en_type) {
-				case MHL_GPIO_AP_GPIO:
-					gpio_tlmm_config(GPIO_CFG(sii8240->pdata->gpio_mhl_en, 0, GPIO_CFG_OUTPUT,
-						GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-					break;
-				case MHL_GPIO_PM_GPIO:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_en, &MHL_PIN_PM_GPIO_WAKE);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_en\n", __func__);
-					break;
-				case MHL_GPIO_PM_MPP:
-					ret = qpnp_pin_config(sii8240->pdata->gpio_mhl_en, &MHL_PIN_PM_MPP_WAKE);
-					if (unlikely(ret < 0))
-						pr_err("[ERROR] %s() set gpio_mhl_en\n", __func__);
-					break;
-				default:
-					pr_err("[ERROR] %s() unknown gpio_mhl_en's type\n", __func__);
-					break;
-			}
-		} else {
-			pr_err("[ERROR] %s() gpio_mhl_en is NULL\n", __func__);
-		}
-	}
-}
-
-static void of_sii8240_hw_onoff(bool onoff)
-{
-	int ret;
-	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
-	struct sii8240_platform_data *pdata = sii8240->pdata;
-	pr_info("%s: Onoff: %d\n", __func__, onoff);
-
-	if (onoff) {
-		if(pdata->gpio_barcode_emul)
-			ice_gpiox_set(FPGA_GPIO_MHL_EN, onoff);
-
-		if(sii8240->pdata->gpio_mhl_en > 0)
-			gpio_set_value_cansleep(sii8240->pdata->gpio_mhl_en, onoff);
-
-		if (pdata->vcc_1p2v) {
-			ret = regulator_set_voltage(pdata->vcc_1p2v, 1200000, 1200000);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_1p2v set_vtg failed rc\n");
-				return;
-			}
-
-			ret = regulator_enable(pdata->vcc_1p2v);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_1p2v enable failed rc\n");
-				return;
-			}
-		}
-
-		if (pdata->vcc_1p8v) {
-			ret = regulator_set_voltage(pdata->vcc_1p8v, 1800000, 1800000);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc 1p8v set_vtg failed rc\n");
-				goto err_regulator_1p8v;
-			}
-
-			ret = regulator_enable(pdata->vcc_1p8v);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc 1p8v enable failed rc\n");
-				goto err_regulator_1p8v;
-			}
-		}
-
-		if (pdata->vcc_3p3v) {
-			ret = regulator_set_voltage(pdata->vcc_3p3v, 3300000, 3300000); 
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_3p3v set_vtg failed rc\n");
-				goto err_regulator_3p3v;
-			}
-
-			ret = regulator_enable(pdata->vcc_3p3v);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_3p3v enable failed rc\n");
-				goto err_regulator_3p3v;
-			}
-		}
-
-	} else {
-		if(pdata->gpio_barcode_emul)
-			ice_gpiox_set(FPGA_GPIO_MHL_EN, onoff);
-
-		if(sii8240->pdata->gpio_mhl_en > 0)
-			gpio_set_value_cansleep(sii8240->pdata->gpio_mhl_en, onoff);
-
-		if (pdata->vcc_1p2v) {
-			ret = regulator_disable(pdata->vcc_1p2v);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_1p2v disable failed rc\n");
-				return;
-			}
-		}
-
-		if (pdata->vcc_1p8v) {
-			ret = regulator_disable(pdata->vcc_1p8v);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_1p8v disable failed rc\n");
-				return;
-			}
-		}
-
-		if (pdata->vcc_3p3v) {
-			ret = regulator_disable(pdata->vcc_3p3v);
-			if (unlikely(ret < 0)) {
-				pr_err("[ERROR] regulator vcc_3pv3 disable failed rc\n");
-				return;
-			}
-		}
-
-		usleep_range(10000, 20000);
-
-		if(sii8240->pdata->gpio_mhl_reset > 0)
-			gpio_set_value_cansleep(sii8240->pdata->gpio_mhl_reset, 0);
-	}
-
-	return;
-
-err_regulator_3p3v:
-	if (pdata->vcc_1p8v)
-		regulator_disable(pdata->vcc_1p8v);
-err_regulator_1p8v:
-	if (pdata->vcc_1p2v)
-		regulator_disable(pdata->vcc_1p2v);
-}
-
 
 #if defined (CONFIG_MACH_HLTEDCM)
-/* 
-This is only for H-DCM HW REV0.9 and REV1.0. 
-In those schematics the FELICA I2C pull up voltage source are connected to V_MHL 
-which is different voltage source from previous HW revision. 
-This means whenever the FELICA is working the V_MHL is controlled by FELICA driver 
-and this is why the duplicated extern function is declared and utilized here 
+/*
+This is only for H-DCM HW REV0.9 and REV1.0.
+In those schematics the FELICA I2C pull up voltage source are connected to V_MHL
+which is different voltage source from previous HW revision.
+This means whenever the FELICA is working the V_MHL is controlled by FELICA driver
+and this is why the duplicated extern function is declared and utilized here
 even this is kind of prohibited way to make a code.
-This has no harmful factor on the other models. This is only for H-DCM HW REV0.9/1.0. 
+This has no harmful factor on the other models. This is only for H-DCM HW REV0.9/1.0.
 */
 void of_sii8240_hw_poweron(bool enable)
 {
@@ -5220,128 +4810,36 @@ void of_sii8240_hw_poweron(bool enable)
 
 #endif
 
-static void of_sii8240_hw_reset(void)
+#ifdef CONFIG_EXTCON
+static int __init sii8240_init_cable_notify(void)
 {
-	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
-	pr_info("%s: hw_reset\n" , __func__);
-	if(sii8240->pdata->gpio_barcode_emul) {
-		usleep_range(10000, 20000);
-		ice_gpiox_set(FPGA_GPIO_MHL_RST, 1);
-		usleep_range(5000, 20000);
-		ice_gpiox_set(FPGA_GPIO_MHL_RST, 0);
-		usleep_range(10000, 20000);
-		ice_gpiox_set(FPGA_GPIO_MHL_RST, 1);
-	} else {
-		usleep_range(10000, 20000);
-		gpio_set_value_cansleep(sii8240->pdata->gpio_mhl_reset, 1);
-		usleep_range(5000, 20000);
-		gpio_set_value_cansleep(sii8240->pdata->gpio_mhl_reset, 0);
-		usleep_range(10000, 20000);
-		gpio_set_value_cansleep(sii8240->pdata->gpio_mhl_reset, 1);
+	struct sec_mhl_cable *cable;
+	int i;
+	int ret = 0;
+
+	pr_info("%s register extcon notifier for usb and ta\n", __func__);
+	for (i = 0; i < ARRAY_SIZE(support_cable_list); i++) {
+		cable = &support_cable_list[i];
+		INIT_WORK(&cable->work, sii8240_extcon_work);
+		cable->nb.notifier_call = sii8240_extcon_notifier;
+
+		ret = extcon_register_interest(&cable->extcon_nb,
+				EXTCON_DEV_NAME,
+				extcon_cable_name[cable->cable_type],
+				&cable->nb);
+		if (ret)
+			pr_err("%s: fail to register extcon notifier(%s, %d)\n",
+				__func__, extcon_cable_name[cable->cable_type],
+				ret);
+
+		cable->edev = cable->extcon_nb.edev;
+		if (!cable->edev)
+			pr_err("%s: fail to get extcon device\n", __func__);
 	}
-	msleep(30);
-}
-
-enum mhl_gpio_type	of_sii8240_get_gpio_type(char* str_type)
-{
-	if(strcmp(str_type, "msmgpio") == 0)
-		return MHL_GPIO_AP_GPIO;
-	else if(strcmp(str_type, "pm8941_gpios") == 0)
-		return MHL_GPIO_PM_GPIO;
-	else if(strcmp(str_type, "pm8941_mpps") == 0)
-		return MHL_GPIO_PM_MPP;
-	else
-		return MHL_GPIO_UNKNOWN_TYPE;
-}
-
-
-static int of_sii8240_parse_dt(struct sii8240_platform_data *pdata)
-{
-	struct device_node *np = pdata->tmds_client->dev.of_node;
-	struct device *pdev= &pdata->tmds_client->dev;
-	char* temp_string = NULL;
-
-	pdata->gpio_mhl_irq = of_get_named_gpio_flags(np,
-		"sii8240,gpio_mhl_irq", 0, NULL);
-	if(pdata->gpio_mhl_irq > 0)
-		pr_info("gpio: mhl_irq = %d\n", pdata->gpio_mhl_irq);
-
-	pdata->gpio_mhl_reset = of_get_named_gpio_flags(np,
-		"sii8240,gpio_mhl_reset", 0, NULL);
-	if(pdata->gpio_mhl_reset > 0)
-		pr_info("gpio: mhl_reset = %d\n", pdata->gpio_mhl_reset);
-
-	of_property_read_string(np, "sii8240,gpio_mhl_reset_type",
-						(const char **)&temp_string);
-	pdata->gpio_mhl_reset_type = of_sii8240_get_gpio_type(temp_string);
-	pr_info("%s() gpio_mhl_reset_type = %d\n", __func__, pdata->gpio_mhl_reset_type);
-
-	pdata->gpio_mhl_wakeup = of_get_named_gpio_flags(np,
-		"sii8240,gpio_mhl_wakeup",0, NULL);
-	if(pdata->gpio_mhl_wakeup > 0)
-		pr_info("gpio: mhl_wakeup = %d\n",pdata->gpio_mhl_wakeup);
-
-	pdata->gpio_mhl_scl = of_get_named_gpio_flags(np,
-		"sii8240,gpio_mhl_scl", 0, NULL);
-	if(pdata->gpio_mhl_scl > 0)
-		pr_info("gpio: mhl_scl = %d\n",
-					pdata->gpio_mhl_scl);
-
-	pdata->gpio_mhl_sda = of_get_named_gpio_flags(np,
-		"sii8240,gpio_mhl_sda", 0, NULL);
-	if(pdata->gpio_mhl_sda > 0)
-		pr_info("gpio: mhl_sda = %d\n", pdata->gpio_mhl_sda);
-
-	pdata->gpio_mhl_en = of_get_named_gpio_flags(np,
-		"sii8240,gpio_mhl_en", 0, NULL);
-	if(pdata->gpio_mhl_en > 0)
-		pr_info("gpio: mhl_en = %d\n", pdata->gpio_mhl_en);
-
-	of_property_read_string(np, "sii8240,gpio_mhl_en_type",
-						(const char **)&temp_string);
-	pdata->gpio_mhl_en_type = of_sii8240_get_gpio_type(temp_string);
-	pr_info("%s() gpio_mhl_en_type = %d\n", __func__, pdata->gpio_mhl_en_type);
-
-	pdata->gpio_ta_int = of_get_named_gpio_flags(np,
-		"sii8240,gpio_ta_int", 0, NULL);
-	if(pdata->gpio_ta_int > 0)
-		pr_info("gpio: ta_int = %d\n", pdata->gpio_ta_int);
-
-#ifdef	CONFIG_MACH_LT03VZW
-	pdata->swing_level = 0x2D; /*5 5*/
-#else
-	if (!of_property_read_u32(np, "sii8240,swing_level", &pdata->swing_level))
-		pr_info("swing_level = 0x%X\n", pdata->swing_level);
-#endif
-
-
-	pdata->gpio_barcode_emul = of_property_read_bool(np, "sii8240,barcode_emul");
-	pr_info("barcode_emul = %s\n", pdata->gpio_barcode_emul ? "true" : "false");
-
-	pdata->drm_workaround = of_property_read_bool(np, "sii8240,drm_workaround");
-	pr_info("drm_workaround = %s\n", pdata->drm_workaround ? "true" : "false");
-
-	pdata->vcc_1p2v = regulator_get(pdev,"vcc_1p2v");
-	if (IS_ERR(pdata->vcc_1p2v)) {
-		pr_err("sii8240,vcc_1p2v is not exist in device tree\n");
-		pdata->vcc_1p2v = NULL;
-	}
-
-	pdata->vcc_1p8v = regulator_get(pdev,"vcc_1p8v");
-	if (IS_ERR(pdata->vcc_1p8v)) {
-		pr_err("sii8240,vcc_1p8v is not exist in device tree\n");
-		pdata->vcc_1p8v = NULL;
-	}
-
-	pdata->vcc_3p3v = regulator_get(pdev,"vcc_3p3v");
-	if (IS_ERR(pdata->vcc_3p3v)) {
-		pr_err("sii8240,vcc_3p3v is not exist in device tree\n");
-		pdata->vcc_3p3v = NULL;
-	}
-
 	return 0;
 }
-
+device_initcall_sync(sii8240_init_cable_notify);
+#else
 static BLOCKING_NOTIFIER_HEAD(acc_mhl_notifier);
 void of_sii8240_muic_mhl_notify(int event)
 {
@@ -5359,7 +4857,7 @@ static int __devinit sii8240_tmds_i2c_probe(struct i2c_client *client,
 
 	dev_info(&client->dev, "success client_addr 0x%X\n", client->addr);
 
-	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) 
+	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -EIO;
 
 	/* going to use block read/write, so check for this too */
@@ -5456,14 +4954,24 @@ static int __devinit sii8240_tmds_i2c_probe(struct i2c_client *client,
 	disable_irq(client->irq);
 	sii8240->irq_enabled = false;
 
-        wake_lock_init(&sii8240->mhl_wake_lock,
-                                WAKE_LOCK_SUSPEND, "mhl_wake_lock");
+	wake_lock_init(&sii8240->mhl_wake_lock,
+			WAKE_LOCK_SUSPEND, "mhl_wake_lock");
+
+	if (sii8240->pdata->hdmi_mhl_ops) {
+		struct msm_hdmi_mhl_ops *hdmi_mhl_ops =	sii8240->pdata->hdmi_mhl_ops;
+		hdmi_mhl_ops->set_mhl_max_pclk(sii8240->pdata->hdmi_pdev, 150000);
+	}
+
+#ifndef CONFIG_EXTCON
 	sii8240->mhl_nb.notifier_call = sii8240_detection_callback;
 	acc_register_notifier(&sii8240->mhl_nb);
-
+#endif
 	sii8240->mhl_event_switch.name = "mhl_event_switch";
 	switch_dev_register(&sii8240->mhl_event_switch);
 
+#ifdef SFEATURE_HDCP_SUPPORT
+	sii8240->mhl_ddc_bypass = mhl_ddc_bypass;
+#endif
 	return 0;
 
 err_exit0:
@@ -5516,10 +5024,10 @@ static int __devinit of_sii8240_probe_dt(struct i2c_client *client,
 {
 	struct i2c_adapter *adapter = to_i2c_adapter(client->dev.parent);
 	const struct i2c_device_id *id_table = client->driver->id_table;
-	struct sii8240_platform_data *pdata=NULL;
+	struct sii8240_platform_data *pdata = NULL;
 	u32 client_id = -1;
 
-	if(!client->dev.of_node) {
+	if (!client->dev.of_node) {
 		dev_err(&client->dev, "sii8240: Client node not-found\n");
 		return -1;
 	}
@@ -5535,33 +5043,18 @@ static int __devinit of_sii8240_probe_dt(struct i2c_client *client,
 		dev_err(&client->dev, "Wrong Client_id# %d", client_id);
 
 	if (0 == client_id) {
-		pdata = kzalloc(sizeof(struct sii8240_platform_data), GFP_KERNEL);
-		if (!pdata) {
-			dev_err(&client->dev, "failed to allocate driver data\n");
-			return -ENOMEM;
-		}
-
-		pdata->tmds_client = client;
-		pdata->power = of_sii8240_hw_onoff;
-		pdata->hw_reset = of_sii8240_hw_reset;
-		pdata->gpio_cfg = of_sii8240_gpio_config;
-		pdata->vbus_present = sii8240_charger_mhl_cb;
-#ifdef CONFIG_MFD_MAX77803
-		pdata->muic_otg_set = muic_otg_control;
-#endif
-		of_sii8240_parse_dt(pdata);
-		of_sii8240_gpio_init(pdata);
+		pdata = platform_init_data(client);
 		client->dev.platform_data = pdata;
 		sii8240_tmds_i2c_probe(client, id_table);
 	} else if (g_sii8240) {
 		client->dev.platform_data = g_sii8240->pdata;
 		if (1 == client_id)
 			sii8240_hdmi_i2c_probe(client, id_table);
-		else if(2 == client_id)
+		else if (2 == client_id)
 			sii8240_disc_i2c_probe(client, id_table);
-		else if(3 == client_id)
+		else if (3 == client_id)
 			sii8240_tpi_i2c_probe(client, id_table);
-		else if(4 == client_id)
+		else if (4 == client_id)
 			sii8240_cbus_i2c_probe(client, id_table);
 	 }
 
@@ -5706,7 +5199,7 @@ static ssize_t sii8240_rda_mhl_version(struct device *dev,
 	ssize_t ret = 0;
 	struct sii8240_data *sii8240 = dev_get_drvdata(sii8240_mhldev);
 
-	if ((sii8240->regs.peer_devcap[MHL_DEVCAP_MHL_VERSION] == 0x20)
+	if (((sii8240->regs.peer_devcap[MHL_DEVCAP_MHL_VERSION] & 0xF0) >= 0x20)
 		&& (sii8240->regs.peer_devcap[MHL_DEVCAP_VID_LINK_MODE] &
 					(MHL_DEV_VID_LINK_SUPP_PPIXEL |
 					MHL_DEV_VID_LINK_SUPPYCBCR422))) {
@@ -5815,7 +5308,7 @@ static int __init sii8240_init(void)
 	struct device *mhl_dev;
 	struct kobject *uevent_mhl;
 
-	pr_info("%s sii8240: check mhl \n", __func__);
+	pr_info("%s sii8240: check mhl\n", __func__);
 #ifdef CONFIG_OF
 	ret = i2c_add_driver(&sii8240_i2c_driver);
 	if (ret < 0) {

@@ -15,19 +15,16 @@
 #include <linux/err.h>
 #include <linux/hrtimer.h>
 #include <linux/module.h>
-#include <mach/gpio.h>
+#include <linux/gpio.h>
 #include <mach/pmic.h>
-#include <linux/vibrator.h>
 #include <linux/regulator/consumer.h>
 #include <linux/workqueue.h>
+#include <linux/of_gpio.h>
 
 #include "../staging/android/timed_output.h"
 
 /* default timeout */
-#define VIB_DEFAULT_TIMEOUT 15000
-
-/* need to change for each project */
-#define PMIC_LDO_NAME		"8941_l22"
+#define VIB_DEFAULT_TIMEOUT 10000
 
 struct msm_vib {
 	struct hrtimer vib_timer;
@@ -37,48 +34,16 @@ struct msm_vib {
 
 	int state;
 	int timeout;
+	int motor_en;
 	struct mutex lock;
+	int pmic_gpio_enabled;
 };
 
-static void set_vibrator(int on)
+static void set_vibrator(int motor_en, int on)
 {
-	int ret = 0;
-	static struct regulator *reg_ldo_num;
-
 	pr_info("[VIB] %s, on=%d\n",__func__, on);
 
-	if (!reg_ldo_num) {
-		reg_ldo_num = regulator_get(NULL, PMIC_LDO_NAME);
-		ret = regulator_set_voltage(reg_ldo_num, 3300000, 3300000);
-
-		if (IS_ERR(reg_ldo_num)) {
-			pr_err("could not get vib ldo, ret= %ld\n", PTR_ERR(reg_ldo_num));
-			return;
-		}
-	}
-
-	if (on) {
-		/* sometimes vibrator is not disabled. 
-		   so, if vibrator is already enalble, return. */
-		if (regulator_is_enabled(reg_ldo_num)) {
-			pr_err("[VIB]already enalbled\n");
-			return;
-		}
-		
-		ret = regulator_enable(reg_ldo_num);
-		if (ret) {
-			pr_err("enable vib ldo enable failed, ret= %d\n", ret);
-			return;
-		}
-	} else {
-		if (regulator_is_enabled(reg_ldo_num)) {
-			ret = regulator_disable(reg_ldo_num);
-			if (ret) {
-				pr_err("disable vib ldo disable failed, ret= %d\n", ret);
-				return;
-			}
-		}
-	}
+	gpio_set_value(motor_en, on);
 }
 
 static void vibrator_enable(struct timed_output_dev *dev, int value)
@@ -103,14 +68,13 @@ static void vibrator_enable(struct timed_output_dev *dev, int value)
 		else	{
 			value = (value > vib->timeout ?
 					vib->timeout : value);
-			
-			hrtimer_start(&vib->vib_timer,
+				hrtimer_start(&vib->vib_timer,
 					ktime_set(value / 1000, (value % 1000) * 1000000),
 					HRTIMER_MODE_REL);
                 }
 	}
 	mutex_unlock(&vib->lock);
-	queue_work(vib->queue, &vib->work);	
+	queue_work(vib->queue, &vib->work);
 }
 
 static void msm_vibrator_update(struct work_struct *work)
@@ -118,7 +82,7 @@ static void msm_vibrator_update(struct work_struct *work)
 	struct msm_vib *vib = container_of(work, struct msm_vib,
 					 work);
 
-	set_vibrator(vib->state);
+	set_vibrator(vib->motor_en, vib->state);
 }
 
 static int vibrator_get_time(struct timed_output_dev *dev)
@@ -130,8 +94,8 @@ static int vibrator_get_time(struct timed_output_dev *dev)
 		ktime_t r = hrtimer_get_remaining(&vib->vib_timer);
 		return (int)ktime_to_us(r);
 	}
-	else 
-	return 0;
+	else
+		return 0;
 }
 
 static enum hrtimer_restart vibrator_timer_func(struct hrtimer *timer)
@@ -144,6 +108,24 @@ static enum hrtimer_restart vibrator_timer_func(struct hrtimer *timer)
 
 	return HRTIMER_NORESTART;
 }
+
+#ifdef CONFIG_PM
+static int msm_vibrator_suspend(struct device *dev)
+{
+	struct msm_vib *vib = dev_get_drvdata(dev);
+
+	pr_info("[VIB] %s\n",__func__);
+
+	hrtimer_cancel(&vib->vib_timer);
+	cancel_work_sync(&vib->work);
+	/* turn-off vibrator */
+	set_vibrator(vib->motor_en, 0);
+
+	return 0;
+}
+#endif
+
+static SIMPLE_DEV_PM_OPS(vibrator_pm_ops, msm_vibrator_suspend, NULL);
 
 static int msm_vibrator_probe(struct platform_device *pdev)
 {
@@ -158,6 +140,28 @@ static int msm_vibrator_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
+	vib->motor_en = of_get_named_gpio(pdev->dev.of_node, "samsung,motor-en", 0);
+	if (!gpio_is_valid(vib->motor_en)) {
+		pr_err("%s:%d, reset gpio not specified\n",
+				__func__, __LINE__);
+		return -EINVAL;
+	}
+	vib->pmic_gpio_enabled = of_property_read_bool(pdev->dev.of_node, "samsung,is_pmic_vib_en");
+
+	#ifdef CONFIG_SEC_AFYON_PROJECT
+		vib->pmic_gpio_enabled = 0;
+	#endif
+	
+	printk(KERN_ALERT " VIB PMIC GPIO ENABLED Flag is %d \n", vib->pmic_gpio_enabled);
+	if (!(vib->pmic_gpio_enabled)){
+		rc = gpio_tlmm_config(GPIO_CFG(vib->motor_en, 0, GPIO_CFG_OUTPUT,
+			GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
+			if (rc < 0) {
+				pr_err("%s: gpio_tlmm_config is failed\n",__func__);
+				gpio_free(vib->motor_en);
+				return rc;
+			}
+	}
 	vib->timeout = VIB_DEFAULT_TIMEOUT;
 
 	INIT_WORK(&vib->work, msm_vibrator_update);
@@ -166,8 +170,7 @@ static int msm_vibrator_probe(struct platform_device *pdev)
 	vib->queue = create_singlethread_workqueue("msm_vibrator");
 	if (!vib->queue) {
 		pr_err("%s(): can't create workqueue\n", __func__);
-		rc = -ENOMEM;
-		goto err_create_work_queue;
+		return -ENOMEM;
 	}
 
 	hrtimer_init(&vib->vib_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
@@ -181,16 +184,14 @@ static int msm_vibrator_probe(struct platform_device *pdev)
 
 	rc = timed_output_dev_register(&vib->timed_dev);
 	if (rc < 0) {
+		pr_err("[VIB] timed_output_dev_register fail (rc=%d)\n", rc);
 		goto err_read_vib;
 	}
-	
+
 	return 0;
 
 err_read_vib:
-	pr_err("[VIB] timed_output_dev_register fail (rc=%d)\n", rc);
 	destroy_workqueue(vib->queue);
-
-err_create_work_queue:
 	return rc;
 }
 
@@ -199,9 +200,16 @@ static int msm_vibrator_remove(struct platform_device *pdev)
 	struct msm_vib *vib = dev_get_drvdata(&pdev->dev);
 
 	destroy_workqueue(vib->queue);
+	mutex_destroy(&vib->lock);
 
 	return 0;
-	}
+}
+
+static const struct of_device_id vib_motor_match[] = {
+	{	.compatible = "vibrator",
+	},
+	{}
+};
 
 static struct platform_driver msm_vibrator_platdrv =
 {
@@ -209,22 +217,26 @@ static struct platform_driver msm_vibrator_platdrv =
 	{
 		.name = "msm_vibrator",
 		.owner = THIS_MODULE,
+		.of_match_table = vib_motor_match,
+		.pm	= &vibrator_pm_ops,
 	},
 	.probe = msm_vibrator_probe,
-	.remove = msm_vibrator_remove,
+	.remove = __devexit_p(msm_vibrator_remove),
 };
 
 static int __init msm_timed_vibrator_init(void)
 {
+	pr_info("[VIB] %s\n",__func__);
+
 	return platform_driver_register(&msm_vibrator_platdrv);
 }
-module_init(msm_timed_vibrator_init);
 
 void __exit msm_timed_vibrator_exit(void)
 {
 	platform_driver_unregister(&msm_vibrator_platdrv);
 }
+module_init(msm_timed_vibrator_init);
 module_exit(msm_timed_vibrator_exit);
 
 MODULE_DESCRIPTION("timed output vibrator device");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");

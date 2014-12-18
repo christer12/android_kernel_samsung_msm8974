@@ -136,7 +136,7 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 		 */
 		free -= global_page_state(NR_SHMEM);
 
-		free += nr_swap_pages;
+		free += get_nr_swap_pages();
 
 		/*
 		 * Any slabs which are created with the
@@ -970,6 +970,7 @@ static unsigned long do_mmap_pgoff(struct file *file, unsigned long addr,
 	if (file && (file->f_path.mnt->mnt_sb->s_magic == SDCARDFS_SUPER_MAGIC))
 		file = sdcardfs_lower_file(file);
 #endif
+
 	/*
 	 * Does the application expect PROT_READ to imply PROT_EXEC?
 	 *

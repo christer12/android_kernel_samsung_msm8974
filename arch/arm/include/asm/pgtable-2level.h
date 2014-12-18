@@ -301,8 +301,8 @@ static inline void pmd_clear(pmd_t *pmdp)
 extern int cpu_v7_timal2group_set_pte_ext(pte_t *ptep, pte_t pte, unsigned int ext,
 		 	unsigned long tima_l2group_entry_ptr);
 extern void cpu_v7_timal2group_set_pte_commit(void *tima_l2group_entry_ptr,
-					unsigned long tima_l2group_entries_count,
-					unsigned long ptet);
+					unsigned long tima_l2group_entries_count);
+
 #endif /* CONFIG_TIMA_RKP_L2_GROUP */
 
 /* we don't need complex calculations here as the pmd is folded into the pgd */

@@ -25,24 +25,18 @@
 #include <linux/slab.h>
 #include <linux/wakelock.h>
 
-#include "coreriver_extern.h"
-
 #define TC360_FW_FLASH_RETRY	5
 #define TC360_POWERON_DELAY	100
 #define TC360_DCR_RD_RETRY	50
 #define TC360_FW_VER_READ	5
-#define TC360_FW_ER_MAX_LEN		0x3400
-#define TC360_FW_WT_MAX_LEN		0x3000
+#define TC360_FW_ER_MAX_LEN		0X8000
+#define TC360_FW_WT_MAX_LEN		0X3000
 #define TC360_ISP_ACK			1
 #define TC360_ISP_SP_SIGNAL		0b010101011111000
 #define TC360_NUM_OF_ISP_SP_SIGNAL	15
-
 #define CORERIVER_FW_VER	0x1
 #define DELAY_TIME	6
 bool counting_timer;
-
-#define TC350_DN_HEADER_ADDRESS		0x0
-#define TC350_DN_BODY_ADDRESS		0x3000
 
 static inline void setsda(struct cypress_touchkey_info *info, int state)
 {
@@ -110,8 +104,8 @@ static int sclhi(struct cypress_touchkey_info *info)
 
 	if (jiffies != start)
 #if defined(ISP_VERY_VERBOSE_DEBUG)
-		dev_err(&client->dev, "%s: needed %ld jiffies for SCL to go high\n",
-				__func__, jiffies - start);
+		dev_err(&client->dev, "%s: needed %ld jiffies for SCL to go "
+			"high\n", __func__, jiffies - start);
 #endif
 	udelay(DELAY_TIME);
 
@@ -141,7 +135,8 @@ static int isp_recvdbyte(struct cypress_touchkey_info *info)
 	sdahi(info);
 	for (i = 0; i < 8 ; i++) {
 		if (sclhi(info) < 0) { /* timed out */
-			dev_err(&client->dev, "%s: timeout at bit #%d\n", __func__, 7 - i);
+			dev_err(&client->dev, "%s: timeout at bit "
+				"#%d\n", __func__, 7 - i);
 			return -ETIMEDOUT;
 		}
 
@@ -443,7 +438,8 @@ static int tc360_erase_fw(struct cypress_touchkey_info *info)
 		do {
 			isp_master_recv(info, 0xc1, &val);
 			if (dcr_rd_cnt-- < 0) {
-				dev_err(&client->dev, "%s: fail to update dcr\n", __func__);
+				dev_err(&client->dev, "%s: fail to update "
+					"dcr\n", __func__);
 				return -ENOSYS;
 			}
 			usleep_range(10000, 15000);
@@ -457,10 +453,11 @@ static int tc360_erase_fw(struct cypress_touchkey_info *info)
 	return 0;
 }
 
-static int tc360_write_fw(struct cypress_touchkey_info *info,
-			unsigned int Start_Addr, unsigned char *fw_data, unsigned int fw_length)
+static int tc360_write_fw(struct cypress_touchkey_info *info)
 {
 	u16 addr = 0;
+	u8 val;
+	struct i2c_client *client = info->client;
 
 	reset_for_isp(info);
 
@@ -472,149 +469,34 @@ static int tc360_write_fw(struct cypress_touchkey_info *info,
 	isp_master_send(info, 0xc8, 0xff);
 	isp_master_send(info, 0xca, 0x20);
 
+	raw_dbgir3(info, 0x90, (u8)(addr >> 8), (u8)(addr & 0xff));
 	raw_spchl(info, 0xff, 0x1e);
 
-	while (addr < fw_length) {
-		raw_dbgir3(info, 0x90, (u8)((Start_Addr+addr) >> 8), (u8)((Start_Addr+addr) & 0xff));
-
-		do {
-			u8 __fw_data = *fw_data++;
-			addr++;
-
+	while (addr < info->fw_img->fw_len) {
+#if defined(ISP_DEBUG)
+		dev_info(&client->dev, "fw write addr=%#x\n", addr);
+#endif
+		u8 __fw_data = info->fw_img->data[addr];
 		raw_dbgir2(info, 0x74, __fw_data);
 		raw_dbgir3(info, 0x75, 0xf1, 0x80);
 		isp_master_send(info, 0xc0, 0x14);
-
-			/* increase address */
-			isp_master_send(info, 0xc0, 0x08);
-
-		} while (addr % fw_length);
-	}
-
-	return 0;
-}
-
-static int tc360_verify_fw(struct cypress_touchkey_info *info,
-			unsigned int Start_Addr, unsigned char *fw_data, unsigned int fw_length)
-{
-	u16 addr = 0;
-	u8 val;
-
-	reset_for_isp(info);
-
-	isp_sp_signal(info);
-	isp_common_set(info);
-
-	isp_master_send(info, 0xf8, 0x01);
-	isp_master_send(info, 0xc8, 0xff);
-	isp_master_send(info, 0xca, 0x2a);
-
-	raw_spchl(info, 0xff, 0x28);
-
-	while (addr < fw_length) {
-		raw_dbgir3(info, 0x90, (u8)((Start_Addr+addr) >> 8), (u8)((Start_Addr+addr) & 0xff));
-
-		do {
-			isp_master_send(info, 0xc0, 0x14);
-
-			isp_master_send(info, 0xc0, 0x08);
+#if defined(ISP_VERBOSE_DEBUG)
+		dev_info(&client->dev, "dcr_rd_cnt=%d\n", dcr_rd_cnt);
+#endif
 		isp_master_recv(info, 0xd9, &val);
 		
-			if (fw_data[addr] != val) {
-				dev_err(&info->client->dev, "fail to verify at %#x (%#x)\n", addr,
-					fw_data[addr]);
+		if (info->fw_img->data[addr] != val) {
+			dev_err(&client->dev, "fail to verify at %#x (%#x)\n",
+				addr, info->fw_img->data[addr]);
 			return -EIO;
 		}
-			addr++;
-		} while (addr % fw_length);
-	}
 
-	return 0;
-}
-
-static int i2c_tc360_write_fw(struct cypress_touchkey_info *info)
-{
-	unsigned char checksum_bin = 0;
-	unsigned char data[37]  = {0,};
-	u16 addr = 0;
-	int ret;
-
-	dev_info(&info->client->dev, "%s: total length : %x\n", __func__, info->fw_img->fw_len);
-
-	data[0] = COREREIVER_DOWNLOADER_ENTER;
-
-	ret = i2c_master_send(info->client, data, 1);
-	if (ret != 1) {
-		dev_err(&info->client->dev, "%s: failed to send DN_ENTER command, ret:%d\n",
-				__func__, ret);
-		return -EINVAL;
-	}
-
-	msleep(60);
-
-	data[0] = COREREIVER_DOWNLOADER_WRITE;
-	data[3] = 0;
-	data[4] = 0x20;
-
-	while (addr < info->fw_img->fw_len) {
-
-		data[1] = (addr >> 8) & 0xFF;
-		data[2] = addr & 0xFF;
-
-		memcpy(&data[5], info->fw_img->data + addr, 32);
-
-		ret = i2c_master_send(info->client, data, 37);
-		if (ret != 37) {
-			dev_err(&info->client->dev, "%s: write failed, reg:%x, ret:%d\n",
-					__func__, addr, ret);
-			return -EINVAL;
-		}
-
-		msleep(3);
-
-		addr += 0x20;
-	}
-
-	memset(data, 0, 37);
-
-	msleep(5);
-
-	ret = i2c_master_recv(info->client, data, 4);
-	if (ret != 4) {
-		dev_err(&info->client->dev, "%s: read checksum failed, ret:%d\n",
-				__func__, ret);
-		return -EINVAL;
-	}
-
-	if (data[0]) {
-		dev_err(&info->client->dev, "%s: return ERROR\n",
-				__func__);
-		return -EINVAL;
-
-	}
-
-	addr = 0;
-	while (addr < info->fw_img->fw_len) {
-		checksum_bin += info->fw_img->data[addr];
+		/* increase address */
+		isp_master_send(info, 0xc0, 0x08);
 		addr++;
 	}
 
-	dev_info(&info->client->dev,
-			"%s: [ERR:%x] binary checksum:%02X, checksum:%02X, F_addr_H:%02X, F_addr_L:%02X\n",
-			__func__, data[0], checksum_bin, data[1], data[2], data[3]);
-
-	data[0] = COREREIVER_DOWNLOADER_EXIT;
-
-	ret = i2c_master_send(info->client, data, 1);
-	if (ret != 1) {
-		dev_err(&info->client->dev, "%s: failed to send DN_EXIT command, ret:%d\n",
-				__func__, ret);
-		return -EINVAL;
-	}
-
-	msleep(50);
-
-	return 1;
+	return 0;
 }
 
 int coreriver_fw_update(struct cypress_touchkey_info *info, bool force)
@@ -644,70 +526,7 @@ erase_fw:
 
 	retries = TC360_FW_FLASH_RETRY;
 write_fw:
-	/* Write Downloader Header @ ISP (GPIO) */
-	ret = tc360_write_fw(info, TC350_DN_HEADER_ADDRESS, DN_Hdr, DN_HDR_LEN);
-	if (ret < 0) {
-		dev_err(&client->dev, "fail to write header fw (%d)\n", ret);
-		if (retries-- > 0) {
-			dev_info(&client->dev, "retry writing header fw (%d)\n",
-				 retries);
-			goto erase_fw;
-		} else {
-			goto err;
-		}
-	}
-	dev_info(&client->dev, "succeed in writing header fw\n");
-
-	/* Write Downloader Body(Main) @ ISP (GPIO) */
-	ret = tc360_write_fw(info, TC350_DN_BODY_ADDRESS, DN_Body, DN_BODY_LEN);
-	if (ret < 0) {
-		dev_err(&client->dev, "fail to write fw (%d)\n", ret);
-		if (retries-- > 0) {
-			dev_info(&client->dev, "retry writing fw (%d)\n",
-				 retries);
-			goto erase_fw;
-		} else {
-			goto err;
-		}
-	}
-	dev_info(&client->dev, "succeed in writing fw\n");
-
-	retries = TC360_FW_FLASH_RETRY;
-
-	/* Verify Downloader Header @ ISP (GPIO) */
-	ret = tc360_verify_fw(info, TC350_DN_HEADER_ADDRESS, DN_Hdr, DN_HDR_LEN);
-	if (ret < 0) {
-		dev_err(&client->dev, "fail to verify header  (%d)\n", ret);
-		if (retries-- > 0) {
-			dev_info(&client->dev, "retry verifing header  (%d)\n",
-				 retries);
-			goto erase_fw;
-		} else {
-			goto err;
-		}
-	}
-	dev_info(&client->dev, "succeed in verifing header\n");
-
-	/* Verify Downloader Body(Main) @ ISP (GPIO) */
-	ret = tc360_verify_fw(info, TC350_DN_BODY_ADDRESS, DN_Body, DN_BODY_LEN);
-	if (ret < 0) {
-		dev_err(&client->dev, "fail to verify fw (%d)\n", ret);
-		if (retries-- > 0) {
-			dev_info(&client->dev, "retry verifing fw (%d)\n",
-				 retries);
-			goto erase_fw;
-		} else {
-			goto err;
-		}
-	}
-	dev_info(&client->dev, "succeed in verifing fw\n");
-
-	cypress_power_onoff(info, 0);
-	msleep(TC360_POWERON_DELAY);
-	cypress_power_onoff(info, 1);
-	msleep(150);
-
-	ret = i2c_tc360_write_fw(info);
+	ret = tc360_write_fw(info);
 	if (ret < 0) {
 		dev_err(&client->dev, "fail to write fw (%d)\n", ret);
 		if (retries-- > 0) {
@@ -718,7 +537,7 @@ write_fw:
 			goto err;
 		}
 	}
-	dev_info(&client->dev, "succeed in writing fw\n");
+	dev_info(&client->dev, "succeed in writing/verify fw\n");
 	
 	cypress_power_onoff(info,0);
 	msleep(TC360_POWERON_DELAY);
@@ -753,5 +572,3 @@ err:
 	dev_err(&client->dev, "fail to fw flash. driver is removed\n");
 	return ret;
 }
-EXPORT_SYMBOL(coreriver_fw_update);
-
