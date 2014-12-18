@@ -678,6 +678,18 @@ static unsigned int msm_poll(struct file *f,
 	return rc;
 }
 
+static void msm_print_event_error(struct v4l2_event *event)
+{
+	struct msm_v4l2_event_data *event_data =
+		(struct msm_v4l2_event_data *)&event->u.data[0];
+
+	pr_err("Evt_type=%x Evt_id=%d Evt_cmd=%x\n", event->type,
+		event->id, event_data->command);
+	pr_err("Evt_session_id=%d Evt_stream_id=%d Evt_arg=%d\n",
+		event_data->session_id, event_data->stream_id,
+		event_data->arg_value);
+}
+
 /* something seriously wrong if msm_close is triggered
  *   !!! user space imaging server is shutdown !!!
  */
@@ -730,18 +742,28 @@ int msm_post_event(struct v4l2_event *event, int timeout)
 		pr_err("%s:%d failed\n", __func__, __LINE__);
 		return rc;
 	}
+
+	do { //Apply QC patch for msm_post_event failure
 	/* should wait on session based condition */
 	rc = wait_event_interruptible_timeout(cmd_ack->wait,
 		!list_empty_careful(&cmd_ack->command_q.list),
 		msecs_to_jiffies(timeout));
+		if(rc != -ERESTARTSYS)
+			break;
+		pr_err("%s:%d retry wait_event_interruptible_timeout ERESTARTSYS\n", __func__, __LINE__);
+	} while(1);
+
 	if (list_empty_careful(&cmd_ack->command_q.list)) {
+		pr_err("%s:%d failed (rc = %d)\n", __func__, __LINE__, rc);
 		if (!rc) {
 			pr_err("%s: Timed out\n", __func__);
+			msm_print_event_error(event);
 			rc = -ETIMEDOUT;
 		}
 		if (rc < 0) {
-			mutex_unlock(&session->lock);
+			msm_print_event_error(event);
 			pr_err("%s:%d failed\n", __func__, __LINE__);
+			mutex_unlock(&session->lock);
 			return rc;
 		}
 	}

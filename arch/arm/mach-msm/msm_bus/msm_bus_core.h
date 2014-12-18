@@ -36,7 +36,8 @@
 	(((slv >= MSM_BUS_SLAVE_FIRST) && (slv <= MSM_BUS_SLAVE_LAST)) ? 1 : 0)
 
 #define INTERLEAVED_BW(fab_pdata, bw, ports) \
-	((fab_pdata->il_flag) ? msm_bus_div64((ports), (bw)) : (bw))
+	((fab_pdata->il_flag) ? ((bw < 0) \
+	? -msm_bus_div64((ports), (-bw)) : msm_bus_div64((ports), (bw))) : (bw))
 #define INTERLEAVED_VAL(fab_pdata, n) \
 	((fab_pdata->il_flag) ? (n) : 1)
 
@@ -126,7 +127,6 @@ struct msm_bus_inode_info {
 	struct nodeclk nodeclk[NUM_CTX];
 	struct nodeclk memclk[NUM_CTX];
 	struct nodeclk iface_clk;
-	bool thresh_flag;
 	void *hw_data;
 };
 
@@ -218,10 +218,6 @@ struct msm_bus_client {
 	int curr;
 };
 
-void msm_bus_bimc_use_thresh(struct msm_bus_fabric_registration *fpdata,
-	struct msm_bus_inode_info *info);
-void msm_bus_fabric_use_thresh(struct msm_bus_fabric_device *fabdev,
-	struct msm_bus_inode_info *info);
 uint64_t msm_bus_div64(unsigned int width, uint64_t bw);
 int msm_bus_fabric_device_register(struct msm_bus_fabric_device *fabric);
 void msm_bus_fabric_device_unregister(struct msm_bus_fabric_device *fabric);
@@ -257,8 +253,6 @@ static inline void msm_bus_rpm_fill_cdata_buffer(int *curr, char *buf,
 }
 #endif
 
-int msm_bus_set_thresh(int id, u64 threshold);
-u64 msm_bus_get_thresh(int id);
 int msm_bus_noc_hw_init(struct msm_bus_fabric_registration *pdata,
 	struct msm_bus_hw_algorithm *hw_algo);
 int msm_bus_bimc_hw_init(struct msm_bus_fabric_registration *pdata,

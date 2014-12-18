@@ -50,13 +50,14 @@
 #define SDIO_DEVICE_ID_MSM_QCA_AR6003_2	0x301
 #endif
 
-#ifndef SDIO_VENDOR_ID_BC
-#define SDIO_VENDOR_ID_BC 0x2D0
+#ifndef SDIO_DEVICE_ID_MSM_QCA_AR6004_1
+#define SDIO_DEVICE_ID_MSM_QCA_AR6004_1	0x400
 #endif
 
-#ifndef SDIO_DEVICE_ID_BC
-#define SDIO_DEVICE_ID_BC 0x4339
+#ifndef SDIO_DEVICE_ID_MSM_QCA_AR6004_2
+#define SDIO_DEVICE_ID_MSM_QCA_AR6004_2	0x401
 #endif
+
 
 /*
  * This hook just adds a quirk for all sdio devices
@@ -74,9 +75,6 @@ static const struct mmc_fixup mmc_fixup_methods[] = {
 		   add_quirk_for_sdio_devices,
 		   MMC_QUIRK_BROKEN_CLK_GATING),
 
-	SDIO_FIXUP(SDIO_VENDOR_ID_BC, SDIO_DEVICE_ID_BC,
-		   remove_quirk, MMC_QUIRK_BROKEN_CLK_GATING),
-
 	SDIO_FIXUP(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_TI_WL1271,
 		   remove_quirk, MMC_QUIRK_BROKEN_CLK_GATING),
 
@@ -87,6 +85,12 @@ static const struct mmc_fixup mmc_fixup_methods[] = {
 		   remove_quirk, MMC_QUIRK_BROKEN_CLK_GATING),
 
 	SDIO_FIXUP(SDIO_VENDOR_ID_MSM_QCA, SDIO_DEVICE_ID_MSM_QCA_AR6003_2,
+		   remove_quirk, MMC_QUIRK_BROKEN_CLK_GATING),
+
+	SDIO_FIXUP(SDIO_VENDOR_ID_MSM_QCA, SDIO_DEVICE_ID_MSM_QCA_AR6004_1,
+		   remove_quirk, MMC_QUIRK_BROKEN_CLK_GATING),
+
+	SDIO_FIXUP(SDIO_VENDOR_ID_MSM_QCA, SDIO_DEVICE_ID_MSM_QCA_AR6004_2,
 		   remove_quirk, MMC_QUIRK_BROKEN_CLK_GATING),
 
 	SDIO_FIXUP(SDIO_VENDOR_ID_TI, SDIO_DEVICE_ID_TI_WL1271,
@@ -118,6 +122,8 @@ void mmc_fixup_device(struct mmc_card *card, const struct mmc_fixup *table)
 		    (f->name == CID_NAME_ANY ||
 		     !strncmp(f->name, card->cid.prod_name,
 			      sizeof(card->cid.prod_name))) &&
+		    (f->ext_csd_rev == EXT_CSD_REV_ANY ||
+		     f->ext_csd_rev == card->ext_csd.rev) &&
 		    (f->cis_vendor == card->cis.vendor ||
 		     f->cis_vendor == (u16) SDIO_ANY_ID) &&
 		    (f->cis_device == card->cis.device ||

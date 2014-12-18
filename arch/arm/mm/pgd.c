@@ -17,10 +17,6 @@
 #include <asm/page.h>
 #include <asm/tlbflush.h>
 
-#ifdef CONFIG_TIMA_TEST_INFRA_MODULE
-#include <linux/export.h>
-#endif
-
 #include "mm.h"
 
 #ifdef CONFIG_ARM_LPAE
@@ -190,6 +186,3 @@ no_pgd:
 #endif
 	__pgd_free(pgd_base);
 }
-#ifdef CONFIG_TIMA_TEST_INFRA_MODULE
-EXPORT_SYMBOL(pgd_free);
-#endif/*CONFIG_TIMA_TEST_INFRA_MODULE*/

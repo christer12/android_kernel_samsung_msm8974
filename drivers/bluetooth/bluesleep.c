@@ -739,9 +739,13 @@ static int bluesleep_probe(struct platform_device *pdev)
 	int ret;
 	struct resource *res;
 
+    BT_ERR("bluesleep probe\n");
+
 	bsi = kzalloc(sizeof(struct bluesleep_info), GFP_KERNEL);
-	if (!bsi)
+	if (!bsi) {
+        BT_ERR("failed to allocate memory to bsi\n");
 		return -ENOMEM;
+	}
 
 	res = platform_get_resource_byname(pdev, IORESOURCE_IO,
 				"gpio_host_wake");
@@ -762,6 +766,8 @@ static int bluesleep_probe(struct platform_device *pdev)
 	}
 
 	/* configure host_wake as input */
+#if !defined(CONFIG_BT_BCM4354)
+	BT_ERR("configure input direction\n");
 	gpio_tlmm_config(GPIO_CFG(bsi->host_wake, 0, GPIO_CFG_INPUT,
 					GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
 	ret = gpio_direction_input(bsi->host_wake);
@@ -771,7 +777,7 @@ static int bluesleep_probe(struct platform_device *pdev)
 		gpio_free(bsi->host_wake);
 		goto free_bsi;
 	}
-
+#endif
 	res = platform_get_resource_byname(pdev, IORESOURCE_IO,
 				"gpio_ext_wake");
 
@@ -863,11 +869,12 @@ static int bluesleep_remove(struct platform_device *pdev)
 static int bluesleep_resume(struct platform_device *pdev)
 {
 	if (test_bit(BT_SUSPEND, &flags)) {
+#ifndef CONFIG_BT_BCM4354
 		if (!has_lpm_enabled) {
 			gpio_tlmm_config(GPIO_CFG(bsi->host_wake, 0, GPIO_CFG_INPUT,
 						GPIO_CFG_NO_PULL, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
 		}
-
+#endif
 		if ((bsi->uport != NULL) &&
 			(gpio_get_value(bsi->host_wake) == bsi->irq_polarity)) {
 				BT_DBG("bluesleep resume form BT event...");
@@ -880,11 +887,12 @@ static int bluesleep_resume(struct platform_device *pdev)
 
 static int bluesleep_suspend(struct platform_device *pdev, pm_message_t state)
 {
+#ifndef CONFIG_BT_BCM4354
 	if (!has_lpm_enabled) {
 		gpio_tlmm_config(GPIO_CFG(bsi->host_wake, 0, GPIO_CFG_INPUT,
 						GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA), GPIO_CFG_ENABLE);
 	}
-
+#endif
 	set_bit(BT_SUSPEND, &flags);
 	return 0;
 }

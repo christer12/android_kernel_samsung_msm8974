@@ -22,11 +22,11 @@
 #include <mach/gpiomux.h>
 
 
-#define GPIO_IPC_MRDY		104
-#define GPIO_IPC_SUB_MRDY	105
-#define GPIO_IPC_SRDY		143
-#define GPIO_IPC_SUB_SRDY	117
-#define GPIO_CP_DUMP_INT	73
+#define GPIO_IPC_MRDY		105
+#define GPIO_IPC_SUB_MRDY   106
+#define GPIO_IPC_SRDY		117
+#define GPIO_IPC_SUB_SRDY	104
+#define GPIO_CP_DUMP_INT	119
 
 
 
@@ -90,7 +90,7 @@ void spi_modem_cfg_gpio(void)
 				;
 			}
 	gpio_tlmm_config(GPIO_CFG(GPIO_IPC_MRDY, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA),
 		GPIO_CFG_ENABLE);
 	gpio_set_value(GPIO_IPC_MRDY, 0);
 
@@ -103,7 +103,7 @@ void spi_modem_cfg_gpio(void)
 				;
 			}
 	gpio_tlmm_config(GPIO_CFG(GPIO_IPC_SUB_MRDY, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_16MA),
 		GPIO_CFG_ENABLE);
 	gpio_set_value(GPIO_IPC_SUB_MRDY, 0);
 
@@ -116,7 +116,7 @@ void spi_modem_cfg_gpio(void)
 				;
 			}
 	gpio_tlmm_config(GPIO_CFG(GPIO_IPC_SRDY, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
+		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA),
 		GPIO_CFG_ENABLE);
 
 
@@ -128,7 +128,7 @@ void spi_modem_cfg_gpio(void)
 				;
 			}
 	gpio_tlmm_config(GPIO_CFG(GPIO_IPC_SUB_SRDY, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
+		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_16MA),
 		GPIO_CFG_ENABLE);
 
 	spi_modem_data.gpio_ipc_mrdy = GPIO_IPC_MRDY;

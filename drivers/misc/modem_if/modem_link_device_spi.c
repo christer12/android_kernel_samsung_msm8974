@@ -123,12 +123,14 @@ static irqreturn_t spi_cp_dump_irq_handler(int irq, void *p_ld)
 	if (!spild->boot_done)
 		goto exit;
 
+#if 0
 	if (!wake_lock_active(&spild->spi_wake_lock)
 		&&  spild->send_modem_spi != 1) {
 		wake_lock(&spild->spi_wake_lock);
 		pr_debug("[SPI] [%s](%d) spi_wakelock locked . spild->spi_state[%d]\n",
 			__func__, __LINE__, (int)spild->spi_state);
 	}
+#endif
 exit:
 	return result;
 }
@@ -533,7 +535,7 @@ static void spi_tx_work(void)
 	spild->spi_state = SPI_STATE_TX_WAIT;
 	spild->spi_timer_tx_state = SPI_STATE_TIME_START;
 
-	gpio_set_value(spild->gpio_ipc_mrdy, SPI_GPIOLEVEL_HIGH);
+	gpio_direction_output(spild->gpio_ipc_mrdy, SPI_GPIOLEVEL_HIGH);
 
 	/* Start TX timer */
 	spild->spi_tx_timer.expires = jiffies +
@@ -549,7 +551,7 @@ static void spi_tx_work(void)
 
 			spild->spi_timer_tx_state = SPI_STATE_TIME_START;
 
-			gpio_set_value(spild->gpio_ipc_mrdy,
+			gpio_direction_output(spild->gpio_ipc_mrdy,
 				SPI_GPIOLEVEL_LOW);
 
 			/* change state SPI_STATE_TX_WAIT */
@@ -569,8 +571,8 @@ static void spi_tx_work(void)
 		spi_packet_buf = spild->buff;
 		spi_sync_buf = spild->sync_buff;
 
-		gpio_set_value(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_HIGH);
-		gpio_set_value(spild->gpio_ipc_mrdy, SPI_GPIOLEVEL_LOW);
+		gpio_direction_output(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_HIGH);
+		gpio_direction_output(spild->gpio_ipc_mrdy, SPI_GPIOLEVEL_LOW);
 
 		/* change state SPI_MAIN_STATE_TX_SENDING */
 		spild->spi_state = SPI_STATE_TX_SENDING;
@@ -599,7 +601,7 @@ static void spi_tx_work(void)
 
 		spild->spi_state = SPI_STATE_TX_TERMINATE;
 
-		gpio_set_value(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_LOW);
+		gpio_direction_output(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_LOW);
 
 #ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
 		pr_info("[SPI] spi_tx_work : success - spi_state=[%d]\n",
@@ -749,7 +751,7 @@ static void spi_rx_work(void)
 	spild->spi_state = SPI_STATE_RX_WAIT;
 	spild->spi_timer_rx_state = SPI_STATE_TIME_START;
 
-#if 0	//temp set gpio ourput enable
+#if 1	//temp set gpio ourput enable
 		//modem may set this pin as input mode . fix it later.
 	gpio_direction_output(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_HIGH);
 #else
@@ -769,7 +771,7 @@ static void spi_rx_work(void)
 
 			spild->spi_timer_rx_state = SPI_STATE_TIME_START;
 
-			gpio_set_value(spild->gpio_ipc_sub_mrdy,
+			gpio_direction_output(spild->gpio_ipc_sub_mrdy,
 				SPI_GPIOLEVEL_LOW);
 
 			/* change state SPI_MAIN_STATE_RX_WAIT */
@@ -847,7 +849,7 @@ static void spi_rx_work(void)
 
 	spild->spi_state = SPI_STATE_RX_TERMINATE;
 
-	gpio_set_value(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_LOW);
+	gpio_direction_output(spild->gpio_ipc_sub_mrdy, SPI_GPIOLEVEL_LOW);
 
 	/* change state SPI_MAIN_STATE_RX_WAIT to SPI_STATE_IDLE */
 	spild->spi_state = SPI_STATE_IDLE;

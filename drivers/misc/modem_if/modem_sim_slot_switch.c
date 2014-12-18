@@ -24,8 +24,8 @@ struct slot_switch_wq {
 	struct list_head entry;
 };
 
-#define GPIO_SIM_SEL 142
-#define GPIO_GG_SEL 115
+#define GPIO_SIM_SEL 123
+#define GPIO_GG_SEL 0
 
 static ssize_t get_slot_switch(struct device *dev, struct device_attribute *attr, char *buf)
 {

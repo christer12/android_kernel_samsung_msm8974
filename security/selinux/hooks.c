@@ -93,7 +93,6 @@
 #include "audit.h"
 #include "avc_ss.h"
 
-#define MAX_NUM_NPRIM 84
 #define NUM_SEL_MNT_OPTS 5
 
 extern struct security_operations *security_ops;
@@ -1494,9 +1493,8 @@ static int inode_has_perm(const struct cred *cred,
 	sid = cred_sid(cred);
 	isec = inode->i_security;
 
-	if (unlikely(!isec) || isec->sclass > MAX_NUM_NPRIM){
-		printk(KERN_CRIT "[SELinux] isec is NULL or isec->sclass = %hu \n", isec->sclass);
-		isec->sclass = 0;
+	if (unlikely(!isec)){
+		printk(KERN_CRIT "[SELinux] isec is NULL, inode->i_security is already freed. \n");
 		return -EACCES;
 	}
 
@@ -1861,7 +1859,6 @@ static int selinux_binder_transfer_binder(struct task_struct *from, struct task_
 {
 	u32 fromsid = task_sid(from);
 	u32 tosid = task_sid(to);
-
 	return avc_has_perm(fromsid, tosid, SECCLASS_BINDER, BINDER__TRANSFER, NULL);
 }
 
@@ -1876,8 +1873,8 @@ static int selinux_binder_transfer_file(struct task_struct *from, struct task_st
 	int rc;
 
 	COMMON_AUDIT_DATA_INIT(&ad, PATH);
-	ad.selinux_audit_data = &sad;
 	ad.u.path = file->f_path;
+	ad.selinux_audit_data = &sad;
 
 	if (sid != fsec->sid) {
 		rc = avc_has_perm(sid, fsec->sid,
@@ -1887,7 +1884,7 @@ static int selinux_binder_transfer_file(struct task_struct *from, struct task_st
 		if (rc)
 			return rc;
 	}
-	// Do not apply permission checks to private files.
+
 	if (unlikely(IS_PRIVATE(inode)))
 		return 0;
 
@@ -1903,7 +1900,7 @@ static int selinux_ptrace_access_check(struct task_struct *child,
 	rc = cap_ptrace_access_check(child, mode);
 	if (rc)
 		return rc;
-    
+
 	if (mode & PTRACE_MODE_READ) {
 		u32 sid = current_sid();
 		u32 csid = task_sid(child);
@@ -5644,6 +5641,7 @@ static struct security_operations selinux_ops = {
 	.sb_clone_mnt_opts =		selinux_sb_clone_mnt_opts,
 	.sb_parse_opts_str = 		selinux_parse_opts_str,
 
+
 	.inode_alloc_security =		selinux_inode_alloc_security,
 	.inode_free_security =		selinux_inode_free_security,
 	.inode_init_security =		selinux_inode_init_security,
@@ -5810,11 +5808,7 @@ static struct security_operations selinux_ops = {
 static __init int selinux_init(void)
 {
 	if (!security_module_enable(&selinux_ops)) {
-#ifdef CONFIG_ALWAYS_ENFORCE
-		selinux_enabled = 1;
-#else
 		selinux_enabled = 0;
-#endif
 		return 0;
 	}
 

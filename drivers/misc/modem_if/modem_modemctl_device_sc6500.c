@@ -75,10 +75,10 @@ static unsigned sprd6500_uart_off_table[] = {
 		 GPIO_CFG_8MA),
 };
 
-#define GPIO_IPC_MRDY		104
-#define GPIO_IPC_SUB_MRDY	105
-#define GPIO_IPC_SRDY		143
-#define GPIO_IPC_SUB_SRDY	117
+#define GPIO_IPC_MRDY		105
+#define GPIO_IPC_SUB_MRDY	106
+#define GPIO_IPC_SRDY		117
+#define GPIO_IPC_SUB_SRDY	104
 
 void spi_modem_cfg_gpio1(void)
 {

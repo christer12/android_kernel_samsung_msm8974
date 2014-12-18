@@ -1,13 +1,17 @@
 config ISDBT
 	bool "isdbt"
+	default n
 
 choice
 	depends on ISDBT
-	prompt "isdbt one-seg driver"
+	prompt "isdbt driver"
 	default ISDBT_FC8150
 
 	config ISDBT_FC8150
 		bool "ISDBT_FC8150"
+
+	config ISDBT_FC8300
+		bool "ISDBT_FC8300"
 endchoice
 
 config ISDBT_SPMI

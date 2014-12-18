@@ -24,17 +24,17 @@ unsigned char *Binary;
 /* HLTE */
 #if defined(CONFIG_MACH_HLTESKT) || defined(CONFIG_MACH_HLTEKTT) || defined(CONFIG_MACH_HLTELGT)||\
 	defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
-char Firmware_checksum[] = { 0x1F, 0xE8, 0xD1, 0xA9, 0x3E, };/*ver 0x207*/
+char Firmware_checksum[] = { 0x1F, 0x4D, 0x20, 0xD3, 0x20, };/*ver 0x208*/
 #else
 char Firmware_checksum[] = { 0x1F, 0x19, 0x7E, 0x3D, 0xB3, };/*ver 0x174*/
 #endif
 char B934_checksum[] = { 0x1F, 0x93, 0x7E, 0xDE, 0xAD, };	/*ver 0x076*/
-#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)
-/* LT03 (Checksum : 7646A4DE) */
-char B930_checksum[] = { 0x1F, 0xDE, 0xA4, 0x46, 0x76, };	/*ver 0x13C*/
+#ifdef CONFIG_SEC_LT03_PROJECT
+/* LT03 (Checksum : 9C088EDC ) */
+char B930_checksum[] = { 0x1F, 0xDC, 0x8E, 0x08, 0x9C, };	/*ver  0x0260*/
 #else
 /* VIENNA */
-char B930_checksum[] = { 0x1F, 0x00, 0xBC, 0x33, 0xDF, };	/*boot ver: 0x92 , ver 0x200*/
+char B930_checksum[] = { 0x1F, 0xEB, 0x40, 0x69, 0x2E, };	/*boot ver: 0x92 , ver 0x20A*/
 char B930_boot91_checksum[] = { 0x1F, 0x00, 0xBC, 0x33, 0xDF, };	/*boot ver: 0x91 , ver 0x200*/
 #endif
 

@@ -27,16 +27,16 @@
 #include <mach/gpiomux.h>
 
 
-#define GPIO_GSM_PHONE_ON	135
-#define GPIO_PDA_ACTIVE		136
-#define GPIO_PHONE_ACTIVE	18
-#define GPIO_CP_DUMP_INT	73
-#define GPIO_AP_CP_INT1		124
-#define GPIO_AP_CP_INT2		125
+#define GPIO_GSM_PHONE_ON	127
+#define GPIO_PDA_ACTIVE		118
+#define GPIO_PHONE_ACTIVE	107
+#define GPIO_CP_DUMP_INT	119
+#define GPIO_AP_CP_INT1		0
+#define GPIO_AP_CP_INT2		0
 
-#define GPIO_UART_SEL		119
-#define GPIO_SIM_SEL		115
-#define ESC_SIM_DETECT_IRQ	125
+#define GPIO_UART_SEL		135
+#define GPIO_SIM_SEL		123
+#define ESC_SIM_DETECT_IRQ	123
 
 #if defined(CONFIG_GSM_MODEM_GG_DUOS)
 /* gsm target platform data */
@@ -385,7 +385,7 @@ void sprd6500_modem_cfg_gpio(void)
 	gpio_tlmm_config(GPIO_CFG(GPIO_UART_SEL, GPIOMUX_FUNC_GPIO,
 		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
 		GPIO_CFG_ENABLE);
-	gpio_set_value(GPIO_UART_SEL, 1);
+	gpio_set_value(GPIO_UART_SEL, 0);
 
 	gpio_tlmm_config(GPIO_CFG(GPIO_PHONE_ACTIVE, GPIOMUX_FUNC_GPIO,
 		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
@@ -409,6 +409,7 @@ void sprd6500_modem_cfg_gpio(void)
 	gsm_modem_data.gpio_sim_sel= GPIO_SIM_SEL;
 
 	pr_info("sprd6500_modem_cfg_gpio done\n");
+	pr_info("uart_sel : [%d]\n", gpio_get_value(GPIO_UART_SEL));
 }
 
 #endif
