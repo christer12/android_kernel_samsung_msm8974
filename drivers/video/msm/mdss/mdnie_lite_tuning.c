@@ -47,12 +47,14 @@
 #include "mdnie_lite_tuning_data.h"
 #elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL) // F
 #include "mdnie_lite_tuning_data_flte.h"
+#elif defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+#include "mdnie_lite_tuning_data_jactiveltexx.h"
 #elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL) // K
 #include "mdnie_lite_tuning_data_klte_fhd_s6e3fa2.h"
 #include "mdnie_lite_tuning_data_klte_wqhd_s6e3ha0.h"
-/*
-#elif defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL) // JA
+#elif defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL) // JACTIVE
 #include "mdnie_lite_tuning_data_jactiveltexx.h"
+/*
 #elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) // ?
 #include "mdnie_lite_tuning_data_wvga_s6e88a0.h"
 #elif defined(CONFIG_MACH_JS01LTEDCM) || defined(CONFIG_MACH_JS01LTESBM) // JS01
@@ -141,7 +143,9 @@ char scenario_name[MAX_mDNIe_MODE][16] = {
 const char background_name[MAX_BACKGROUND_MODE][10] = {
 	"DYNAMIC",
 	"STANDARD",
+#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT)
 	"NATURAL",
+#endif
 	"MOVIE",
 	"AUTO",
 };
@@ -155,7 +159,8 @@ const char accessibility_name[ACCESSIBILITY_MAX][20] = {
 	"ACCESSIBILITY_OFF",
 	"NEGATIVE_MODE",
 	"COLOR_BLIND_MODE",
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL)
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL) || \
+	defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	"SCREEN_CURTAIN_MODE",
 #endif
 };
@@ -778,7 +783,8 @@ static ssize_t accessibility_store(struct device *dev,
 		}
 #endif
 	}
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL)
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL) ||\
+	defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	else if (cmd_value == SCREEN_CURTAIN) {
 		mdnie_tun_state.accessibility = SCREEN_CURTAIN;
 	}

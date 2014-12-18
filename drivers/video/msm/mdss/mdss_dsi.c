@@ -158,10 +158,24 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				}
 			}
 		}
-         /*panel reset function moved on lp11 state */
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+		mdelay(20);
+		if (gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
+			pr_info("%s : Set High LCD Enable GPIO \n", __func__);
+			gpio_tlmm_config(GPIO_CFG(ctrl_pdata->disp_en_gpio, 0,
+				GPIO_CFG_OUTPUT,GPIO_CFG_NO_PULL,GPIO_CFG_2MA),
+				GPIO_CFG_ENABLE);
+			gpio_set_value((ctrl_pdata->disp_en_gpio), 1);
+		}
+		if (gpio_is_valid(ctrl_pdata->bl_on_gpio)) {
+			pr_info("%s : Set High Backlight Enable GPIO \n", __func__);
+			gpio_set_value((ctrl_pdata->bl_on_gpio), 1);
+		}
+#endif
+		/*panel reset function moved on lp11 state */
 	} else {
 
-	ctrl_pdata->panel_reset(pdata, 0);
+		ctrl_pdata->panel_reset(pdata, 0);
 
 		if (ctrl_pdata->power_data.num_vreg > 0) {
 
@@ -175,14 +189,14 @@ static int mdss_dsi_panel_power_on(struct mdss_panel_data *pdata, int enable)
 				}
 			}
 
-		ret = msm_dss_enable_vreg(
-			ctrl_pdata->power_data.vreg_config,
-			ctrl_pdata->power_data.num_vreg, 0);
-		if (ret) {
-			pr_err("%s: Failed to disable vregs.rc=%d\n",
-				__func__, ret);
-					return ret;
-		}
+			ret = msm_dss_enable_vreg(
+				ctrl_pdata->power_data.vreg_config,
+				ctrl_pdata->power_data.num_vreg, 0);
+			if (ret) {
+				pr_err("%s: Failed to disable vregs.rc=%d\n",
+					__func__, ret);
+						return ret;
+			}
 
 		}
 	}
@@ -1042,7 +1056,8 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 #if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL)
 	case MDSS_EVENT_FIRST_FRAME_UPDATE:
 		pr_info("MDSS_FIRST_FRAME_UPDATE\n");
-#if !defined(CONFIG_FB_MSM_MDSS_SDC_WXGA_PANEL) && !defined(CONFIG_FB_MSM_MDSS_TC_DSI2LVDS_WXGA_PANEL) && !defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_720P_PT_PANEL)
+#if !defined(CONFIG_FB_MSM_MDSS_SDC_WXGA_PANEL) && !defined(CONFIG_FB_MSM_MDSS_TC_DSI2LVDS_WXGA_PANEL) \
+	&& !defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_720P_PT_PANEL) && !defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		ctrl_pdata->mdp_tg_on = 1;
 	/*Event is send only if cont_splash feature is enabled */
 		if (ctrl_pdata->dsi_off_state == DSI_HS_MODE) {
@@ -1595,9 +1610,31 @@ int dsi_panel_device_register(struct device_node *pan_node,
 				gpio_free(ctrl_pdata->disp_en_gpio);
 				return -ENODEV;
 			}
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+			rc = gpio_tlmm_config(GPIO_CFG(ctrl_pdata->disp_en_gpio, 0,
+						GPIO_CFG_OUTPUT,GPIO_CFG_NO_PULL,GPIO_CFG_2MA),
+						GPIO_CFG_ENABLE);
+			if (rc)
+				pr_err("request disp_en_gpio  failed, rc=%d\n",rc);
+#endif
 		}
 	}
 
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+	ctrl_pdata->bl_on_gpio = of_get_named_gpio(pan_node,
+						     "qcom,bl-on-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->bl_on_gpio)) {
+		pr_err("%s:%dbl_on_gpio gpio not specified\n",
+						__func__, __LINE__);
+	} else {
+		rc = gpio_request(ctrl_pdata->bl_on_gpio, "backlight_enable");
+		if (rc) {
+			pr_err("request bl_on_gpio   failed, rc=%d\n",rc);
+			gpio_free(ctrl_pdata->bl_on_gpio);
+			return -ENODEV;
+		}
+	}
+#endif
 #if defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_720P_PT_PANEL)
 	ctrl_pdata->disp_en_gpio2 = of_get_named_gpio(pan_node,
 						 "qcom,enable-gpio2", 0);
@@ -1686,6 +1723,10 @@ int dsi_panel_device_register(struct device_node *pan_node,
 				if (gpio_is_valid(ctrl_pdata->disp_en_gpio2))
 					gpio_free(ctrl_pdata->disp_en_gpio2);
 #endif
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+				if (gpio_is_valid(ctrl_pdata->bl_on_gpio))
+					gpio_free(ctrl_pdata->bl_on_gpio);
+#endif
 				return -ENODEV;
 			}
 		}
@@ -1710,6 +1751,10 @@ int dsi_panel_device_register(struct device_node *pan_node,
 #if defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_720P_PT_PANEL)
 				if (gpio_is_valid(ctrl_pdata->disp_en_gpio2))
 					gpio_free(ctrl_pdata->disp_en_gpio2);
+#endif
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+				if (gpio_is_valid(ctrl_pdata->bl_on_gpio))
+					gpio_free(ctrl_pdata->bl_on_gpio);
 #endif
 				if (gpio_is_valid(ctrl_pdata->rst_gpio))
 					gpio_free(ctrl_pdata->rst_gpio);
@@ -1784,6 +1829,10 @@ int dsi_panel_device_register(struct device_node *pan_node,
 #if defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_720P_PT_PANEL)
 		if (gpio_is_valid(ctrl_pdata->disp_en_gpio2))
 			gpio_free(ctrl_pdata->disp_en_gpio2);
+#endif
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+		if (gpio_is_valid(ctrl_pdata->bl_on_gpio))
+			gpio_free(ctrl_pdata->bl_on_gpio);
 #endif
 		return rc;
 	}

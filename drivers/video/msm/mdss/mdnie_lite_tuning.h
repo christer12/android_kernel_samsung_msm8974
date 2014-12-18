@@ -25,6 +25,8 @@
 #include "mdss_samsung_oled_cmd_hd_wqhd_panel.h"
 #elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_TFT_VIDEO_WQXGA_PT_PANEL)
 #include "mdss_samsung_tft_video_dual_dsi_panel.h"
+#elif defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL) // JACTIVE
+#include "mdss_jdi_dsi_panel.h"
 #else
 #include "mdss_samsung_dsi_panel.h"
 #endif
@@ -43,6 +45,11 @@
 #define MDNIE_COLOR_BLIND_FIRST_SIZE 118
 #define MDNIE_COLOR_BLIND_SECOND_SIZE 5
 #elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) // KS01
+#define MDNIE_TUNE_FIRST_SIZE 108
+#define MDNIE_TUNE_SECOND_SIZE 5
+#define MDNIE_COLOR_BLIND_FIRST_SIZE 118
+#define MDNIE_COLOR_BLIND_SECOND_SIZE 5
+#elif defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL) // Jactive
 #define MDNIE_TUNE_FIRST_SIZE 108
 #define MDNIE_TUNE_SECOND_SIZE 5
 #define MDNIE_COLOR_BLIND_FIRST_SIZE 118
@@ -145,7 +152,8 @@ enum ACCESSIBILITY {
     ACCESSIBILITY_OFF,
 	NEGATIVE,
 	COLOR_BLIND,
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL)
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL) || \
+	defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	SCREEN_CURTAIN,
 #endif
 	ACCESSIBILITY_MAX,

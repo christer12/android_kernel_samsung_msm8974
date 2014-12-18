@@ -2971,7 +2971,7 @@ int __devinit dwc3_gadget_init(struct dwc3 *dwc)
 
 	dwc->gadget.ops			= &dwc3_gadget_ops;
 #if defined(CONFIG_SEC_LT03_PROJECT) || defined(CONFIG_SEC_MONDRIAN_PROJECT)\
-	|| defined(CONFIG_SEC_KS01_PROJECT)
+	|| defined(CONFIG_SEC_KS01_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)
 	dwc->gadget.max_speed		= USB_SPEED_HIGH;
 #else
 	dwc->gadget.max_speed		= USB_SPEED_SUPER;

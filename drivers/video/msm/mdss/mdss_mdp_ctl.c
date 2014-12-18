@@ -149,7 +149,8 @@ static int mdss_mdp_ctl_perf_commit(struct mdss_data_type *mdata, u32 flags)
 	int cnum;
 	unsigned long clk_rate = 0;
 	u64 bus_ab_quota = 0, bus_ib_quota = 0;
-#ifdef CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 	u64 min_bus_ab_quota = 1103984640 , min_bus_ib_quota = 827988480;
 #endif
 
@@ -174,7 +175,8 @@ static int mdss_mdp_ctl_perf_commit(struct mdss_data_type *mdata, u32 flags)
 		__mdss_mdp_ctrl_perf_ovrd(mdata, &bus_ab_quota, &bus_ib_quota);
 		bus_ib_quota <<= MDSS_MDP_BUS_FACTOR_SHIFT;
 		bus_ab_quota <<= MDSS_MDP_BUS_FACTOR_SHIFT;
-#ifdef CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		if (bus_ab_quota < min_bus_ab_quota)
 			bus_ab_quota = min_bus_ab_quota;
 		if (bus_ib_quota < min_bus_ib_quota)

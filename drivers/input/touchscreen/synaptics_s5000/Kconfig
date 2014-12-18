@@ -7,3 +7,10 @@ config TOUCHSCREEN_SYNAPTICS_I2C_RMI_S5000
 	help
 	  This enables support for Synaptics RMI over I2C based touchscreens.
 	  use Synaptics S5000, S5050, S5707, S5708 IC.
+
+config TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE
+	bool "Synaptics prevent leakage i2c due to hsync"
+	default n
+	help
+	  There is leakage current on TSP I2C by HW defect. TSP I2C Failed.
+	  So To prevent leakage, hsync off, tsp on, hsync on.	  

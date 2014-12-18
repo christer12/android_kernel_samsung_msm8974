@@ -161,6 +161,10 @@ ifeq ($(CONFIG_SEC_LOCALE_KOR),y)
     dtb-$(CONFIG_SEC_KS01_PROJECT)	+= msm8974-sec-ks01lte-r11.dtb
 endif
 endif
+ifeq ($(CONFIG_SEC_JACTIVE_PROJECT),y)
+    dtb-$(CONFIG_SEC_JACTIVE_PROJECT)  += msm8974-sec-jactive-r00.dtb
+    dtb-$(CONFIG_SEC_JACTIVE_PROJECT)  += msm8974-sec-jactive-r03.dtb
+endif
 	dtb-$(CONFIG_SEC_KACTIVE_PROJECT)	+= msm8974pro-ac-sec-kactivelte-r00.dtb
 
 # APQ8084

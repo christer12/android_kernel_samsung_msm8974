@@ -119,7 +119,12 @@ static int msm_snd_enable_codec_ext_clk(struct snd_soc_codec *codec, int enable,
 					bool dapm);
 
 static struct wcd9xxx_mbhc_config mbhc_cfg = {
+#if defined(CONFIG_MACH_KS01EUR) || defined(CONFIG_MACH_KS01SKT) || \
+defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
+	.read_fw_bin = false,
+#else
 	.read_fw_bin = true,
+#endif
 	.calibration = NULL,
 	.micbias = MBHC_MICBIAS2,
 	.mclk_cb_fn = msm_snd_enable_codec_ext_clk,
@@ -218,6 +223,9 @@ static int mainmic_bias_gpio = 0;
 static int micbias_en_msm_gpio = 0;
 static int spkamp_en_gpio = 0;
 static int main_mic_delay = 0;
+#ifdef CONFIG_SEC_JACTIVE_PROJECT
+static int ear_jack_fsa8038_en = 0;
+#endif
 #if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
 int speaker_status = 0;
 EXPORT_SYMBOL(speaker_status);
@@ -759,6 +767,64 @@ static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
 	SND_SOC_DAPM_MIC("Sub Mic", NULL),
 	SND_SOC_DAPM_MIC("Digital Mic5", NULL),
 	SND_SOC_DAPM_MIC("Third Mic", NULL),
+};
+#elif defined (CONFIG_SEC_JACTIVE_PROJECT)
+static const struct snd_soc_dapm_widget msm8974_dapm_widgets_01[] = {
+
+	SND_SOC_DAPM_SUPPLY("MCLK",  SND_SOC_NOPM, 0, 0,
+	msm8974_mclk_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+
+	SND_SOC_DAPM_SPK("Lineout_1 amp", msm_ext_spkramp_event),
+	SND_SOC_DAPM_SPK("Lineout_3 amp", msm_ext_spkramp_event),
+
+	SND_SOC_DAPM_SPK("Lineout_2 amp", msm_ext_spkramp_event),
+	SND_SOC_DAPM_SPK("Lineout_4 amp", msm_ext_spkramp_event),
+	SND_SOC_DAPM_SPK("SPK_ultrasound amp",
+					 msm_ext_spkramp_ultrasound_event),
+
+	SND_SOC_DAPM_MIC("Main Mic", NULL),
+	SND_SOC_DAPM_MIC("Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Sub Mic", NULL),
+	SND_SOC_DAPM_MIC("Third Mic", NULL),
+
+	SND_SOC_DAPM_MIC("Digital Mic1", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic2", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic3", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic4", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic5", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic6", NULL),
+};
+
+static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
+
+	SND_SOC_DAPM_SUPPLY("MCLK",  SND_SOC_NOPM, 0, 0,
+	msm8974_mclk_event, SND_SOC_DAPM_PRE_PMU | SND_SOC_DAPM_POST_PMD),
+
+	SND_SOC_DAPM_SPK("Lineout_1 amp", msm_ext_spkramp_event),
+	SND_SOC_DAPM_SPK("Lineout_3 amp", msm_ext_spkramp_event),
+
+	SND_SOC_DAPM_SPK("Lineout_2 amp", msm_ext_spkramp_event),
+	SND_SOC_DAPM_SPK("Lineout_4 amp", msm_ext_spkramp_event),
+	SND_SOC_DAPM_SPK("SPK_ultrasound amp",
+					 msm_ext_spkramp_ultrasound_event),
+#if defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)
+	SND_SOC_DAPM_SPK("Lineout_switch", lineout_en_event),
+#endif
+#if defined(CONFIG_MACH_MONTBLANC)
+	SND_SOC_DAPM_MIC("Main Mic", NULL),
+#else
+	SND_SOC_DAPM_MIC("Main Mic", msm_mainmic_bias_event),
+#endif
+	SND_SOC_DAPM_MIC("Headset Mic", NULL),
+	SND_SOC_DAPM_MIC("Sub Mic", NULL),
+	SND_SOC_DAPM_MIC("Third Mic", NULL),
+
+	SND_SOC_DAPM_MIC("Digital Mic1", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic2", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic3", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic4", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic5", NULL),
+	SND_SOC_DAPM_MIC("Digital Mic6", NULL),
 };
 #else
 static const struct snd_soc_dapm_widget msm8974_dapm_widgets[] = {
@@ -1698,6 +1764,9 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	struct snd_soc_dai *codec_dai = rtd->codec_dai;
+#if defined(CONFIG_SEC_JACTIVE_PROJECT)
+	extern unsigned int system_rev;
+#endif
 
 	/* Taiko SLIMBUS configuration
 	 * RX1, RX2, RX3, RX4, RX5, RX6, RX7, RX8, RX9, RX10, RX11, RX12, RX13
@@ -1733,10 +1802,21 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 			   __func__, err);
 		return err;
 	}
-
+#if defined(CONFIG_SEC_JACTIVE_PROJECT)
+	pr_info("1. msm_audrx_init system_rev %d",system_rev);
+	if(system_rev < 3) {
+		snd_soc_dapm_new_controls(dapm, msm8974_dapm_widgets_01,
+				ARRAY_SIZE(msm8974_dapm_widgets_01));
+	}
+	else
+	{
+		snd_soc_dapm_new_controls(dapm, msm8974_dapm_widgets,
+				ARRAY_SIZE(msm8974_dapm_widgets));
+	}
+#else
 	snd_soc_dapm_new_controls(dapm, msm8974_dapm_widgets,
 				ARRAY_SIZE(msm8974_dapm_widgets));
-
+#endif
 	snd_soc_dapm_enable_pin(dapm, "Lineout_1 amp");
 	snd_soc_dapm_enable_pin(dapm, "Lineout_3 amp");
 	snd_soc_dapm_enable_pin(dapm, "Lineout_2 amp");
@@ -1795,6 +1875,21 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	} else {
 		err = -ENOMEM;
 		goto out;
+	}
+#elif defined(CONFIG_SEC_JACTIVE_PROJECT)
+	pr_info("2. msm_audrx_init system_rev %d",system_rev);
+	if(system_rev < 3) {
+		mbhc_cfg.calibration = def_taiko_mbhc_cal();
+		if (mbhc_cfg.calibration) {
+			err = taiko_hs_detect(codec, &mbhc_cfg);
+			if (err)
+				goto out;
+			else
+				return err;
+		} else {
+			err = -ENOMEM;
+			goto out;
+		}
 	}
 #endif		
 	adsp_state_notifier =
@@ -1855,7 +1950,7 @@ void *def_taiko_mbhc_cal(void)
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_PLUG_TYPE_PTR(taiko_cal)->X) = (Y))
 	S(v_no_mic, 950);
-	S(v_hs_max, 2650);
+	S(v_hs_max, 3000);
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_BTN_DET_PTR(taiko_cal)->X) = (Y))
 	S(c[0], 62);
@@ -1874,10 +1969,10 @@ void *def_taiko_mbhc_cal(void)
 	btn_high = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg,
 					       MBHC_BTN_DET_V_BTN_HIGH);
 	btn_low[0] = -50;
-	btn_high[0] = 134;
-	btn_low[1] = 136;
-	btn_high[1] = 324;
-	btn_low[2] = 333;
+	btn_high[0] = 160;
+	btn_low[1] = 161;
+	btn_high[1] = 330;
+	btn_low[2] = 331;
 	btn_high[2] = 730;
 	n_ready = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_N_READY);
 	n_ready[0] = 80;
@@ -2957,6 +3052,9 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 	const char *prop_name_ult_lo_gpio = "qcom,ext-ult-lo-amp-gpio";
 	struct resource	*pri_muxsel;
 	struct resource	*sec_muxsel;
+#if defined(CONFIG_SEC_JACTIVE_PROJECT)
+	extern unsigned int system_rev;
+#endif
 
 	if (!pdev->dev.of_node) {
 		dev_err(&pdev->dev, "No platform supplied from device tree\n");
@@ -3100,6 +3198,29 @@ static __devinit int msm8974_asoc_machine_probe(struct platform_device *pdev)
 	if (ret)
 		dev_err(&pdev->dev, "msm8974_prepare_us_euro failed (%d)\n",
 			ret);
+
+#ifdef CONFIG_SEC_JACTIVE_PROJECT
+   if(system_rev < 3) {
+	ear_jack_fsa8038_en = of_get_named_gpio(pdev->dev.of_node, "qcom,fsa8038_enable", 0);
+
+	if (ear_jack_fsa8038_en < 0) {
+		dev_err(&pdev->dev, "Looking up %s property in node %s failed",
+			"qcom,fsa8038_enable",
+			pdev->dev.of_node->full_name);
+	} else {
+		ret = gpio_request(ear_jack_fsa8038_en, "fsa8038 enable");
+
+		if (ret) {
+			dev_err(&pdev->dev, "Looking up %s property in node %s failed",
+				"qcom,fsa8038_enable",
+				pdev->dev.of_node->full_name);
+			gpio_free(ear_jack_fsa8038_en);
+		} else {
+			gpio_direction_output(ear_jack_fsa8038_en, 1);
+		}
+	}
+   }
+#endif
 
 	/* the ldo of main mic bias */
 	mainmic_bias_gpio = of_get_named_gpio(pdev->dev.of_node,

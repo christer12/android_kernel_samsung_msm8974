@@ -1609,6 +1609,12 @@ config SEC_KS01_PROJECT
 	help
 	  Support for Samsung KS01 project.
 
+config SEC_JACTIVE_PROJECT
+	default n
+	bool "Samsung Jactive project"
+	help
+	  Support for Samsung Jactive series.
+	  
 config MACH_H
 	default n
 	bool "Samsung model H"
@@ -1803,6 +1809,13 @@ config MACH_KS01LGT
 	select SEC_KS01_PROJECT
 	help
 	  Support for Samsung KS01LTELGT device.
+
+config MACH_JACTIVESKT
+	default n
+	bool "Samsung model JACTIVESKT"
+	select SEC_JACTIVE_PROJECT
+	help
+	  Support for Samsung JACTIVESKT device.
 
 config MACH_KS01EUR
         default n

@@ -295,6 +295,7 @@ obj-$(CONFIG_SEC_H_PROJECT) += board-8974-sec-h-gpiomux.o
 obj-$(CONFIG_SEC_FRESCO_PROJECT) += board-8974-sec-fresco-gpiomux.o
 obj-$(CONFIG_SEC_F_PROJECT) += board-8974-sec-f-gpiomux.o
 obj-$(CONFIG_SEC_KS01_PROJECT) += board-8974-sec-ks01-gpiomux.o
+obj-$(CONFIG_SEC_JACTIVE_PROJECT) += board-8974-sec-jactive-gpiomux.o
 obj-$(CONFIG_SEC_LT03_PROJECT) += board-8974-sec-lt03-gpiomux.o
 obj-$(CONFIG_SEC_PICASSO_PROJECT) += board-8974-sec-picasso-gpiomux.o
 obj-$(CONFIG_SEC_V2_PROJECT) += board-8974-sec-v2-gpiomux.o

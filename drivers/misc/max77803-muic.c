@@ -90,6 +90,7 @@ enum {
 	ADC_SMARTDOCK		= 0x10, /* 0x10000 40.2K ohm */
 	ADC_INCOMPATIBLE2_CHG	= 0x11, /* 0x10001 49.9K ohm */
 	ADC_AUDIODOCK		= 0x12, /* 0x10010 64.9K ohm */
+	ADC_CHARGING_CABLE	= 0x14, /* 0x10100 102K ohm */
 	ADC_CEA936ATYPE1_CHG	= 0x17,	/* 0x10111 200K ohm */
 	ADC_JIG_USB_OFF		= 0x18, /* 0x11000 255K ohm */
 	ADC_JIG_USB_ON		= 0x19, /* 0x11001 301K ohm */
@@ -1004,8 +1005,8 @@ static int max77803_muic_set_charging_type(struct max77803_muic_info *info,
 	u8 val;
 //#endif
 
-	dev_info(info->dev, "func:%s force_disable:%d\n",
-		 __func__, force_disable);
+	dev_info(info->dev, "func:%s cable_type:%d: force_disable:%d\n",
+		 __func__, info->cable_type, force_disable);
 	if (mdata->charger_cb) {
 		if (force_disable) {
 //#if defined(CONFIG_MACH_HLTEVZW) || defined(CONFIG_MACH_HLTESPR) || defined(CONFIG_MACH_HLTEUSC)
@@ -1655,7 +1656,8 @@ void max77803_otg_control(struct max77803_muic_info *info, int enable)
 	|| defined(CONFIG_MACH_FLTEKTT) || defined(CONFIG_MACH_FLTELGT) \
 	|| defined(CONFIG_MACH_H3GDUOS_CTC) || defined(CONFIG_MACH_LT03SKT) \
 	|| defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)\
-	|| defined(CONFIG_MACH_FRESCOLTESKT)||defined(CONFIG_MACH_FRESCOLTEKTT)||defined(CONFIG_MACH_FRESCOLTELGT)
+	|| defined(CONFIG_MACH_FRESCOLTESKT)||defined(CONFIG_MACH_FRESCOLTEKTT)||defined(CONFIG_MACH_FRESCOLTELGT) \
+	|| defined(CONFIG_MACH_JACTIVESKT)
 		/* [MAX77804] Workaround to get rid of reading dummy(0x00) */
 		/* disable charger detection again */
 		max77803_read_reg(info->max77803->muic,
@@ -2099,6 +2101,10 @@ static int max77803_muic_handle_attach(struct max77803_muic_info *info,
 			ret = max77803_muic_set_charging_type(info, !vbvolt);
 		}
 		break;
+	case ADC_CHARGING_CABLE:
+		info->cable_type = CABLE_TYPE_CHARGING_CABLE_MUIC;
+		max77803_muic_set_charging_type(info, false);
+		break;
 	case ADC_SMARTDOCK:
 		max77803_muic_attach_smart_dock(info, adc, vbvolt, chgtyp);
 		break;
@@ -2288,6 +2294,11 @@ static int max77803_muic_handle_detach(struct max77803_muic_info *info, int irq)
 	}
 
 	switch (info->cable_type) {
+	case CABLE_TYPE_CHARGING_CABLE_MUIC:
+		dev_info(info->dev, "%s: CHARGING CABLE\n", __func__);
+		info->cable_type = CABLE_TYPE_NONE_MUIC;
+		max77803_muic_set_charging_type(info, true);
+		break;
 	case CABLE_TYPE_OTG_MUIC:
 		dev_info(info->dev, "%s: OTG\n", __func__);
 		info->cable_type = CABLE_TYPE_NONE_MUIC;
@@ -2492,6 +2503,7 @@ static int max77803_muic_filter_dev(struct max77803_muic_info *info,
 				 chgtyp == CHGTYP_1A) {
 				switch (info->cable_type) {
 				case CABLE_TYPE_OTG_MUIC:
+				case CABLE_TYPE_CHARGING_CABLE_MUIC:
 				case CABLE_TYPE_DESKDOCK_MUIC:
 				case CABLE_TYPE_CARDOCK_MUIC:
 				case CABLE_TYPE_SMARTDOCK_MUIC:

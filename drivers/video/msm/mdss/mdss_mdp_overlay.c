@@ -1108,7 +1108,7 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 #endif
 
 #if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) || defined (CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL)\
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 	mdss_mdp_ctl_intf_event(mdp5_data->ctl, MDSS_EVENT_FRAME_UPDATE, NULL);
 #endif
 commit_fail:

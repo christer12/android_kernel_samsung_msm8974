@@ -44,11 +44,19 @@ static struct gpiomux_setting hdmi_active_1_cfg = {
 	.pull = GPIOMUX_PULL_UP,
 };
 
+#ifdef CONFIG_MACH_JACTIVESKT
+static struct gpiomux_setting hdmi_suspend_cfg = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_NONE,
+};
+#else
 static struct gpiomux_setting hdmi_suspend_cfg = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv = GPIOMUX_DRV_2MA,
 	.pull = GPIOMUX_PULL_DOWN,
 };
+#endif
 
 static struct qpnp_pin_cfg  MHL_PIN_PM_GPIO_WAKE = {
 	.mode = 1, /*QPNP_PIN_MODE_DIG_OUT*/

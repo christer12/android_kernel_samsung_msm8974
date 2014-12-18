@@ -279,6 +279,9 @@ struct mdss_dsi_ctrl_pdata {
 #if defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_720P_PT_PANEL)
 	int disp_en_gpio2;
 #endif
+#if	defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
+	int bl_on_gpio;
+#endif
 	int disp_te_gpio;
 	int mode_gpio;
 	int rst_gpio_requested;

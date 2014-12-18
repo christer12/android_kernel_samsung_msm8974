@@ -39,6 +39,7 @@ AFYONLTE_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC
 PICASSO_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC_PICASSO_PROJECT=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
 V2_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC_V2_PROJECT=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
 KS01_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC_KS01_PROJECT=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
+JACTIVE_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC_JACTIVE_PROJECT=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
 KACTIVE_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC_KACTIVE_PROJECT=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
 HEAT_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_SEC_HEAT_PROJECT=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
 BERLUTI3G_PROJECT ?= $(shell $(PERL) -e '$$of = "n"; while (<>) { if (/CONFIG_MACH_BERLUTI3G_EUR=y/) { $$of = "y"; break; } } print $$of;' $(KERNEL_CONFIG))
@@ -125,6 +126,9 @@ ifeq "$(KS01_PROJECT)" "y"
 	ifeq "$(LOCALE_KOR)" "y"
 		DTS_FILES = $(wildcard $(TOP)/kernel/arch/arm/boot/dts/msm8974/$(DTS_NAME)-sec-ks01lte*.dts)
 	endif
+endif
+ifeq "$(JACTIVE_PROJECT)" "y"
+DTS_FILES = $(wildcard $(TOP)/kernel/arch/arm/boot/dts/$(DTS_NAME)-sec-jactive*.dts)
 endif
 ifeq "$(KACTIVE_PROJECT)" "y"
 DTS_FILES = $(wildcard $(TOP)/kernel/arch/arm/boot/dts/msm8974pro/$(DTS_NAME)pro-ac-sec-kactive*.dts)

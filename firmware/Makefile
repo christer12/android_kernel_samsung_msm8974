@@ -158,6 +158,11 @@ fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_S5000) += tsp_synaptics/synapt
 fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_S5000) += tsp_synaptics/synaptics_b0_5_1_fac.fw
 fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI)      += tsp_synaptics/synaptics_s5050_f.fw
 
+ifdef CONFIG_MACH_JACTIVESKT
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_S5000) += tsp_synaptics/jactive/synaptics_b0_hsync04.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_S5000) += tsp_synaptics/jactive/synaptics_b0_hsync04_fac.fw
+endif
+
 fw-shipped-$(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S) += tsp_atmel/mXT1664S_v.fw
 fw-shipped-$(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S) += tsp_atmel/mXT1664S_n.fw
 fw-shipped-$(CONFIG_TOUCHSCREEN_ATMEL_MXT1188S) += tsp_atmel/mXT1188S.fw
@@ -177,7 +182,7 @@ fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9010_0208.bin
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 
 #for sensorhub
-fw-shipped-$(CONFIG_SENSORS_SSP_ATMEL) += ssp.fw ssp_rev03.fw
+fw-shipped-$(CONFIG_SENSORS_SSP_ATMEL) += ssp.fw ssp_rev03.fw ssp_fortius.fw
 ifndef CONFIG_SENSORS_SSP_BOUNCE_FIRMWARE
 fw-shipped-$(CONFIG_SENSORS_SSP_STM) += ssp_stm.fw ssp_stm_rvs.fw ssp_stm_88921.fw ssp_stm_w2014.fw
 fw-shipped-$(CONFIG_SENSORS_SSP_STM_32F) += ssp_stm32f.fw

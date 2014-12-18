@@ -105,6 +105,16 @@ static struct gpio_event_direct_entry sec_jack_key_map[] = {
 	},
 };
 
+#ifdef CONFIG_MACH_JACTIVESKT
+static struct gpio_event_input_info sec_jack_key_info = {
+	.info.func = gpio_event_input_func,
+	.info.no_suspend = false,
+	.type = EV_KEY,
+	.debounce_time.tv64 = SEND_KEY_CHECK_TIME_MS * NSEC_PER_MSEC,
+	.keymap = sec_jack_key_map,
+	.keymap_size = ARRAY_SIZE(sec_jack_key_map)
+};
+#else
 static struct gpio_event_input_info sec_jack_key_info = {
 	.info.func = gpio_event_input_func,
 	.info.no_suspend = true,
@@ -113,6 +123,7 @@ static struct gpio_event_input_info sec_jack_key_info = {
 	.keymap = sec_jack_key_map,
 	.keymap_size = ARRAY_SIZE(sec_jack_key_map)
 };
+#endif
 
 static struct gpio_event_info *sec_jack_input_info[] = {
 	&sec_jack_key_info.info,

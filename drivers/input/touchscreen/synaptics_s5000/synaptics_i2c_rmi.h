@@ -117,6 +117,10 @@
 #define FAC_FWIMAGE_NAME_B0		"tsp_synaptics/synaptics_b0_fac.fw"
 #define FAC_FWIMAGE_NAME_B0_5_1		"tsp_synaptics/synaptics_b0_5_1_fac.fw"
 
+#ifdef CONFIG_MACH_JACTIVESKT
+#define FW_IMAGE_NAME_B0_HSYNC04	"tsp_synaptics/jactive/synaptics_b0_hsync04.fw"
+#define FW_IMAGE_NAME_B0_HSYNC04_FAC	"tsp_synaptics/jactive/synaptics_b0_hsync04_fac.fw"
+#endif
 
 //#ifdef SEC_PRODUCT_SHIP
 //#define	CONFIG_SAMSUNG_PRODUCT_SHIP

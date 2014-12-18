@@ -405,7 +405,7 @@ static int msm_voice_gain_put(struct snd_kcontrol *kcontrol,
 #ifdef CONFIG_SND_SOC_ES705
 	es705_put_veq_block(volume);
 #endif
-#if defined(CONFIG_SND_SOC_ES325) && !defined(CONFIG_SEC_LOCALE_KOR_H) && !defined(CONFIG_SEC_LOCALE_KOR_FRESCO)
+#if defined(CONFIG_SND_SOC_ES325) && !defined(CONFIG_SEC_LOCALE_KOR_H) && !defined(CONFIG_SEC_LOCALE_KOR_FRESCO) && !defined(CONFIG_SEC_JACTIVE_PROJECT)
 	es325_set_VEQ_max_gain(volume);
 #endif
 done:

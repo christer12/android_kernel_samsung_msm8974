@@ -69,6 +69,11 @@ static struct battery_data_t samsung_battery_data[] = {
 		.RCOMP_charging = 0x79,
 		.temp_cohot = -850,
 		.temp_cocold = -4200,
+#elif defined(CONFIG_MACH_JACTIVESKT)
+		.RCOMP0 = 0x7B,
+		.RCOMP_charging = 0x85,
+		.temp_cohot = -700,
+		.temp_cocold = -4875,
 #else
 		.RCOMP0 = 0x73,
 		.RCOMP_charging = 0x8D,
@@ -362,7 +367,7 @@ static sec_bat_adc_table_data_t temp_table[] = {
 	{41772,	-200},
 };
 #elif defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || \
-		defined(CONFIG_MACH_KS01LGT)
+		defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT) 
 static sec_bat_adc_table_data_t temp_table[] = {
 	{27281,	700},
 	{27669,	650},
@@ -634,6 +639,19 @@ static sec_bat_adc_table_data_t temp_table[] = {
 #define TEMP_LOW_THRESHOLD_LPM		-45
 #define TEMP_LOW_RECOVERY_LPM		0
 #endif
+#elif defined(CONFIG_SEC_JACTIVE_PROJECT)
+#define TEMP_HIGH_THRESHOLD_EVENT	670
+#define TEMP_HIGH_RECOVERY_EVENT	420
+#define TEMP_LOW_THRESHOLD_EVENT	-45
+#define TEMP_LOW_RECOVERY_EVENT	0
+#define TEMP_HIGH_THRESHOLD_NORMAL	670
+#define TEMP_HIGH_RECOVERY_NORMAL	420
+#define TEMP_LOW_THRESHOLD_NORMAL	-45
+#define TEMP_LOW_RECOVERY_NORMAL	0
+#define TEMP_HIGH_THRESHOLD_LPM		670
+#define TEMP_HIGH_RECOVERY_LPM		420
+#define TEMP_LOW_THRESHOLD_LPM		-45
+#define TEMP_LOW_RECOVERY_LPM		0
 #elif defined(MACH_MONDRIANWIFI_USA)
 #define TEMP_HIGH_THRESHOLD_EVENT	600
 #define TEMP_HIGH_RECOVERY_EVENT		450
@@ -831,7 +849,7 @@ static void sec_bat_adc_ap_init(struct platform_device *pdev,
 
 #if defined(CONFIG_ARCH_MSM8974PRO)
 	temp_channel = LR_MUX5_PU1_AMUX_THM2;
-#elif defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_KS01_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
+#elif defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_KS01_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT) || defined(CONFIG_SEC_JACTIVE_PROJECT)
 	temp_channel = LR_MUX5_PU2_AMUX_THM2;
 #else
 	temp_channel = LR_MUX4_PU2_AMUX_THM1;
@@ -992,7 +1010,8 @@ bool sec_bat_check_jig_status(void)
 {
 #if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_F_PROJECT) || \
 	defined(CONFIG_SEC_KS01_PROJECT) || defined(CONFIG_MACH_MONDRIAN) || \
-	defined(CONFIG_SEC_K_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT)
+	defined(CONFIG_SEC_K_PROJECT) || defined(CONFIG_SEC_FRESCO_PROJECT) || \
+	defined(CONFIG_SEC_JACTIVE_PROJECT)
 #if defined(CONFIG_EXTCON)
 	return get_jig_state();
 #else
@@ -1259,9 +1278,15 @@ void cable_initial_check(struct sec_battery_info *battery)
 
 	pr_info("%s : current_cable_type : (%d)\n", __func__, current_cable_type);
 	if (POWER_SUPPLY_TYPE_BATTERY != current_cable_type) {
-		value.intval = current_cable_type;
-		psy_do_property("battery", set,
-				POWER_SUPPLY_PROP_ONLINE, value);
+		if (current_cable_type == POWER_SUPPLY_TYPE_POWER_SHARING) {
+			value.intval = current_cable_type;
+			psy_do_property("ps", set,
+					POWER_SUPPLY_PROP_ONLINE, value);
+		} else {
+			value.intval = current_cable_type;
+			psy_do_property("battery", set,
+					POWER_SUPPLY_PROP_ONLINE, value);
+		}
 	} else {
 		psy_do_property(battery->pdata->charger_name, get,
 				POWER_SUPPLY_PROP_ONLINE, value);
