@@ -141,7 +141,36 @@ fw-shipped-$(CONFIG_USB_VICAM) += vicam/firmware.fw
 fw-shipped-$(CONFIG_VIDEO_CPIA2) += cpia2/stv0672_vp4.bin
 fw-shipped-$(CONFIG_YAM) += yam/1200.bin yam/9600.bin
 
+fw-shipped-$(CONFIG_TOUCHSCREEN_MMS152) += tsp_melfas/BOOT.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_MMS152) += tsp_melfas/CORE.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_MMS152) += tsp_melfas/CONF.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_MMS152) += tsp_melfas/melfas.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_MMS152) += tsp_melfas/mms_boot.fw
+fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9001_B746.bin
+fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9001_B887.bin
+fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9001_B911.bin
+fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9007_0104.bin
+fw-shipped-$(CONFIG_INPUT_WACOM) += epen/W9010_0070.hex
+
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_a1.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_b0_3_4.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_b0_4_0.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_b0_4_3.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_b0_4_3_new.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_b0_5_1.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) += tsp_synaptics/synaptics_b0_5_1_fac.fw
+
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_H) += tsp_synaptics/synaptics.fw
+fw-shipped-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_H) += tsp_synaptics/synaptics_s5000.fw
+
+fw-shipped-$(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S) += tsp_atmel/mXT1664S_v.fw
+
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
+
+#for sensorhub
+fw-shipped-$(CONFIG_SENSORS_SSP_ATMEL) += ssp.fw ssp_rev03.fw
+fw-shipped-$(CONFIG_SENSORS_SSP_STM) += ssp_stm.fw ssp_stm_rvs.fw
+fw-shipped-$(CONFIG_SENSORS_SSP) += ssp_crashed.fw
 
 # Directories which we _might_ need to create, so we have a rule for them.
 firmware-dirs := $(sort $(addprefix $(objtree)/$(obj)/,$(dir $(fw-external-y) $(fw-shipped-all))))

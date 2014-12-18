@@ -22,8 +22,23 @@ struct mmc_cd_gpio {
 	char label[0];
 };
 
+extern u32 sdhci_card_present_state(struct mmc_host *mmc);
+
 static irqreturn_t mmc_cd_gpio_irqt(int irq, void *dev_id)
 {
+	int status;
+	struct mmc_host *mmc = dev_id;
+
+	status = sdhci_card_present_state(mmc);
+
+	if (status ^ mmc->oldstat)
+		pr_info("%s: Slot status change detected "
+				"(%d -> %d) and the card detect GPIO"
+				" is ACTIVE_LOW\n",
+				mmc_hostname(mmc),
+				mmc->oldstat, status);
+	mmc->oldstat = status;
+
 	/* Schedule a card detection after a debounce timeout */
 	mmc_detect_change(dev_id, msecs_to_jiffies(100));
 	return IRQ_HANDLED;
@@ -58,6 +73,8 @@ int mmc_cd_gpio_request(struct mmc_host *host, unsigned int gpio)
 	cd->gpio = gpio;
 	host->hotplug.irq = irq;
 	host->hotplug.handler_priv = cd;
+
+	host->oldstat = sdhci_card_present_state(host);
 
 	return 0;
 
