@@ -189,6 +189,7 @@ int msm_iommu_map_contig_buffer(phys_addr_t phys,
 {
 	unsigned long iova;
 	int ret;
+	struct iommu_domain *domain;
 
 	if (size & (align - 1))
 		return -EINVAL;
@@ -204,8 +205,14 @@ int msm_iommu_map_contig_buffer(phys_addr_t phys,
 	if (ret)
 		return -ENOMEM;
 
-	ret = msm_iommu_map_iova_phys(msm_get_iommu_domain(domain_no), iova,
-					phys, size, cached);
+	domain = msm_get_iommu_domain(domain_no);
+	if (!domain) {
+		pr_err("%s: Could not find domain %u. Unable to map\n",
+			__func__, domain_no);
+		msm_free_iova_address(iova, domain_no, partition_no, size);
+		return -EINVAL;
+	}
+	ret = msm_iommu_map_iova_phys(domain, iova, phys, size, cached);
 
 	if (ret)
 		msm_free_iova_address(iova, domain_no, partition_no, size);
@@ -221,10 +228,18 @@ void msm_iommu_unmap_contig_buffer(unsigned long iova,
 					unsigned int partition_no,
 					unsigned long size)
 {
+	struct iommu_domain *domain;
+
 	if (!msm_use_iommu())
 		return;
 
-	iommu_unmap_range(msm_get_iommu_domain(domain_no), iova, size);
+	domain = msm_get_iommu_domain(domain_no);
+	if (domain) {
+		iommu_unmap_range(domain, iova, size);
+	} else {
+		pr_err("%s: Could not find domain %u. Unable to unmap\n",
+			__func__, domain_no);
+	}
 	msm_free_iova_address(iova, domain_no, partition_no, size);
 }
 EXPORT_SYMBOL(msm_iommu_unmap_contig_buffer);
@@ -232,10 +247,10 @@ EXPORT_SYMBOL(msm_iommu_unmap_contig_buffer);
 static struct msm_iova_data *find_domain(int domain_num)
 {
 	struct rb_root *root = &domain_root;
-	struct rb_node *p = root->rb_node;
+	struct rb_node *p;
 
 	mutex_lock(&domain_mutex);
-
+	p = root->rb_node;
 	while (p) {
 		struct msm_iova_data *node;
 
@@ -538,7 +553,8 @@ int msm_unregister_domain(struct iommu_domain *domain)
 	ida_simple_remove(&domain_nums, data->domain_num);
 
 	for (i = 0; i < data->npools; ++i)
-		gen_pool_destroy(data->pools[i].gpool);
+		if (data->pools[i].gpool)
+			gen_pool_destroy(data->pools[i].gpool);
 
 	kfree(data->pools);
 	kfree(data);
@@ -570,12 +586,14 @@ static int find_and_add_contexts(struct iommu_group *group,
 			goto out;
 		}
 		ctx = msm_iommu_get_ctx(name);
-		if (!ctx) {
-			pr_err("Unable to find context %s\n", name);
-			ret_val = -EINVAL;
+		if (IS_ERR(ctx)) {
+			ret_val = PTR_ERR(ctx);
 			goto out;
 		}
-		iommu_group_add_device(group, ctx);
+
+		ret_val = iommu_group_add_device(group, ctx);
+		if (ret_val)
+			goto out;
 	}
 out:
 	return ret_val;
@@ -590,7 +608,7 @@ static int create_and_add_domain(struct iommu_group *group,
 	struct msm_iova_layout l;
 	struct msm_iova_partition *part = 0;
 	struct iommu_domain *domain = 0;
-	unsigned int *addr_array;
+	unsigned int *addr_array = 0;
 	unsigned int array_size;
 	int domain_no;
 	int secure_domain;
@@ -661,10 +679,45 @@ static int create_and_add_domain(struct iommu_group *group,
 	iommu_group_set_iommudata(group, domain, NULL);
 
 free_mem:
+	kfree(addr_array);
 	kfree(part);
 out:
 	return ret_val;
 }
+
+static int __msm_group_get_domain(struct device *dev, void *data)
+{
+	struct msm_iommu_data_entry *list_entry;
+	struct list_head *dev_list = data;
+	int ret_val = 0;
+
+	list_entry = kmalloc(sizeof(*list_entry), GFP_KERNEL);
+	if (list_entry) {
+		list_entry->data = dev;
+		list_add(&list_entry->list, dev_list);
+	} else {
+		ret_val = -ENOMEM;
+	}
+
+	return ret_val;
+}
+
+static void __msm_iommu_group_remove_device(struct iommu_group *grp)
+{
+	struct msm_iommu_data_entry *tmp;
+	struct msm_iommu_data_entry *list_entry;
+	struct list_head dev_list;
+
+	INIT_LIST_HEAD(&dev_list);
+	iommu_group_for_each_dev(grp, &dev_list, __msm_group_get_domain);
+
+	list_for_each_entry_safe(list_entry, tmp, &dev_list, list) {
+		iommu_group_remove_device(list_entry->data);
+		list_del(&list_entry->list);
+		kfree(list_entry);
+	}
+}
+
 
 static int iommu_domain_parse_dt(const struct device_node *dt_node)
 {
@@ -674,13 +727,30 @@ static int iommu_domain_parse_dt(const struct device_node *dt_node)
 	int ret_val = 0;
 	struct iommu_group *group = 0;
 	const char *name;
+	struct msm_iommu_data_entry *grp_list_entry;
+	struct msm_iommu_data_entry *tmp;
+	struct list_head iommu_group_list;
+	INIT_LIST_HEAD(&iommu_group_list);
 
 	for_each_child_of_node(dt_node, node) {
 		group = iommu_group_alloc();
 		if (IS_ERR(group)) {
 			ret_val = PTR_ERR(group);
-			goto out;
+			group = 0;
+			goto free_group;
 		}
+
+		/* This is only needed to clean up memory if something fails */
+		grp_list_entry = kmalloc(sizeof(*grp_list_entry),
+					   GFP_KERNEL);
+		if (grp_list_entry) {
+			grp_list_entry->data = group;
+			list_add(&grp_list_entry->list, &iommu_group_list);
+		} else {
+			ret_val = -ENOMEM;
+			goto free_group;
+		}
+
 		if (of_property_read_string(node, "label", &name)) {
 			ret_val = -EINVAL;
 			goto free_group;
@@ -696,7 +766,6 @@ static int iommu_domain_parse_dt(const struct device_node *dt_node)
 
 		ret_val = find_and_add_contexts(group, node, num_contexts);
 		if (ret_val) {
-			ret_val = -EINVAL;
 			goto free_group;
 		}
 		ret_val = create_and_add_domain(group, node, name);
@@ -704,9 +773,33 @@ static int iommu_domain_parse_dt(const struct device_node *dt_node)
 			ret_val = -EINVAL;
 			goto free_group;
 		}
+
+		/* Remove reference to the group that is taken when the group
+		 * is allocated. This will ensure that when all the devices in
+		 * the group are removed the group will be released.
+		 */
+		iommu_group_put(group);
 	}
+
+	list_for_each_entry_safe(grp_list_entry, tmp, &iommu_group_list, list) {
+		list_del(&grp_list_entry->list);
+		kfree(grp_list_entry);
+	}
+	goto out;
+
 free_group:
-	/* No iommu_group_free() function */
+	list_for_each_entry_safe(grp_list_entry, tmp, &iommu_group_list, list) {
+		struct iommu_domain *d;
+
+		d = iommu_group_get_iommudata(grp_list_entry->data);
+		if (d)
+			msm_unregister_domain(d);
+
+		__msm_iommu_group_remove_device(grp_list_entry->data);
+		list_del(&grp_list_entry->list);
+		kfree(grp_list_entry);
+	}
+	iommu_group_put(group);
 out:
 	return ret_val;
 }
@@ -725,7 +818,7 @@ static int iommu_domain_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	for (i = 0; i < p->ndomains; i++) {
-		struct msm_iova_layout l;
+		struct msm_iova_layout l = {0};
 		struct msm_iova_partition *part;
 		struct msm_iommu_domain *domains;
 

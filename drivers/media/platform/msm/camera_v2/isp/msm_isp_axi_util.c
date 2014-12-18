@@ -407,7 +407,7 @@ void msm_isp_sof_notify(struct vfe_device *vfe_dev,
 		break;
 	}
 
-	sof_event.frame_id = vfe_dev->axi_data.src_info[VFE_PIX_0].frame_id;
+	sof_event.frame_id = vfe_dev->axi_data.src_info[frame_src].frame_id;
 	sof_event.timestamp = ts->event_time;
 	msm_isp_send_event(vfe_dev, ISP_EVENT_SOF, &sof_event);
 }
@@ -729,12 +729,12 @@ static int msm_isp_cfg_ping_pong_address(struct vfe_device *vfe_dev,
 		goto buf_error;
 	}
 
-	for (i = 0; i < stream_info->num_planes; i++)
+	for (i = 0; i < stream_info->num_planes; i++) {
 		vfe_dev->hw_info->vfe_ops.axi_ops.update_ping_pong_addr(
 			vfe_dev, stream_info->wm[i],
 			pingpong_status, buf->mapped_info[i].paddr +
 			stream_info->plane_cfg[i].plane_addr_offset);
-
+	}       
 	pingpong_bit = (~(pingpong_status >> stream_info->wm[0]) & 0x1);
 	stream_info->buf[pingpong_bit] = buf;
 	return 0;
@@ -1067,7 +1067,15 @@ static int msm_isp_stop_axi_stream(struct vfe_device *vfe_dev,
 	rc = msm_isp_axi_wait_for_cfg_done(vfe_dev, camif_update);
 	if (rc < 0) {
 		pr_err("%s: wait for config done failed\n", __func__);
-		return rc;
+		pr_err("%s:<DEBUG00>timeout:no frame from sensor\n", __func__);
+		for (i = 0; i < stream_cfg_cmd->num_streams; i++) {
+			stream_info = &axi_data->stream_info[
+			HANDLE_TO_IDX(stream_cfg_cmd->stream_handle[i])];
+			stream_info->state = STOP_PENDING;
+			msm_isp_axi_stream_enable_cfg(
+				vfe_dev, stream_info);
+			stream_info->state = INACTIVE;
+		}
 	}
 	msm_isp_update_stream_bandwidth(vfe_dev);
 	if (camif_update == DISABLE_CAMIF)

@@ -33,9 +33,6 @@ MODULE_DESCRIPTION("Input core");
 MODULE_LICENSE("GPL");
 
 #define INPUT_DEVICES	256
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-extern int poweroff_charging;
-#endif /*   CONFIG_SAMSUNG_LPM_MODE */
 
 static LIST_HEAD(input_dev_list);
 static LIST_HEAD(input_handler_list);
@@ -525,7 +522,7 @@ int input_open_device(struct input_handle *handle)
 	if (retval) {
 		dev->users_private--;
 		if (!dev->disabled)
-		dev->users--;
+			dev->users--;
 		if (!--handle->open) {
 			/*
 			 * Make sure we are not delivering any more events
@@ -1659,15 +1656,9 @@ void input_reset_device(struct input_dev *dev)
 		 * Keys that have been pressed at suspend time are unlikely
 		 * to be still pressed when we resume.
 		 */
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-		if( !poweroff_charging ) {
-#endif /*   CONFIG_SAMSUNG_LPM_MODE */
-		spin_lock_irq(&dev->event_lock);
+		/* spin_lock_irq(&dev->event_lock);
 		input_dev_release_keys(dev);
-		spin_unlock_irq(&dev->event_lock);
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-		}
-#endif /*   CONFIG_SAMSUNG_LPM_MODE */
+		spin_unlock_irq(&dev->event_lock); */
 	}
 
 	mutex_unlock(&dev->mutex);

@@ -99,6 +99,15 @@ config S5K4E5YA
 		2 mipi lanes, preview config = 1280 * 980 at 30 fps,
 		snapshot config = 2608 * 1960 at 30 fps.
 
+config IMX134
+	bool "Sensor IMX134 (BAYER 8M)"
+	depends on MSMB_CAMERA
+	---help---
+		Sony 8 MP Bayer Sensor with auto focus, uses
+		4 mipi lanes full resolution @30fps and
+                HFR @60fps and @120fps
+		Video HDR support.
+
 config IMX135
 	bool "Sensor IMX135 (BAYER 12M)"
 	depends on MSMB_CAMERA

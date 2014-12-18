@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,9 +30,17 @@ struct wcnss_wlan_config {
 	int		use_48mhz_xo;
 };
 
+enum {
+	WCNSS_XO_48MHZ = 1,
+	WCNSS_XO_19MHZ,
+	WCNSS_XO_INVALID,
+};
+
 #define WCNSS_WLAN_IRQ_INVALID -1
 #define HAVE_WCNSS_SUSPEND_RESUME_NOTIFY 1
 #define HAVE_WCNSS_RESET_INTR 1
+#define HAVE_WCNSS_CAL_DOWNLOAD 1
+#define HAVE_WCNSS_RX_BUFF_COUNT 1
 
 struct device *wcnss_wlan_get_device(void);
 struct resource *wcnss_wlan_get_memory_map(struct device *dev);
@@ -50,7 +58,8 @@ struct platform_device *wcnss_get_platform_device(void);
 struct wcnss_wlan_config *wcnss_get_wlan_config(void);
 int wcnss_wlan_power(struct device *dev,
 				struct wcnss_wlan_config *cfg,
-				enum wcnss_opcode opcode);
+				enum wcnss_opcode opcode,
+				int *iris_xo_mode_set);
 int wcnss_req_power_on_lock(char *driver_name);
 int wcnss_free_power_on_lock(char *driver_name);
 unsigned int wcnss_get_serial_number(void);
@@ -65,7 +74,18 @@ void wcnss_suspend_notify(void);
 void wcnss_resume_notify(void);
 void wcnss_riva_log_debug_regs(void);
 void wcnss_pronto_log_debug_regs(void);
-int wcnss_cold_boot_done(void);
+int wcnss_device_ready(void);
+void wcnss_riva_dump_pmic_regs(void);
+int wcnss_xo_auto_detect_enabled(void);
+u32 wcnss_get_wlan_rx_buff_count(void);
+int wcnss_wlan_iris_xo_mode(void);
+#ifdef CONFIG_WCNSS_REGISTER_DUMP_ON_BITE
+void wcnss_log_debug_regs_on_bite(void);
+#else
+static inline void wcnss_log_debug_regs_on_bite(void)
+{
+}
+#endif
 
 #define wcnss_wlan_get_drvdata(dev) dev_get_drvdata(dev)
 #define wcnss_wlan_set_drvdata(dev, data) dev_set_drvdata((dev), (data))

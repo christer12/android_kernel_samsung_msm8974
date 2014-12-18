@@ -20,20 +20,8 @@
 #ifndef _SYNAPTICS_RMI4_GENERIC_H_
 #define _SYNAPTICS_RMI4_GENERIC_H_
 
+#undef SYNAPTICS_RMI_INFORM_CHARGER 
 
-#define SYNAPTICS_HW_RESET_TIME_B0	100
-
-#define OCTA_PANEL_REVISION_51	0x08
-#define OCTA_PANEL_REVISION_43	0x02
-#define OCTA_PANEL_REVISION_40	0x01
-#define OCTA_PANEL_REVISION_34	0x00
-
-struct synaptics_rmi_f1a_button_map {
-	unsigned char nbuttons;
-	unsigned char *map;
-};
-
-#define SYNAPTICS_RMI_INFORM_CHARGER 
 
 #ifdef SYNAPTICS_RMI_INFORM_CHARGER
 struct synaptics_rmi_callbacks {
@@ -88,6 +76,5 @@ struct synaptics_rmi4_platform_data {
 #ifdef SYNAPTICS_RMI_INFORM_CHARGER	
 	void (*register_cb)(struct synaptics_rmi_callbacks *);
 #endif
-	struct synaptics_rmi_f1a_button_map *f1a_button_map;
 };
 #endif

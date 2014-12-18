@@ -36,7 +36,7 @@
 #define VFE40_BURST_LEN 3
 #define VFE40_STATS_BURST_LEN 2
 #define VFE40_UB_SIZE 1536
-#define VFE40_EQUAL_SLICE_UB 286
+#define VFE40_EQUAL_SLICE_UB 228
 #define VFE40_WM_BASE(idx) (0x6C + 0x24 * idx)
 #define VFE40_RDI_BASE(idx) (0x2E8 + 0x4 * idx)
 #define VFE40_XBAR_BASE(idx) (0x58 + 0x4 * (idx / 2))
@@ -380,10 +380,19 @@ static void msm_vfe40_process_violation_status(
 
 static void msm_vfe40_process_error_status(struct vfe_device *vfe_dev)
 {
+	uint32_t halt_mask;
 	uint32_t error_status1 = vfe_dev->error_info.error_mask1;
-	if (error_status1 & (1 << 0))
+	struct msm_isp_event_data error_event;
+	if (error_status1 & (1 << 0)) {
 		pr_err("%s: camif error status: 0x%x\n",
 			__func__, vfe_dev->error_info.camif_status);
+		error_event.frame_id = vfe_dev->axi_data.src_info[VFE_PIX_0].frame_id;
+		msm_isp_send_event(vfe_dev, ISP_EVENT_ERROR, &error_event);
+		halt_mask = msm_camera_io_r(vfe_dev->vfe_base + 0x2C);
+		halt_mask &= ~(1 << 8);
+		msm_camera_io_w_mb(halt_mask, vfe_dev->vfe_base + 0x2C);
+		msm_camera_io_w_mb(0x1, vfe_dev->vfe_base + 0x2C0);
+	}
 	if (error_status1 & (1 << 1))
 		pr_err("%s: stats bhist overwrite\n", __func__);
 	if (error_status1 & (1 << 2))
@@ -1238,7 +1247,7 @@ static void msm_vfe40_get_error_mask(
 }
 
 static struct msm_vfe_axi_hardware_info msm_vfe40_axi_hw_info = {
-	.num_wm = 4,
+	.num_wm = 5,
 	.num_comp_mask = 2,
 	.num_rdi = 3,
 	.num_rdi_master = 3,

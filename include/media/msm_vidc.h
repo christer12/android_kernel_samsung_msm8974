@@ -28,7 +28,7 @@ int msm_vidc_s_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_g_ctrl(void *instance, struct v4l2_control *a);
 int msm_vidc_reqbufs(void *instance, struct v4l2_requestbuffers *b);
 int msm_vidc_prepare_buf(void *instance, struct v4l2_buffer *b);
-int msm_vidc_release_buf(void *instance, struct v4l2_buffer *b);
+int msm_vidc_release_buffers(void *instance, int buffer_type);
 int msm_vidc_qbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_dqbuf(void *instance, struct v4l2_buffer *b);
 int msm_vidc_streamon(void *instance, enum v4l2_buf_type i);
@@ -73,6 +73,16 @@ struct msm_vidc_aspect_ratio_payload {
 	unsigned int aspect_height;
 };
 
+struct msm_vidc_mpeg2_seqdisp_payload {
+	unsigned int video_format;
+	bool color_descp;
+	unsigned int color_primaries;
+	unsigned int transfer_char;
+	unsigned int matrix_coeffs;
+	unsigned int disp_width;
+	unsigned int disp_height;
+};
+
 struct msm_vidc_panscan_window {
 	unsigned int panscan_height_offset;
 	unsigned int panscan_width_offset;
@@ -94,6 +104,7 @@ enum msm_vidc_extradata_type {
 	EXTRADATA_FRAME_RATE = 0x00000007,
 	EXTRADATA_PANSCAN_WINDOW = 0x00000008,
 	EXTRADATA_RECOVERY_POINT_SEI = 0x00000009,
+	EXTRADATA_MPEG2_SEQDISP = 0x0000000D,
 	EXTRADATA_MULTISLICE_INFO = 0x7F100000,
 	EXTRADATA_NUM_CONCEALED_MB = 0x7F100001,
 	EXTRADATA_INDEX = 0x7F100002,

@@ -17,10 +17,21 @@
 #include <linux/types.h>
 #include <linux/mutex.h>
 #include <linux/completion.h>
+#include <linux/timer.h>
 
+#include "mdp3.h"
 #include "mdp3_dma.h"
 #include "mdss_fb.h"
 #include "mdss_panel.h"
+
+#define MDP3_MAX_BUF_QUEUE 8
+
+struct mdp3_buffer_queue {
+	struct mdp3_img_data img_data[MDP3_MAX_BUF_QUEUE];
+	int count;
+	int push_idx;
+	int pop_idx;
+};
 
 struct mdp3_session_data {
 	struct mutex lock;
@@ -29,7 +40,25 @@ struct mdp3_session_data {
 	struct mdss_panel_data *panel;
 	struct mdp3_intf *intf;
 	struct msm_fb_data_type *mfd;
-	struct completion vsync_comp;
+	ktime_t vsync_time;
+	struct timer_list vsync_timer;
+	int vsync_period;
+	struct sysfs_dirent *vsync_event_sd;
+	struct mdp_overlay overlay;
+	struct mdp_overlay req_overlay;
+	struct mdp3_buffer_queue bufq_in;
+	struct mdp3_buffer_queue bufq_out;
+	struct work_struct clk_off_work;
+	int histo_status;
+	struct mutex histo_lock;
+	int lut_sel;
+	int cc_vect_sel;
+	bool vsync_before_commit;
+	bool first_commit;
+	int clk_on;
+
+	int vsync_enabled;
+	atomic_t vsync_countdown; /* Used to count down  */
 };
 
 int mdp3_ctrl_init(struct msm_fb_data_type *mfd);

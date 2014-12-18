@@ -80,6 +80,8 @@ struct sps_drv {
 static struct sps_drv *sps;
 
 u32 d_type;
+bool enhd_pipe;
+bool imem;
 
 static void sps_device_de_init(void);
 
@@ -1583,10 +1585,7 @@ int sps_transfer(struct sps_pipe *h, struct sps_transfer *transfer)
 	for (i = 0; i < transfer->iovec_count; i++) {
 		u32 flags = iovec->flags;
 
-		if (iovec->addr == 0) {
-			SPS_ERR("sps:%s:iovec address is invalid.\n", __func__);
-			return SPS_ERROR;
-		} else if (iovec->size > SPS_IOVEC_MAX_SIZE) {
+		if (iovec->size > SPS_IOVEC_MAX_SIZE) {
 			SPS_ERR("sps:%s:iovec size is invalid.\n", __func__);
 			return SPS_ERROR;
 		}
@@ -1613,7 +1612,7 @@ EXPORT_SYMBOL(sps_transfer);
  * Perform a single DMA transfer on an SPS connection end point
  *
  */
-int sps_transfer_one(struct sps_pipe *h, u32 addr, u32 size,
+int sps_transfer_one(struct sps_pipe *h, phys_addr_t addr, u32 size,
 		     void *user, u32 flags)
 {
 	struct sps_pipe *pipe = h;
@@ -1635,7 +1634,8 @@ int sps_transfer_one(struct sps_pipe *h, u32 addr, u32 size,
 		return SPS_ERROR;
 
 	result = sps_bam_pipe_transfer_one(bam, pipe->pipe_index,
-					   addr, size, user, flags);
+				SPS_GET_LOWER_ADDR(addr), size, user,
+				DESC_FLAG_WORD(flags, addr));
 
 	sps_bam_unlock(bam);
 
@@ -1986,6 +1986,35 @@ int sps_get_unused_desc_num(struct sps_pipe *h, u32 *desc_num)
 	return result;
 }
 EXPORT_SYMBOL(sps_get_unused_desc_num);
+
+/**
+ * Vote for or relinquish BAM DMA clock
+ *
+ */
+int sps_ctrl_bam_dma_clk(bool clk_on)
+{
+	int ret;
+
+	SPS_DBG("sps:%s.", __func__);
+
+	if (!sps->is_ready)
+		return -EPROBE_DEFER;
+
+	if (clk_on == true) {
+		SPS_DBG("sps:vote for bam dma clk.\n");
+		ret = clk_prepare_enable(sps->bamdma_clk);
+		if (ret) {
+			SPS_ERR("sps:fail to enable bamdma_clk:ret=%d\n", ret);
+			return ret;
+		}
+	} else {
+		SPS_DBG("sps:relinquish bam dma clk.\n");
+		clk_disable_unprepare(sps->bamdma_clk);
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(sps_ctrl_bam_dma_clk);
 
 /**
  * Register a BAM device
@@ -2402,13 +2431,16 @@ static int get_device_tree_data(struct platform_device *pdev)
 
 	resource = platform_get_resource(pdev, IORESOURCE_MEM, 2);
 	if (resource) {
+		imem = true;
 		sps->pipemem_phys_base = resource->start;
 		sps->pipemem_size = resource_size(resource);
 		SPS_DBG("sps:pipemem.base=0x%x,size=0x%x.",
 			sps->pipemem_phys_base,
 			sps->pipemem_size);
-	} else
+	} else {
+		imem = false;
 		SPS_DBG("sps:No pipe memory on this target.\n");
+	}
 
 	resource  = platform_get_resource(pdev, IORESOURCE_IRQ, 0);
 	if (resource) {
@@ -2427,6 +2459,11 @@ static int get_device_tree_data(struct platform_device *pdev)
 		SPS_DBG("sps:default device type.\n");
 	} else
 		SPS_DBG("sps:device type is %d.", d_type);
+
+	enhd_pipe = of_property_read_bool((&pdev->dev)->of_node,
+			"qcom,pipe-attr-ee");
+	SPS_DBG2("sps:PIPE_ATTR_EE is %s supported.\n",
+			(enhd_pipe ? "" : "not"));
 
 	return 0;
 }
@@ -2528,11 +2565,13 @@ static int __devinit msm_sps_probe(struct platform_device *pdev)
 		SPS_ERR("sps:sps_device_init err.");
 #ifdef CONFIG_SPS_SUPPORT_BAMDMA
 		clk_disable_unprepare(sps->dfab_clk);
+		clk_disable_unprepare(sps->bamdma_clk);
 #endif
 		goto sps_device_init_err;
 	}
 #ifdef CONFIG_SPS_SUPPORT_BAMDMA
 	clk_disable_unprepare(sps->dfab_clk);
+	clk_disable_unprepare(sps->bamdma_clk);
 #endif
 	sps->is_ready = true;
 

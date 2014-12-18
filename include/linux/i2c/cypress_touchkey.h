@@ -94,7 +94,7 @@ struct cypress_touchkey_info {
 #ifdef CONFIG_LEDS_CLASS
 	struct led_classdev			leds;
 	enum led_brightness			brightness;
-	struct mutex			touchkey_led_mutex;
+	struct mutex			touchkey_mutex;
 	struct mutex			fw_lock;
 	struct workqueue_struct			*led_wq;
 	struct work_struct			led_work;
@@ -102,10 +102,6 @@ struct cypress_touchkey_info {
 #if defined(CONFIG_GLOVE_TOUCH)
 	struct workqueue_struct		*glove_wq;
 	struct work_struct		glove_work;
-#endif
-#ifdef AUTOCAL_WORKQUEUE
-	struct workqueue_struct		*autocal_wq;
-	struct work_struct		autocal_work;
 #endif
 	bool is_powering_on;
 	bool enabled;

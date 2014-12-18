@@ -75,6 +75,7 @@ static struct TUNER_DRV *tuner = &fc8150_tuner;
 
 int tuner_ctrl_select(HANDLE hDevice, enum i2c_type type)
 {
+	PRINTF(0,"%s\n",__func__);
 	switch (type) {
 	case FCI_I2C_TYPE:
 		tuner_ctrl = &fcii2c;
@@ -96,6 +97,7 @@ int tuner_ctrl_select(HANDLE hDevice, enum i2c_type type)
 
 int tuner_ctrl_deselect(HANDLE hDevice)
 {
+PRINTF(0,"%s\n",__func__);
 	if (tuner_ctrl == NULL)
 		return BBM_E_TN_CTRL_SELECT;
 
@@ -150,6 +152,7 @@ int tuner_set_freq(HANDLE hDevice, u32 freq)
 
 int tuner_select(HANDLE hDevice, u32 product, u32 band)
 {
+PRINTF(0,"%s\n",__func__);
 	switch (product) {
 	case FC8150_TUNER:
 		tuner = &fc8150_tuner;
@@ -171,8 +174,11 @@ int tuner_select(HANDLE hDevice, u32 product, u32 band)
 		return BBM_E_TN_SELECT;
 
 	if (tuner_i2c == FCI_BYPASS_TYPE)
+	{	
+		PRINTF(0,"FCI_BYPASS_TYPE\n");
 		bbm_write(hDevice, BBM_RF_DEVID, tuner_addr);
-
+	}
+	
 	if (tuner->init(hDevice, tuner_band))
 		return BBM_E_TN_INIT;
 

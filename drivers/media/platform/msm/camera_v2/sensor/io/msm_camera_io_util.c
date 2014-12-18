@@ -21,6 +21,8 @@
 #include <mach/msm_bus.h>
 #include "msm_camera_io_util.h"
 
+#include <mach/clk-provider.h>
+
 #define BUFF_SIZE_128 128
 
 #undef CDBG
@@ -112,6 +114,12 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 {
 	int i;
 	int rc = 0;
+	int qctkd = 0;
+	long clk_rate;
+
+	if (num_clk == 8) //CPP use case
+		qctkd = 1;
+
 	if (enable) {
 		for (i = 0; i < num_clk; i++) {
 			CDBG("%s enable %s\n", __func__,
@@ -129,6 +137,24 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 					pr_err("%s set failed\n",
 						   clk_info[i].clk_name);
 					goto cam_clk_set_err;
+				}
+			} else if (clk_info[i].clk_rate == INIT_RATE) {
+				clk_rate = clk_get_rate(clk_ptr[i]);
+				if (clk_rate == 0) {
+					clk_rate =
+						  clk_round_rate(clk_ptr[i], 0);
+					if (clk_rate < 0) {
+						pr_err("%s round rate failed\n",
+							  clk_info[i].clk_name);
+						goto cam_clk_set_err;
+					}
+					rc = clk_set_rate(clk_ptr[i],
+								clk_rate);
+					if (rc < 0) {
+						pr_err("%s set rate failed\n",
+							  clk_info[i].clk_name);
+						goto cam_clk_set_err;
+					}
 				}
 			}
 			rc = clk_prepare(clk_ptr[i]);
@@ -150,6 +176,7 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 				usleep_range(clk_info[i].delay * 1000,
 					(clk_info[i].delay * 1000) + 1000);
 			}
+			if (qctkd) printk (KERN_ERR "QCTKD: %s[%d:%d] Enable \n", clk_info[i].clk_name, clk_ptr[i]->prepare_count, clk_ptr[i]->count);
 		}
 	} else {
 		for (i = num_clk - 1; i >= 0; i--) {
@@ -160,6 +187,7 @@ int msm_cam_clk_enable(struct device *dev, struct msm_cam_clk_info *clk_info,
 				clk_unprepare(clk_ptr[i]);
 				clk_put(clk_ptr[i]);
 			}
+			if (qctkd) printk (KERN_ERR "QCTKD: %s[%d:%d] Disable\n", clk_info[i].clk_name, clk_ptr[i]->prepare_count, clk_ptr[i]->count);
 		}
 	}
 	return rc;
@@ -507,8 +535,8 @@ int msm_camera_request_gpio_table(struct gpio *gpio_tbl, uint8_t size,
 
 	if (!gpio_tbl || !size) {
 		pr_err("%s:%d invalid gpio_tbl %p / size %d\n", __func__,
-			__LINE__, gpio_tbl, size);
-		return -EINVAL;
+                       __LINE__, gpio_tbl, size);
+            return -EINVAL;
 	}
 	for (i = 0; i < size; i++) {
 		CDBG("%s:%d i %d, gpio %d dir %ld\n", __func__, __LINE__, i,

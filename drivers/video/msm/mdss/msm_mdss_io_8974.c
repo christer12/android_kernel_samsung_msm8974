@@ -22,6 +22,7 @@
 #include <mach/msm_iomap.h>
 #include <mach/clk-provider.h>
 
+#include "mdss.h"
 #include "mdss_dsi.h"
 #include "mdss_edp.h"
 
@@ -29,6 +30,7 @@
 #define SW_RESET_PLL BIT(0)
 #define PWRDN_B BIT(7)
 
+static struct mdss_dsi_ctrl_pdata *left_ctrl;
 static struct dsi_clk_desc dsi_pclk;
 
 int mdss_dsi_clk_init(struct platform_device *pdev,
@@ -43,6 +45,14 @@ int mdss_dsi_clk_init(struct platform_device *pdev,
 	}
 
 	dev = &pdev->dev;
+	ctrl_pdata->mdp_core_clk = clk_get(dev, "mdp_core_clk");
+	if (IS_ERR(ctrl_pdata->mdp_core_clk)) {
+		rc = PTR_ERR(ctrl_pdata->mdp_core_clk);
+		pr_err("%s: Unable to get mdp core clk. rc=%d\n",
+			__func__, rc);
+		goto mdss_dsi_clk_err;
+	}
+
 	ctrl_pdata->ahb_clk = clk_get(dev, "iface_clk");
 	if (IS_ERR(ctrl_pdata->ahb_clk)) {
 		rc = PTR_ERR(ctrl_pdata->ahb_clk);
@@ -86,6 +96,14 @@ int mdss_dsi_clk_init(struct platform_device *pdev,
 		goto mdss_dsi_clk_err;
 	}
 
+	if (ctrl_pdata->shared_pdata.broadcast_enable) {
+		if (ctrl_pdata->panel_data.panel_info.pdest
+					== DISPLAY_1) {
+			pr_info("%s: Broadcast mode enabled.\n",
+				 __func__);
+			left_ctrl = ctrl_pdata;
+		}
+	}
 mdss_dsi_clk_err:
 	if (rc)
 		mdss_dsi_clk_deinit(ctrl_pdata);
@@ -104,13 +122,15 @@ void mdss_dsi_clk_deinit(struct mdss_dsi_ctrl_pdata  *ctrl_pdata)
 		clk_put(ctrl_pdata->axi_clk);
 	if (ctrl_pdata->ahb_clk)
 		clk_put(ctrl_pdata->ahb_clk);
+	if (ctrl_pdata->mdp_core_clk)
+		clk_put(ctrl_pdata->mdp_core_clk);
 }
 
 #define PREF_DIV_RATIO 27
 struct dsiphy_pll_divider_config pll_divider_config;
 
 int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
-			    char frame_rate)
+			    int frame_rate)
 {
 	u32 fb_divider, rate, vco;
 	u32 div_ratio = 0;
@@ -129,47 +149,39 @@ int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
 	if (panel_info->mipi.data_lane0)
 		lanes += 1;
 
-
-	if ((panel_info->mipi.dst_format == DSI_CMD_DST_FORMAT_RGB888)
-	    || (panel_info->mipi.dst_format == DSI_VIDEO_DST_FORMAT_RGB888)
-	    || (panel_info->mipi.dst_format
-		== DSI_VIDEO_DST_FORMAT_RGB666_LOOSE))
+	switch (panel_info->mipi.dst_format) {
+	case DSI_CMD_DST_FORMAT_RGB888:
+	case DSI_VIDEO_DST_FORMAT_RGB888:
+	case DSI_VIDEO_DST_FORMAT_RGB666_LOOSE:
 		bpp = 3;
-	else if ((panel_info->mipi.dst_format == DSI_CMD_DST_FORMAT_RGB565)
-		 || (panel_info->mipi.dst_format
-		     == DSI_VIDEO_DST_FORMAT_RGB565))
+		break;
+	case DSI_CMD_DST_FORMAT_RGB565:
+	case DSI_VIDEO_DST_FORMAT_RGB565:
 		bpp = 2;
-	else
-		bpp = 3;		/* Default format set to RGB888 */
+		break;
+	default:
+		bpp = 3;	/* Default format set to RGB888 */
+		break;
+	}
 
-	h_period = ((panel_info->lcdc.h_pulse_width)
-			+ (panel_info->lcdc.h_back_porch)
-			+ (panel_info->xres)
-			+ (panel_info->lcdc.h_front_porch));
-
-	v_period = ((panel_info->lcdc.v_pulse_width)
-			+ (panel_info->lcdc.v_back_porch)
-			+ (panel_info->yres)
-			+ (panel_info->lcdc.v_front_porch));
+	h_period = mdss_panel_get_htotal(panel_info);
+	v_period = mdss_panel_get_vtotal(panel_info);
 
 	if ((frame_rate !=
 	     panel_info->mipi.frame_rate) ||
 	    (!panel_info->clk_rate)) {
 		h_period += panel_info->lcdc.xres_pad;
 		v_period += panel_info->lcdc.yres_pad;
-		panel_info->mipi.frame_rate = frame_rate;
 
 		if (lanes > 0) {
 			panel_info->clk_rate =
 			((h_period * v_period *
-			  (panel_info->mipi.frame_rate) * bpp * 8)
+			  frame_rate * bpp * 8)
 			   / lanes);
 		} else {
 			pr_err("%s: forcing mdss_dsi lanes to 1\n", __func__);
 			panel_info->clk_rate =
-				(h_period * v_period
-					 * (panel_info->mipi.frame_rate)
-					 * bpp * 8);
+				(h_period * v_period * frame_rate * bpp * 8);
 		}
 	}
 	pll_divider_config.clk_rate = panel_info->clk_rate;
@@ -252,9 +264,17 @@ int mdss_dsi_enable_bus_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	int rc = 0;
 
+	rc = clk_prepare_enable(ctrl_pdata->mdp_core_clk);
+	if (rc) {
+		pr_err("%s: failed to enable mdp_core_clock. rc=%d\n",
+							 __func__, rc);
+		goto error;
+	}
+
 	rc = clk_prepare_enable(ctrl_pdata->ahb_clk);
 	if (rc) {
 		pr_err("%s: failed to enable ahb clock. rc=%d\n", __func__, rc);
+		clk_disable_unprepare(ctrl_pdata->mdp_core_clk);
 		goto error;
 	}
 
@@ -262,6 +282,7 @@ int mdss_dsi_enable_bus_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 	if (rc) {
 		pr_err("%s: failed to enable ahb clock. rc=%d\n", __func__, rc);
 		clk_disable_unprepare(ctrl_pdata->ahb_clk);
+		clk_disable_unprepare(ctrl_pdata->mdp_core_clk);
 		goto error;
 	}
 
@@ -273,65 +294,172 @@ void mdss_dsi_disable_bus_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	clk_disable_unprepare(ctrl_pdata->axi_clk);
 	clk_disable_unprepare(ctrl_pdata->ahb_clk);
+	clk_disable_unprepare(ctrl_pdata->mdp_core_clk);
 }
 
-void mdss_dsi_prepare_clocks(struct mdss_dsi_ctrl_pdata  *ctrl_pdata)
+static int mdss_dsi_clk_prepare(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
-	clk_prepare(ctrl_pdata->byte_clk);
-	clk_prepare(ctrl_pdata->esc_clk);
-	clk_prepare(ctrl_pdata->pixel_clk);
-}
+	int rc = 0;
 
-void mdss_dsi_unprepare_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
-{
-	clk_unprepare(ctrl_pdata->esc_clk);
-	clk_unprepare(ctrl_pdata->pixel_clk);
+#ifdef DSI_CLK_DEBUG
+	printk("[QCT_TEST] ++ [dsi %d][prepare] %d %d %d\n",
+		ctrl_pdata->ndx,
+		ctrl_pdata->esc_clk->prepare_count,
+		ctrl_pdata->byte_clk->prepare_count,
+		ctrl_pdata->pixel_clk->prepare_count); 
+#endif
+
+	rc = clk_prepare(ctrl_pdata->esc_clk);
+	if (rc) {
+		pr_err("%s: Failed to prepare dsi esc clk\n", __func__);
+		goto esc_clk_err;
+	}
+
+	rc = clk_prepare(ctrl_pdata->byte_clk);
+	if (rc) {
+		pr_err("%s: Failed to prepare dsi byte clk\n", __func__);
+		goto byte_clk_err;
+	}
+
+	rc = clk_prepare(ctrl_pdata->pixel_clk);
+	if (rc) {
+		pr_err("%s: Failed to prepare dsi pixel clk\n", __func__);
+		goto pixel_clk_err;
+	}
+
+#ifdef DSI_CLK_DEBUG
+	printk("[QCT_TEST] -- [dsi %d][prepare] %d %d %d\n",
+			ctrl_pdata->ndx,
+			ctrl_pdata->esc_clk->prepare_count,
+			ctrl_pdata->byte_clk->prepare_count,
+			ctrl_pdata->pixel_clk->prepare_count); 
+#endif
+
+	return rc;
+
+pixel_clk_err:
 	clk_unprepare(ctrl_pdata->byte_clk);
+byte_clk_err:
+	clk_unprepare(ctrl_pdata->esc_clk);
+esc_clk_err:
+	return rc;
 }
 
-void mdss_dsi_clk_enable(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+static void mdss_dsi_clk_unprepare(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
-	u32 esc_clk_rate = 19200000;
 	if (!ctrl_pdata) {
 		pr_err("%s: Invalid input data\n", __func__);
 		return;
 	}
 
-	if (ctrl_pdata->mdss_dsi_clk_on) {
-		pr_info("%s: mdss_dsi_clks already ON\n", __func__);
-		return;
-	}
-	/*
-	 * Skip clock rate set when booted up with continous splash for first time.
-	 * This is to avoid, flickers on display while booting up
-	 */
-	if (!ctrl_pdata->panel_data.panel_info.cont_splash_enabled) {
-		//WARN(1, "could not attach iommu client %s to ctx \n",__func__);
-		pr_debug("%s: Setting clock rates: pclk=%d, byteclk=%d escclk=%d\n",
-				__func__, ctrl_pdata->pclk_rate,
-				ctrl_pdata->byte_clk_rate, esc_clk_rate);
-		if (clk_set_rate(ctrl_pdata->esc_clk, esc_clk_rate) < 0)
-			pr_err("%s: dsi_esc_clk - clk_set_rate failed\n", __func__);
+#ifdef DSI_CLK_DEBUG
+	printk("[QCT_TEST] ++ [dsi %d][unprepare] %d %d %d\n",
+		ctrl_pdata->ndx,
+		ctrl_pdata->esc_clk->prepare_count,
+		ctrl_pdata->byte_clk->prepare_count,
+		ctrl_pdata->pixel_clk->prepare_count);
+#endif
 
-		if (clk_set_rate(ctrl_pdata->byte_clk, ctrl_pdata->byte_clk_rate) < 0)
-			pr_err("%s: dsi_byte_clk - clk_set_rate failed\n", __func__);
+	clk_unprepare(ctrl_pdata->pixel_clk);
+	clk_unprepare(ctrl_pdata->byte_clk);
+	clk_unprepare(ctrl_pdata->esc_clk);
 
-		if (clk_set_rate(ctrl_pdata->pixel_clk, ctrl_pdata->pclk_rate) < 0)
-			pr_err("%s: dsi_pixel_clk - clk_set_rate failed\n", __func__);
-	}
+#ifdef DSI_CLK_DEBUG
+	printk("[QCT_TEST] -- [dsi %d][unprepare] %d %d %d\n",
+		ctrl_pdata->ndx,
+		ctrl_pdata->esc_clk->prepare_count,
+		ctrl_pdata->byte_clk->prepare_count,
+		ctrl_pdata->pixel_clk->prepare_count);
+#endif
 
-	clk_enable(ctrl_pdata->esc_clk);
-	clk_enable(ctrl_pdata->byte_clk);
-	clk_enable(ctrl_pdata->pixel_clk);
-
-	/* Reset any PLL unlock status bits */
-	MIPI_OUTP(ctrl_pdata->ctrl_base + 0x012c,
-			MIPI_INP(ctrl_pdata->ctrl_base + 0x12c) | BIT(17));
-	pr_debug("%s: Dumping reg(0x12c) = 0x%x",__func__, MIPI_INP(ctrl_pdata->ctrl_base + 0x12c));
-	ctrl_pdata->mdss_dsi_clk_on = 1;
 }
 
-void mdss_dsi_clk_disable(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+static int mdss_dsi_clk_set_rate(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	u32 esc_clk_rate = 19200000;
+	int rc = 0;
+
+	if (!ctrl_pdata) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!ctrl_pdata->panel_data.panel_info.cont_splash_enabled) {
+		pr_debug("%s: Set clk rates: pclk=%d, byteclk=%d escclk=%d\n",
+			__func__, ctrl_pdata->pclk_rate,
+			ctrl_pdata->byte_clk_rate, esc_clk_rate);
+		rc = clk_set_rate(ctrl_pdata->esc_clk, esc_clk_rate);
+		if (rc) {
+			pr_err("%s: dsi_esc_clk - clk_set_rate failed\n",
+				__func__);
+			goto error;
+		}
+
+		rc =  clk_set_rate(ctrl_pdata->byte_clk,
+			ctrl_pdata->byte_clk_rate);
+		if (rc) {
+			pr_err("%s: dsi_byte_clk - clk_set_rate failed\n",
+				__func__);
+			goto error;
+		}
+
+		rc = clk_set_rate(ctrl_pdata->pixel_clk, ctrl_pdata->pclk_rate);
+		if (rc) {
+			pr_err("%s: dsi_pixel_clk - clk_set_rate failed\n",
+				__func__);
+			goto error;
+		}
+	}
+
+error:
+	return rc;
+}
+
+static int mdss_dsi_clk_enable(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	int rc = 0;
+
+	if (!ctrl_pdata) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return -EINVAL;
+	}
+
+	if (ctrl_pdata->mdss_dsi_clk_on) {
+		pr_info("%s: mdss_dsi_clks already ON\n", __func__);
+		return 0;
+	}
+
+	rc = clk_enable(ctrl_pdata->esc_clk);
+	if (rc) {
+		pr_err("%s: Failed to enable dsi esc clk\n", __func__);
+		goto esc_clk_err;
+	}
+
+	rc = clk_enable(ctrl_pdata->byte_clk);
+	if (rc) {
+		pr_err("%s: Failed to enable dsi byte clk\n", __func__);
+		goto byte_clk_err;
+	}
+
+	rc = clk_enable(ctrl_pdata->pixel_clk);
+	if (rc) {
+		pr_err("%s: Failed to enable dsi pixel clk\n", __func__);
+		goto pixel_clk_err;
+	}
+
+	ctrl_pdata->mdss_dsi_clk_on = 1;
+
+	return rc;
+
+pixel_clk_err:
+	clk_disable(ctrl_pdata->byte_clk);
+byte_clk_err:
+	clk_disable(ctrl_pdata->esc_clk);
+esc_clk_err:
+	return rc;
+}
+
+static void mdss_dsi_clk_disable(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 {
 	if (!ctrl_pdata) {
 		pr_err("%s: Invalid input data\n", __func__);
@@ -343,12 +471,264 @@ void mdss_dsi_clk_disable(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 		return;
 	}
 
+	clk_disable(ctrl_pdata->esc_clk);
 	clk_disable(ctrl_pdata->pixel_clk);
 	clk_disable(ctrl_pdata->byte_clk);
-	clk_disable(ctrl_pdata->esc_clk);
 
 	ctrl_pdata->mdss_dsi_clk_on = 0;
 }
+
+static int mdss_dsi_enable_clks(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	int rc = 0;
+
+			rc = mdss_dsi_enable_bus_clocks(ctrl);
+			if (rc) {
+				pr_err("%s: failed to enable bus clks. rc=%d\n",
+					__func__, rc);
+				goto error;
+			}
+
+			rc = mdss_dsi_clk_set_rate(ctrl);
+			if (rc) {
+				pr_err("%s: failed to set clk rates. rc=%d\n",
+					__func__, rc);
+				mdss_dsi_disable_bus_clocks(ctrl);
+				goto error;
+			}
+
+			rc = mdss_dsi_clk_prepare(ctrl);
+			if (rc) {
+				pr_err("%s: failed to prepare clks. rc=%d\n",
+					__func__, rc);
+				mdss_dsi_disable_bus_clocks(ctrl);
+				goto error;
+			}
+
+			rc = mdss_dsi_clk_enable(ctrl);
+			if (rc) {
+				pr_err("%s: failed to enable clks. rc=%d\n",
+					__func__, rc);
+				mdss_dsi_clk_unprepare(ctrl);
+				mdss_dsi_disable_bus_clocks(ctrl);
+				goto error;
+			}
+
+error:
+	return rc;
+}
+
+extern struct mdss_dsi_ctrl_pdata *left_ctrl_pdata;
+extern struct mdss_dsi_ctrl_pdata *right_ctrl_pdata;
+
+extern struct mutex dual_clk_lock;
+
+#if 0
+int mdss_dsi_clk_ctrl(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
+{
+	int rc = 0;
+
+//	mutex_lock(&ctrl->mutex);
+	mutex_lock(&dual_clk_lock);
+
+	if (enable) {
+#ifdef DSI_CLK_DEBUG
+		pr_err("[QCT_TEST] enable ++ : %d , (%d) (%d) \n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt);
+#endif
+		if (ctrl->ndx == DSI_CTRL_1 &&
+			ctrl->shared_pdata.broadcast_enable) {
+			if(left_ctrl->clk_cnt==0){
+				mdss_dsi_enable_clks(left_ctrl);
+				left_ctrl->clk_cnt++;
+			}
+		}
+		if (ctrl->clk_cnt == 0) {
+			rc = mdss_dsi_enable_clks(ctrl);
+			if (rc)		
+			goto error;
+		}
+		ctrl->clk_cnt++;
+#ifdef DSI_CLK_DEBUG
+		pr_err("[QCT_TEST] enable -- : %d , (%d) (%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt); 
+#endif
+	} else {
+#ifdef DSI_CLK_DEBUG
+		pr_err("[QCT_TEST] disable ++ : %d , (%d) (%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt); 
+#endif
+		if (ctrl->clk_cnt) {
+			ctrl->clk_cnt--;
+			if (ctrl->clk_cnt == 0) {
+				if (ctrl->ndx == DSI_CTRL_1 &&
+					ctrl->shared_pdata.broadcast_enable) {					
+					if(left_ctrl->clk_cnt){
+						left_ctrl->clk_cnt--;
+						if(!left_ctrl->clk_cnt){
+							mdss_dsi_clk_disable(left_ctrl);
+							mdss_dsi_clk_unprepare(left_ctrl);
+							mdss_dsi_disable_bus_clocks(left_ctrl);							
+						}
+					}									
+				}			
+				mdss_dsi_clk_disable(ctrl);
+				mdss_dsi_clk_unprepare(ctrl);
+				mdss_dsi_disable_bus_clocks(ctrl);
+			}
+		}
+#ifdef DSI_CLK_DEBUG
+		pr_err("[QCT_TEST] disable -- : %d , (%d) (%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt); 
+#endif
+	}
+#ifdef XXX
+	if (ctrl->shared_pdata.broadcast_enable) {
+		pr_err("%s: ctrl ndx=%d enabled=%d clk_cnt=%d\n",
+			__func__, left_ctrl->ndx, enable, left_ctrl->clk_cnt);
+		pr_err("%s: DSI%d Byte rcnt=%d pcnt=%d\n", 
+			__func__, left_ctrl->ndx,(int)left_ctrl->byte_clk->count, (int)left_ctrl->byte_clk->prepare_count);
+	}
+	pr_err("%s: ctrl ndx=%d enabled=%d clk_cnt=%d\n",
+			__func__, ctrl->ndx, enable, ctrl->clk_cnt);
+	pr_err("%s: DSI%d Byte rcnt=%d pcnt=%d\n", __func__, ctrl->ndx,(int)ctrl->byte_clk->count, (int)ctrl->byte_clk->prepare_count);
+#endif
+
+error:
+	//mutex_unlock(&ctrl->mutex);	
+	mutex_unlock(&dual_clk_lock);
+	return rc;
+}
+#else
+int mdss_dsi_clk_ctrl(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
+{
+	int rc = 0;
+
+//	mutex_lock(&ctrl->mutex);
+	mutex_lock(&dual_clk_lock);
+
+#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL)
+	if (ctrl->shared_pdata.broadcast_enable)
+		xlog(__func__, ctrl->ndx, enable, ctrl->clk_cnt, left_ctrl->clk_cnt, left_ctrl->clk_cnt_by_dsi1, right_ctrl_pdata->clk_cnt); 
+#endif
+#endif
+
+	if (enable) {
+#ifdef DSI_CLK_DEBUG
+	if (ctrl->shared_pdata.broadcast_enable)
+		pr_err("[QCT_TEST] enable ++ : %d , (%d) (%d) , by(%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt,left_ctrl->clk_cnt_by_dsi1);
+#endif
+		if (ctrl->ndx == DSI_CTRL_1 &&
+			ctrl->shared_pdata.broadcast_enable) {
+			if (left_ctrl->clk_cnt == 0 && left_ctrl->clk_cnt_by_dsi1 == 0) {
+				mdss_dsi_enable_clks(left_ctrl);
+			}
+			left_ctrl->clk_cnt_by_dsi1++;
+
+			if (ctrl->clk_cnt == 0) {
+				rc = mdss_dsi_enable_clks(ctrl);
+				if (rc) 	
+				goto error;
+			}
+
+		} else if (ctrl->ndx == DSI_CTRL_0) {
+			if (left_ctrl) {
+				if (ctrl->clk_cnt == 0 && left_ctrl->clk_cnt_by_dsi1 == 0) {
+					rc = mdss_dsi_enable_clks(ctrl);
+					if (rc) 	
+						goto error;
+				}
+			} else {
+				if (ctrl->clk_cnt == 0) {
+					rc = mdss_dsi_enable_clks(ctrl);
+					if (rc) 	
+						goto error;
+				}
+			}
+		}
+
+		ctrl->clk_cnt++;
+
+#ifdef DSI_CLK_DEBUG
+	if (ctrl->shared_pdata.broadcast_enable)
+		pr_err("[QCT_TEST] enable -- : %d , (%d) (%d) , by(%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt,left_ctrl->clk_cnt_by_dsi1); 
+#endif
+	} else {
+#ifdef DSI_CLK_DEBUG
+	if (ctrl->shared_pdata.broadcast_enable)
+		pr_err("[QCT_TEST] disable ++ : %d , (%d) (%d) , by(%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt,left_ctrl->clk_cnt_by_dsi1); 
+#endif
+
+		if (ctrl->ndx == DSI_CTRL_1 &&
+			ctrl->shared_pdata.broadcast_enable) {
+			
+				if(left_ctrl->clk_cnt_by_dsi1) {
+					left_ctrl->clk_cnt_by_dsi1--;
+					if(left_ctrl->clk_cnt_by_dsi1 == 0 && left_ctrl->clk_cnt == 0 ) {
+						mdss_dsi_clk_disable(left_ctrl);
+						mdss_dsi_clk_unprepare(left_ctrl);
+						mdss_dsi_disable_bus_clocks(left_ctrl);
+					}
+				}
+
+				if (ctrl->clk_cnt) {
+					ctrl->clk_cnt--;
+					if (ctrl->clk_cnt == 0) {
+						mdss_dsi_clk_disable(ctrl);
+						mdss_dsi_clk_unprepare(ctrl);
+						mdss_dsi_disable_bus_clocks(ctrl);
+					}
+				}
+		} 
+		else if (ctrl->ndx == DSI_CTRL_0) {
+			if(ctrl->clk_cnt) {
+				ctrl->clk_cnt--;
+				if (left_ctrl) {
+					if (ctrl->clk_cnt == 0 && left_ctrl->clk_cnt_by_dsi1 == 0) {
+						mdss_dsi_clk_disable(ctrl);
+						mdss_dsi_clk_unprepare(ctrl);
+						mdss_dsi_disable_bus_clocks(ctrl);
+					}
+				} else {
+					if (ctrl->clk_cnt == 0) {
+						mdss_dsi_clk_disable(ctrl);
+						mdss_dsi_clk_unprepare(ctrl);
+						mdss_dsi_disable_bus_clocks(ctrl);
+					}
+				}
+			}
+		}
+
+#ifdef DSI_CLK_DEBUG
+	if (ctrl->shared_pdata.broadcast_enable)
+		pr_err("[QCT_TEST] disable -- : %d , (%d) (%d) , by(%d)\n",
+				ctrl->ndx, left_ctrl->clk_cnt, right_ctrl_pdata->clk_cnt,left_ctrl->clk_cnt_by_dsi1); 
+#endif
+	}
+#ifdef XXX
+	if (ctrl->shared_pdata.broadcast_enable) {
+		pr_err("%s: ctrl ndx=%d enabled=%d clk_cnt=%d\n",
+			__func__, left_ctrl->ndx, enable, left_ctrl->clk_cnt);
+		pr_err("%s: DSI%d Byte rcnt=%d pcnt=%d\n", 
+			__func__, left_ctrl->ndx,(int)left_ctrl->byte_clk->count, (int)left_ctrl->byte_clk->prepare_count);
+	}
+	pr_err("%s: ctrl ndx=%d enabled=%d clk_cnt=%d\n",
+			__func__, ctrl->ndx, enable, ctrl->clk_cnt);
+	pr_err("%s: DSI%d Byte rcnt=%d pcnt=%d\n", __func__, ctrl->ndx,(int)ctrl->byte_clk->count, (int)ctrl->byte_clk->prepare_count);
+#endif
+
+error:
+	//mutex_unlock(&ctrl->mutex);	
+	mutex_unlock(&dual_clk_lock);
+	return rc;
+}
+
+
+#endif
 
 void mdss_dsi_phy_sw_reset(unsigned char *ctrl_base)
 {
@@ -362,42 +742,66 @@ void mdss_dsi_phy_sw_reset(unsigned char *ctrl_base)
 	wmb();
 }
 
-void mdss_dsi_phy_enable(unsigned char *ctrl_base, int on)
+void mdss_dsi_phy_enable(struct mdss_dsi_ctrl_pdata *ctrl, int on)
 {
+	static struct mdss_dsi_ctrl_pdata *left_ctrl;
+
+	if (ctrl == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return;
+	}
+
+	if (!left_ctrl
+		&& ctrl->shared_pdata.broadcast_enable)
+		if ((ctrl->panel_data).panel_info.pdest
+						== DISPLAY_1)
+			left_ctrl = ctrl;
+
 	if (on) {
-		MIPI_OUTP(ctrl_base + 0x03cc, 0x03);
+		MIPI_OUTP(ctrl->ctrl_base + 0x03cc, 0x03);
 		wmb();
 		usleep(100);
-		MIPI_OUTP(ctrl_base + 0x0220, 0x006);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0220, 0x006);
 		wmb();
 		usleep(100);
-		MIPI_OUTP(ctrl_base + 0x0268, 0x001);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0268, 0x001);
 		wmb();
 		usleep(100);
-		MIPI_OUTP(ctrl_base + 0x0268, 0x000);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0268, 0x000);
 		wmb();
 		usleep(100);
-		MIPI_OUTP(ctrl_base + 0x0220, 0x007);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0220, 0x007);
 		wmb();
-		MIPI_OUTP(ctrl_base + 0x03cc, 0x01);
+		MIPI_OUTP(ctrl->ctrl_base + 0x03cc, 0x01);
 		wmb();
 		usleep(100);
 
 		/* MMSS_DSI_0_PHY_DSIPHY_CTRL_0 */
-		MIPI_OUTP(ctrl_base + 0x0470, 0x07e);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x06e);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x06c);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x064);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x065);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x075);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x077);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x07f);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x07e);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x06e);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x06c);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x064);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x065);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x075);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x077);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x07f);
 		wmb();
-
 	} else {
-		MIPI_OUTP(ctrl_base + 0x0220, 0x006);
-		MIPI_OUTP(ctrl_base + 0x0470, 0x000);
-		MIPI_OUTP(ctrl_base + 0x0598, 0x000);
+		if (left_ctrl &&
+			(ctrl->panel_data.panel_info.pdest
+						== DISPLAY_1))
+			return;
+
+		if (left_ctrl &&
+			(ctrl->panel_data.panel_info.pdest
+						== DISPLAY_2)) {
+			MIPI_OUTP(left_ctrl->ctrl_base + 0x0220, 0x006);
+			MIPI_OUTP(left_ctrl->ctrl_base + 0x0470, 0x000);
+			MIPI_OUTP(left_ctrl->ctrl_base + 0x0598, 0x000);
+		}
+		MIPI_OUTP(ctrl->ctrl_base + 0x0220, 0x006);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0470, 0x000);
+		MIPI_OUTP(ctrl->ctrl_base + 0x0598, 0x000);
 		wmb();
 	}
 }
@@ -415,7 +819,7 @@ void mdss_dsi_phy_init(struct mdss_panel_data *pdata)
 		return;
 	}
 
-	pd = ((ctrl_pdata->panel_data).panel_info.mipi).dsi_phy_db;
+	pd = &(((ctrl_pdata->panel_data).panel_info.mipi).dsi_phy_db);
 
 	/* Strength ctrl 0 */
 	MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x0484, pd->strength[0]);
@@ -475,7 +879,7 @@ void mdss_dsi_phy_init(struct mdss_panel_data *pdata)
 		for (i = 0; i < 9; i++) {
 			offset = i + (ln * 9);
 			MIPI_OUTP((ctrl_pdata->ctrl_base) + off,
-							pd->laneCfg[offset]);
+							pd->lanecfg[offset]);
 			wmb();
 			off += 4;
 		}
@@ -494,13 +898,14 @@ void mdss_dsi_phy_init(struct mdss_panel_data *pdata)
 
 	off = 0x04b4;	/* phy BIST ctrl 0 - 5 */
 	for (i = 0; i < 6; i++) {
-		MIPI_OUTP((ctrl_pdata->ctrl_base) + off, pd->bistCtrl[i]);
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + off, pd->bistctrl[i]);
 		wmb();
 		off += 4;
 	}
 
 }
 
+#if defined(CONFIG_FB_MSM_EDP_SAMSUNG)
 /* EDP phy configuration settings */
 void mdss_edp_phy_sw_reset(unsigned char *edp_base)
 {
@@ -570,8 +975,7 @@ void mdss_edp_pll_configure(unsigned char *edp_base, int rate)
 		edp_write(edp_base + 0x620, 0x5);
 		edp_write(edp_base + 0x620, 0x7);
 		edp_write(edp_base + 0x620, 0xf);
-
-	} else if (rate == 268500000) {
+	} else if (rate >= 268500000) {
 		edp_write(edp_base + 0x664, 0x5); /* UNIPHY_PLL_LKDET_CFG2 */
 		edp_write(edp_base + 0x600, 0x1); /* UNIPHY_PLL_REFCLK_CFG */
 		edp_write(edp_base + 0x638, 0x36); /* UNIPHY_PLL_SDM_CFG0 */
@@ -621,7 +1025,7 @@ void mdss_edp_enable_aux(unsigned char *edp_base, int enable)
 	edp_write(edp_base + 0x300, BIT(0)); /* EDP_AUX_CTRL */
 
 	edp_write(edp_base + 0x550, 0x2c); /* AUX_CFG0 */
-	edp_write(edp_base + 0x308, 0xffffffff); /* INTR_STATUS */
+	edp_write(edp_base + 0x308, 0x24924924); /* INTR_STATUS */
 	edp_write(edp_base + 0x568, 0xff); /* INTR_MASK */
 }
 
@@ -633,7 +1037,7 @@ void mdss_edp_enable_mainlink(unsigned char *edp_base, int enable)
 	data &= ~BIT(0);
 
 	if (enable) {
-		data |= 0x1;
+		data |= 0x3;
 		edp_write(edp_base + 0x004, data);
 		edp_write(edp_base + 0x004, 0x1);
 	} else {
@@ -712,32 +1116,97 @@ mdss_edp_clk_err:
 	return -EPERM;
 }
 
-
-void mdss_edp_clk_enable(struct mdss_edp_drv_pdata *edp_drv)
+int mdss_edp_aux_clk_enable(struct mdss_edp_drv_pdata *edp_drv)
 {
-	if (edp_drv->clk_on) {
-		pr_info("%s: edp clks are already ON\n", __func__);
-		return;
-	}
+	int ret;
 
 	if (clk_set_rate(edp_drv->aux_clk, 19200000) < 0)
 		pr_err("%s: aux_clk - clk_set_rate failed\n",
 					__func__);
 
-	if (clk_set_rate(edp_drv->pixel_clk, 268500000) < 0)
-		pr_err("%s: pixel_clk - clk_set_rate failed\n",
-					__func__);
+	ret = clk_enable(edp_drv->aux_clk);
+	if (ret) {
+		pr_err("%s: Failed to enable aux clk\n", __func__);
+		goto c2;
+	}
 
-	if (clk_set_rate(edp_drv->link_clk, 270000000) < 0)
+	ret = clk_enable(edp_drv->ahb_clk);
+	if (ret) {
+		pr_err("%s: Failed to enable ahb clk\n", __func__);
+		goto c1;
+	}
+
+	return 0;
+c1:
+	clk_disable(edp_drv->aux_clk);
+c2:
+	return ret;
+
+}
+
+void mdss_edp_aux_clk_disable(struct mdss_edp_drv_pdata *edp_drv)
+{
+	clk_disable(edp_drv->aux_clk);
+	clk_disable(edp_drv->ahb_clk);
+}
+
+int mdss_edp_clk_enable(struct mdss_edp_drv_pdata *edp_drv)
+{
+	int ret;
+
+	if (edp_drv->clk_on) {
+		pr_info("%s: edp clks are already ON\n", __func__);
+		return 0;
+	}
+
+	pr_info("%s: aux_rate=%d\n", __func__, edp_drv->aux_rate);
+	if (clk_set_rate(edp_drv->link_clk, edp_drv->link_rate * 27000000) < 0)
 		pr_err("%s: link_clk - clk_set_rate failed\n",
 					__func__);
 
-	clk_enable(edp_drv->aux_clk);
-	clk_enable(edp_drv->pixel_clk);
-	clk_enable(edp_drv->ahb_clk);
-	clk_enable(edp_drv->link_clk);
+	if (clk_set_rate(edp_drv->aux_clk, edp_drv->aux_rate) < 0)
+		pr_err("%s: aux_clk - clk_set_rate failed\n",
+					__func__);
+
+	if (clk_set_rate(edp_drv->pixel_clk, edp_drv->pixel_rate) < 0)
+		pr_err("%s: pixel_clk - clk_set_rate failed\n",
+					__func__);
+
+	ret = clk_enable(edp_drv->aux_clk);
+	if (ret) {
+		pr_err("%s: Failed to enable aux clk\n", __func__);
+		goto c4;
+	}
+	ret = clk_enable(edp_drv->pixel_clk);
+	if (ret) {
+		pr_err("%s: Failed to enable pixel clk\n", __func__);
+		goto c3;
+	}
+	ret = clk_enable(edp_drv->ahb_clk);
+	if (ret) {
+		pr_err("%s: Failed to enable ahb clk\n", __func__);
+		goto c2;
+	}
+	ret = clk_enable(edp_drv->link_clk);
+	if (ret) {
+		pr_err("%s: Failed to enable link clk\n", __func__);
+		goto c1;
+	}
 
 	edp_drv->clk_on = 1;
+
+	return 0;
+
+//c0:
+	clk_disable(edp_drv->link_clk);
+c1:
+	clk_disable(edp_drv->ahb_clk);
+c2:
+	clk_disable(edp_drv->pixel_clk);
+c3:
+	clk_disable(edp_drv->aux_clk);
+c4:
+	return ret;
 }
 
 void mdss_edp_clk_disable(struct mdss_edp_drv_pdata *edp_drv)
@@ -755,78 +1224,99 @@ void mdss_edp_clk_disable(struct mdss_edp_drv_pdata *edp_drv)
 	edp_drv->clk_on = 0;
 }
 
-void mdss_edp_prepare_clocks(struct mdss_edp_drv_pdata *edp_drv)
+int mdss_edp_prepare_aux_clocks(struct mdss_edp_drv_pdata *edp_drv)
 {
-	clk_prepare(edp_drv->aux_clk);
-	clk_prepare(edp_drv->pixel_clk);
-	clk_prepare(edp_drv->ahb_clk);
-	clk_prepare(edp_drv->link_clk);
+	int ret;
+
+	/* ahb clock should be prepared first */
+	ret = clk_prepare(edp_drv->ahb_clk);
+	if (ret) {
+		pr_err("%s: Failed to prepare ahb clk\n", __func__);
+		goto c2;
+	}
+	ret = clk_prepare(edp_drv->aux_clk);
+	if (ret) {
+		pr_err("%s: Failed to prepare aux clk\n", __func__);
+		goto c1;
+	}
+
+	return 0;
+c1:
+	clk_unprepare(edp_drv->ahb_clk);
+c2:
+	return ret;
+
+}
+
+void mdss_edp_unprepare_aux_clocks(struct mdss_edp_drv_pdata *edp_drv)
+{
+	clk_unprepare(edp_drv->aux_clk);
+	clk_unprepare(edp_drv->ahb_clk);
+}
+
+int mdss_edp_prepare_clocks(struct mdss_edp_drv_pdata *edp_drv)
+{
+	int ret;
+
+	/* ahb clock should be first one to enable */
+	ret = clk_prepare(edp_drv->ahb_clk);
+	if (ret) {
+		pr_err("%s: Failed to prepare ahb clk\n", __func__);
+		goto c4;
+	}
+	ret = clk_prepare(edp_drv->aux_clk);
+	if (ret) {
+		pr_err("%s: Failed to prepare aux clk\n", __func__);
+		goto c3;
+	}
+	ret = clk_prepare(edp_drv->pixel_clk);
+	if (ret) {
+		pr_err("%s: Failed to prepare pixel clk\n", __func__);
+		goto c2;
+	}
+	ret = clk_prepare(edp_drv->link_clk);
+	if (ret) {
+		pr_err("%s: Failed to prepare link clk\n", __func__);
+		goto c1;
+	}
+
+	return 0;
+c1:
+	clk_unprepare(edp_drv->pixel_clk);
+c2:
+	clk_unprepare(edp_drv->aux_clk);
+c3:
+	clk_unprepare(edp_drv->ahb_clk);
+c4:
+	return ret;
 }
 
 void mdss_edp_unprepare_clocks(struct mdss_edp_drv_pdata *edp_drv)
 {
 	clk_unprepare(edp_drv->aux_clk);
 	clk_unprepare(edp_drv->pixel_clk);
-	clk_unprepare(edp_drv->ahb_clk);
 	clk_unprepare(edp_drv->link_clk);
+	/* ahb clock should be last one to disable */
+	clk_unprepare(edp_drv->ahb_clk);
 }
 
-void mdss_edp_enable_pixel_clk(unsigned char *edp_base,
-		unsigned char *mmss_cc_base, int enable)
+void mdss_edp_clk_debug(unsigned char *edp_base, unsigned char *mmss_cc_base)
 {
-	if (!enable) {
-		edp_write(mmss_cc_base + 0x032c, 0); /* CBCR */
-		return;
-	}
+	u32 da4, da0, d32c;
+	u32 dc4, dc0, d330;
 
-	edp_write(edp_base + 0x624, 0x1); /* PostDiv2 */
+	/* pixel clk */
+	da0  = edp_read(mmss_cc_base + 0x0a0);
+	da4  = edp_read(mmss_cc_base + 0x0a4);
+	d32c = edp_read(mmss_cc_base + 0x32c);
 
-	/* Configuring MND for Pixel */
-	edp_write(mmss_cc_base + 0x00a8, 0x6b); /* M value */
-	edp_write(mmss_cc_base + 0x00ac, 0x5d); /* N value */
-	edp_write(mmss_cc_base + 0x00b0, 0x0); /* D value */
+	/* main link clk */
+	dc0  = edp_read(mmss_cc_base + 0x0c0);
+	dc4  = edp_read(mmss_cc_base + 0x0c4);
+	d330 = edp_read(mmss_cc_base + 0x330);
 
-	/* CFG RCGR */
-	edp_write(mmss_cc_base + 0x00a4, (5 << 8) | (2 << 12));
-	edp_write(mmss_cc_base + 0x00a0, 3); /* CMD RCGR */
+	pr_err("%s: da0=%x da4=%x d32c=%x dc0=%x dc4=%x d330=%x\n", __func__,
+	(int)da0, (int)da4, (int)d32c, (int)dc0, (int)dc4, (int)d330);
 
-	edp_write(mmss_cc_base + 0x032c, 1); /* CBCR */
 }
-
-void mdss_edp_enable_link_clk(unsigned char *mmss_cc_base, int enable)
-{
-	if (!enable) {
-		edp_write(mmss_cc_base + 0x0330, 0); /* CBCR */
-		return;
-	}
-
-	edp_write(mmss_cc_base + 0x00c4, (4 << 8)); /* CFG RCGR */
-	edp_write(mmss_cc_base + 0x00c0, 3); /* CMD RCGR */
-
-	edp_write(mmss_cc_base + 0x0330, 1); /* CBCR */
-}
-
-void mdss_edp_config_clk(unsigned char *edp_base, unsigned char *mmss_cc_base)
-{
-	mdss_edp_enable_link_clk(mmss_cc_base, 1);
-	mdss_edp_enable_pixel_clk(edp_base, mmss_cc_base, 1);
-}
-
-void mdss_edp_unconfig_clk(unsigned char *edp_base,
-		unsigned char *mmss_cc_base)
-{
-	mdss_edp_enable_link_clk(mmss_cc_base, 0);
-	mdss_edp_enable_pixel_clk(edp_base, mmss_cc_base, 0);
-}
-
-void mdss_edp_phy_misc_cfg(unsigned char *edp_base)
-{
-	/* EDP_PHY_EDPPHY_GLB_VM_CFG0 */
-	edp_write(edp_base + 0x510, 0x3);
-	/* EDP_PHY_EDPPHY_GLB_VM_CFG1 */
-	edp_write(edp_base + 0x514, 0x6E);
-	/* EDP_PHY_EDPPHY_GLB_MISC9 */
-	edp_write(edp_base + 0x518, 0x6c);
-	/* EDP_MISC1_MISC0 */
-	edp_write(edp_base + 0x2c, 0x21);
-}
+#endif

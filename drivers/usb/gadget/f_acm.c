@@ -227,7 +227,7 @@ static int acm_port_disconnect(struct f_acm *acm)
 /* notification endpoint uses smallish and infrequent fixed-size messages */
 
 #define GS_LOG2_NOTIFY_INTERVAL		5	/* 1 << 5 == 32 msec */
-#define GS_NOTIFY_MAXPACKET		16
+#define GS_NOTIFY_MAXPACKET		10	/* notification + 2 bytes */
 
 /* interface and class descriptors: */
 
@@ -677,6 +677,7 @@ static int acm_cdc_notify(struct f_acm *acm, u8 type, u16 value,
 	struct usb_ep			*ep = acm->notify;
 	struct usb_request		*req;
 	struct usb_cdc_notification	*notify;
+	const unsigned			len = sizeof(*notify) + length;
 	void				*buf;
 	int				status;
 	unsigned char noti_buf[GS_NOTIFY_MAXPACKET];
@@ -687,7 +688,7 @@ static int acm_cdc_notify(struct f_acm *acm, u8 type, u16 value,
 	acm->notify_req = NULL;
 	acm->pending = false;
 
-	req->length = GS_NOTIFY_MAXPACKET;
+	req->length = len;
 	notify = req->buf;
 	buf = notify + 1;
 
@@ -808,6 +809,7 @@ static int acm_send_modem_ctrl_bits(struct gserial *port, int ctrl_bits)
 	struct f_acm *acm = port_to_acm(port);
 
 	acm->serial_state = ctrl_bits;
+
 	return acm_notify_serial_state(acm);
 }
 #endif
@@ -913,6 +915,11 @@ acm_bind(struct usb_configuration *c, struct usb_function *f)
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
 			acm->port.in->name, acm->port.out->name,
 			acm->notify->name);
+
+	/* To notify serial state by datarouter*/
+	#ifdef CONFIG_USB_DUN_SUPPORT
+	modem_register(acm);
+	#endif
 	return 0;
 
 fail:
@@ -942,6 +949,9 @@ acm_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_acm		*acm = func_to_acm(f);
 
+#ifdef CONFIG_USB_DUN_SUPPORT
+        modem_unregister();
+#endif
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
 	if (gadget_is_superspeed(c->cdev->gadget))
@@ -950,10 +960,6 @@ acm_unbind(struct usb_configuration *c, struct usb_function *f)
 	gs_free_req(acm->notify, acm->notify_req);
 	kfree(acm->port.func.name);
 	kfree(acm);
-#ifdef CONFIG_USB_DUN_SUPPORT
-	modem_unregister();
-#endif
-
 }
 
 /* Some controllers can't support CDC ACM ... */
@@ -1029,7 +1035,12 @@ int acm_bind_config(struct usb_configuration *c, u8 port_num)
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	acm->port.send_modem_ctrl_bits = acm_send_modem_ctrl_bits;
 #endif
+
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	acm->port.func.name = kasprintf(GFP_KERNEL, "acm%u", port_num);
+#else
 	acm->port.func.name = kasprintf(GFP_KERNEL, "acm%u", port_num + 1);
+#endif
 	if (!acm->port.func.name) {
 		kfree(acm);
 		return -ENOMEM;

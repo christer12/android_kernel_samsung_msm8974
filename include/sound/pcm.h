@@ -447,6 +447,7 @@ struct snd_pcm_str {
 #endif
 #endif
 	struct snd_kcontrol *chmap_kctl; /* channel-mapping controls */
+	struct snd_kcontrol *vol_kctl; /* volume controls */
 };
 
 struct snd_pcm {
@@ -464,6 +465,7 @@ struct snd_pcm {
 	void *private_data;
 	void (*private_free) (struct snd_pcm *pcm);
 	struct device *dev; /* actual hw device this belongs to */
+	bool internal; /* pcm is for internal use only */
 #if defined(CONFIG_SND_PCM_OSS) || defined(CONFIG_SND_PCM_OSS_MODULE)
 	struct snd_pcm_oss oss;
 #endif
@@ -488,6 +490,9 @@ int snd_pcm_new(struct snd_card *card, const char *id, int device,
 int snd_pcm_new_soc_be(struct snd_card *card, const char *id, int device,
 		int playback_count, int capture_count,
 		struct snd_pcm ** rpcm);
+int snd_pcm_new_internal(struct snd_card *card, const char *id, int device,
+		int playback_count, int capture_count,
+		struct snd_pcm **rpcm);
 int snd_pcm_new_stream(struct snd_pcm *pcm, int stream, int substream_count);
 
 int snd_pcm_notify(struct snd_pcm_notify *notify, int nfree);
@@ -1127,5 +1132,29 @@ int snd_pcm_add_chmap_ctls(struct snd_pcm *pcm, int stream,
 			   int max_channels,
 			   unsigned long private_value,
 			   struct snd_pcm_chmap **info_ret);
+
+/*
+ * PCM Volume control API
+ */
+/* array element of volume */
+struct snd_pcm_volume_elem {
+	int volume;
+};
+
+/* pp information; retrieved via snd_kcontrol_chip() */
+struct snd_pcm_volume {
+	struct snd_pcm *pcm;	/* assigned PCM instance */
+	int stream;		/* PLAYBACK or CAPTURE */
+	struct snd_kcontrol *kctl;
+	const struct snd_pcm_volume_elem *volume;
+	int max_length;
+	void *private_data;	/* optional: private data pointer */
+};
+
+int snd_pcm_add_volume_ctls(struct snd_pcm *pcm, int stream,
+			   const struct snd_pcm_volume_elem *volume,
+			   int max_length,
+			   unsigned long private_value,
+			   struct snd_pcm_volume **info_ret);
 
 #endif /* __SOUND_PCM_H */

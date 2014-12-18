@@ -21,6 +21,7 @@
 #include <linux/errno.h>
 #include <linux/remote_spinlock.h>
 #include <linux/platform_device.h>
+#include <linux/interrupt.h>
 #include <mach/msm_smsm.h>
 #include <mach/msm_smd.h>
 
@@ -33,37 +34,6 @@
 #define VERSION_APPS      8
 #define VERSION_MODEM     9
 #define VERSION_DSPS      10
-
-#define SMD_HEAP_SIZE 512
-
-struct smem_heap_info {
-	unsigned initialized;
-	unsigned free_offset;
-	unsigned heap_remaining;
-	unsigned reserved;
-};
-
-struct smem_heap_entry {
-	unsigned allocated;
-	unsigned offset;
-	unsigned size;
-	unsigned reserved; /* bits 1:0 reserved, bits 31:2 aux smem base addr */
-};
-#define BASE_ADDR_MASK 0xfffffffc
-
-struct smem_proc_comm {
-	unsigned command;
-	unsigned status;
-	unsigned data1;
-	unsigned data2;
-};
-
-struct smem_shared {
-	struct smem_proc_comm proc_comm[4];
-	unsigned version[32];
-	struct smem_heap_info heap_info;
-	struct smem_heap_entry heap_toc[SMD_HEAP_SIZE];
-};
 
 #if defined(CONFIG_MSM_SMD_PKG4)
 struct smsm_interrupt_info {
@@ -186,27 +156,6 @@ int is_word_access_ch(unsigned ch_type);
 
 struct smd_half_channel_access *get_half_ch_funcs(unsigned ch_type);
 
-struct smem_ram_ptn {
-	char name[16];
-	unsigned start;
-	unsigned size;
-
-	/* RAM Partition attribute: READ_ONLY, READWRITE etc.  */
-	unsigned attr;
-
-	/* RAM Partition category: EBI0, EBI1, IRAM, IMEM */
-	unsigned category;
-
-	/* RAM Partition domain: APPS, MODEM, APPS & MODEM (SHARED) etc. */
-	unsigned domain;
-
-	/* RAM Partition type: system, bootloader, appsboot, apps etc. */
-	unsigned type;
-
-	/* reserved for future expansion without changing version number */
-	unsigned reserved2, reserved3, reserved4, reserved5;
-} __attribute__ ((__packed__));
-
 struct smd_channel {
 	volatile void __iomem *send; /* some variant of smd_half_channel */
 	volatile void __iomem *recv; /* some variant of smd_half_channel */
@@ -248,54 +197,6 @@ struct smd_channel {
 	struct smd_half_channel_access *half_ch;
 };
 
-struct smem_ram_ptable {
-	#define _SMEM_RAM_PTABLE_MAGIC_1 0x9DA5E0A8
-	#define _SMEM_RAM_PTABLE_MAGIC_2 0xAF9EC4E2
-	unsigned magic[2];
-	unsigned version;
-	unsigned reserved1;
-	unsigned len;
-	struct smem_ram_ptn parts[32];
-	unsigned buf;
-} __attribute__ ((__packed__));
-
-/* SMEM RAM Partition */
-enum {
-	DEFAULT_ATTRB = ~0x0,
-	READ_ONLY = 0x0,
-	READWRITE,
-};
-
-enum {
-	DEFAULT_CATEGORY = ~0x0,
-	SMI = 0x0,
-	EBI1,
-	EBI2,
-	QDSP6,
-	IRAM,
-	IMEM,
-	EBI0_CS0,
-	EBI0_CS1,
-	EBI1_CS0,
-	EBI1_CS1,
-	SDRAM = 0xE,
-};
-
-enum {
-	DEFAULT_DOMAIN = 0x0,
-	APPS_DOMAIN,
-	MODEM_DOMAIN,
-	SHARED_DOMAIN,
-};
-
-enum {
-	SYS_MEMORY = 1,        /* system memory*/
-	BOOT_REGION_MEMORY1,   /* boot loader memory 1*/
-	BOOT_REGION_MEMORY2,   /* boot loader memory 2,reserved*/
-	APPSBL_MEMORY,         /* apps boot loader memory*/
-	APPS_MEMORY,           /* apps  usage memory*/
-};
-
 extern spinlock_t smem_lock;
 
 
@@ -314,6 +215,60 @@ struct interrupt_stat {
 };
 extern struct interrupt_stat interrupt_stats[NUM_SMD_SUBSYSTEMS];
 
-/* used for unit testing spinlocks */
-remote_spinlock_t *smem_get_remote_spinlock(void);
+struct interrupt_config_item {
+	/* must be initialized */
+	irqreturn_t (*irq_handler)(int req, void *data);
+	/* outgoing interrupt config (set from platform data) */
+	uint32_t out_bit_pos;
+	void __iomem *out_base;
+	uint32_t out_offset;
+	int irq_id;
+};
+
+enum {
+	MSM_SMD_DEBUG = 1U << 0,
+	MSM_SMSM_DEBUG = 1U << 1,
+	MSM_SMD_INFO = 1U << 2,
+	MSM_SMSM_INFO = 1U << 3,
+	MSM_SMD_POWER_INFO = 1U << 4,
+	MSM_SMSM_POWER_INFO = 1U << 5,
+};
+
+struct interrupt_config {
+	struct interrupt_config_item smd;
+	struct interrupt_config_item smsm;
+};
+
+struct edge_to_pid {
+	uint32_t	local_pid;
+	uint32_t	remote_pid;
+	char		subsys_name[SMD_MAX_CH_NAME_LEN];
+	bool		initialized;
+};
+
+extern void *smd_log_ctx;
+extern int msm_smd_debug_mask;
+extern int disable_smsm_reset_handshake;
+extern bool smem_initialized_check(void);
+
+extern irqreturn_t smd_modem_irq_handler(int irq, void *data);
+extern irqreturn_t smsm_modem_irq_handler(int irq, void *data);
+extern irqreturn_t smd_dsp_irq_handler(int irq, void *data);
+extern irqreturn_t smsm_dsp_irq_handler(int irq, void *data);
+extern irqreturn_t smd_dsps_irq_handler(int irq, void *data);
+extern irqreturn_t smsm_dsps_irq_handler(int irq, void *data);
+extern irqreturn_t smd_wcnss_irq_handler(int irq, void *data);
+extern irqreturn_t smsm_wcnss_irq_handler(int irq, void *data);
+extern irqreturn_t smd_rpm_irq_handler(int irq, void *data);
+
+extern int msm_smd_driver_register(void);
+extern void smd_post_init(bool is_legacy, unsigned remote_pid);
+extern int smsm_post_init(void);
+
+extern struct interrupt_config *smd_get_intr_config(uint32_t edge);
+extern int smd_edge_to_remote_pid(uint32_t edge);
+extern void smd_set_edge_subsys_name(uint32_t edge, const char *subsys_name);
+extern void smd_set_edge_initialized(uint32_t edge);
+extern void smd_cfg_smd_intr(uint32_t proc, uint32_t mask, void *ptr);
+extern void smd_cfg_smsm_intr(uint32_t proc, uint32_t mask, void *ptr);
 #endif

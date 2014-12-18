@@ -89,6 +89,7 @@ static irqreturn_t ngd_slim_interrupt(int irq, void *d)
 	struct msm_slim_ctrl *dev = (struct msm_slim_ctrl *)d;
 	void __iomem *ngd = dev->base + NGD_BASE(dev->ctrl.nr, dev->ver);
 	u32 stat = readl_relaxed(ngd + NGD_INT_STAT);
+	u32 pstat;
 
 	if (stat & NGD_INT_TX_MSG_SENT) {
 		writel_relaxed(NGD_INT_TX_MSG_SENT, ngd + NGD_INT_CLR);
@@ -147,6 +148,10 @@ static irqreturn_t ngd_slim_interrupt(int irq, void *d)
 		mb();
 		dev_err(dev->dev, "NGD IE VE change");
 	}
+
+	pstat = readl_relaxed(PGD_THIS_EE(PGD_PORT_INT_ST_EEn, dev->ver));
+	if (pstat != 0)
+		return msm_slim_port_irq_handler(dev, pstat);
 	return IRQ_HANDLED;
 }
 
@@ -221,6 +226,8 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 	u8 *puc;
 	int ret = 0;
 	u8 la = txn->la;
+	u8 txn_mt;
+	u16 txn_mc = txn->mc;
 	u8 wbuf[SLIM_MSGQ_BUF_LEN];
 
 	if (!pm_runtime_enabled(dev->dev) && dev->state == MSM_CTRL_ASLEEP &&
@@ -234,21 +241,14 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		 */
 		ngd_slim_runtime_resume(dev->dev);
 	}
-	if (txn->mc == (SLIM_MSG_CLK_PAUSE_SEQ_FLG |
-			SLIM_MSG_MC_RECONFIGURE_NOW)) {
-		if (dev->use_rx_msgqs == MSM_MSGQ_ENABLED) {
-			ret = sps_disconnect(dev->rx_msgq.sps);
-			dev->use_rx_msgqs = MSM_MSGQ_RESET;
-		}
-		if (dev->use_tx_msgqs == MSM_MSGQ_ENABLED) {
-			ret = sps_disconnect(dev->tx_msgq.sps);
-			dev->use_tx_msgqs = MSM_MSGQ_RESET;
-		}
-		if (!ret)
-			ret = msm_slim_qmi_power_request(dev, false);
-		else
-			pr_err("SPS pipe disconnect error:%d", ret);
-		return ret;
+	if ((txn->mc == (SLIM_MSG_CLK_PAUSE_SEQ_FLG |
+			SLIM_MSG_MC_RECONFIGURE_NOW)) &&
+			dev->state <= MSM_CTRL_SLEEPING) {
+		msm_slim_disconnect_endp(dev, &dev->rx_msgq,
+					&dev->use_rx_msgqs);
+		msm_slim_disconnect_endp(dev, &dev->tx_msgq,
+					&dev->use_tx_msgqs);
+		return msm_slim_qmi_power_request(dev, false);
 	}
 	else if (txn->mc & SLIM_MSG_CLK_PAUSE_SEQ_FLG)
 		return 0;
@@ -308,8 +308,26 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 			txn->mc = SLIM_USR_MC_CONNECT_SINK;
 		else if (txn->mc == SLIM_MSG_MC_DISCONNECT_PORT)
 			txn->mc = SLIM_USR_MC_DISCONNECT_PORT;
-		if (txn->la == SLIM_LA_MGR)
+		if (txn->la == SLIM_LA_MGR) {
+			if (dev->pgdla == SLIM_LA_MGR) {
+				u8 ea[] = {0, QC_DEVID_PGD, 0, 0, QC_MFGID_MSB,
+						QC_MFGID_LSB};
+				ea[2] = (u8)(dev->pdata.eapc & 0xFF);
+				ea[3] = (u8)((dev->pdata.eapc & 0xFF00) >> 8);
+				mutex_unlock(&dev->tx_lock);
+				ret = dev->ctrl.get_laddr(&dev->ctrl, ea, 6,
+						&dev->pgdla);
+				pr_debug("SLIM PGD LA:0x%x, ret:%d", dev->pgdla,
+						ret);
+				if (ret) {
+					pr_err("Incorrect SLIM-PGD EAPC:0x%x",
+							dev->pdata.eapc);
+					return ret;
+				}
+				mutex_lock(&dev->tx_lock);
+			}
 			txn->la = dev->pgdla;
+		}
 		wbuf[i++] = txn->la;
 		la = SLIM_LA_MGR;
 		wbuf[i++] = txn->wbuf[0];
@@ -364,19 +382,16 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		 txn->mc == SLIM_USR_MC_CONNECT_SINK ||
 		 txn->mc == SLIM_USR_MC_DISCONNECT_PORT) && txn->wbuf &&
 		wbuf[0] == dev->pgdla) {
-		if (txn->mc != SLIM_MSG_MC_DISCONNECT_PORT)
+		if (txn->mc != SLIM_USR_MC_DISCONNECT_PORT)
 			dev->err = msm_slim_connect_pipe_port(dev, wbuf[1]);
 		else {
-			struct msm_slim_endp *endpoint = &dev->pipes[wbuf[1]];
-			struct sps_register_event sps_event;
-			memset(&sps_event, 0, sizeof(sps_event));
-			sps_register_event(endpoint->sps, &sps_event);
-			sps_disconnect(endpoint->sps);
 			/*
 			 * Remove channel disconnects master-side ports from
 			 * channel. No need to send that again on the bus
+			 * Only disable port
 			 */
-			dev->pipes[wbuf[1]].connected = false;
+			writel_relaxed(0, PGD_PORT(PGD_PORT_CFGn,
+					(wbuf[1] + dev->port_b), dev->ver));
 			mutex_unlock(&dev->tx_lock);
 			msm_slim_put_ctrl(dev);
 			return 0;
@@ -385,17 +400,36 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 			dev_err(dev->dev, "pipe-port connect err:%d", dev->err);
 			goto ngd_xfer_err;
 		}
+		/* Add port-base to port number if this is manager side port */
+		puc[1] += dev->port_b;
 	}
 	dev->err = 0;
+	/*
+	 * If it's a read txn, it may be freed if a response is received by
+	 * received thread before reaching end of this function.
+	 * mc, mt may have changed to convert standard slimbus code/type to
+	 * satellite user-defined message. Reinitialize again
+	 */
+	txn_mc = txn->mc;
+	txn_mt = txn->mt;
 	dev->wr_comp = &tx_sent;
 	ret = msm_send_msg_buf(dev, pbuf, txn->rl,
 			NGD_BASE(dev->ctrl.nr, dev->ver) + NGD_TX_MSG);
 	if (!ret) {
 		int timeout = wait_for_completion_timeout(&tx_sent, HZ);
-		if (!timeout)
+		if (!timeout) {
 			ret = -ETIMEDOUT;
-		else
+			/*
+			 * disconnect/recoonect pipe so that subsequent
+			 * transactions don't timeout due to unavailable
+			 * descriptors
+			 */
+			msm_slim_disconnect_endp(dev, &dev->tx_msgq,
+						&dev->use_tx_msgqs);
+			msm_slim_connect_endp(dev, &dev->tx_msgq, NULL);
+		} else {
 			ret = dev->err;
+		}
 	}
 	dev->wr_comp = NULL;
 	if (ret) {
@@ -403,7 +437,7 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		void __iomem *ngd = dev->base + NGD_BASE(dev->ctrl.nr,
 							dev->ver);
 		dev_err(dev->dev, "TX failed :MC:0x%x,mt:0x%x, ret:%d, ver:%d",
-				txn->mc, txn->mt, ret, dev->ver);
+				txn_mc, txn_mt, ret, dev->ver);
 		conf = readl_relaxed(ngd);
 		stat = readl_relaxed(ngd + NGD_STATUS);
 		rx_msgq = readl_relaxed(ngd + NGD_RX_MSGQ_CFG);
@@ -414,10 +448,10 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 		pr_err("conf:0x%x,stat:0x%x,rxmsgq:0x%x", conf, stat, rx_msgq);
 		pr_err("int_stat:0x%x,int_en:0x%x,int_cll:0x%x", int_stat,
 						int_en, int_clr);
-	} else if (txn->mt == SLIM_MSG_MT_DEST_REFERRED_USER &&
-		(txn->mc == SLIM_USR_MC_CONNECT_SRC ||
-		 txn->mc == SLIM_USR_MC_CONNECT_SINK ||
-		 txn->mc == SLIM_USR_MC_DISCONNECT_PORT)) {
+	} else if (txn_mt == SLIM_MSG_MT_DEST_REFERRED_USER &&
+		(txn_mc == SLIM_USR_MC_CONNECT_SRC ||
+		 txn_mc == SLIM_USR_MC_CONNECT_SINK ||
+		 txn_mc == SLIM_USR_MC_DISCONNECT_PORT)) {
 		int timeout;
 		mutex_unlock(&dev->tx_lock);
 		msm_slim_put_ctrl(dev);
@@ -437,7 +471,7 @@ static int ngd_xfer_msg(struct slim_controller *ctrl, struct slim_msg_txn *txn)
 	}
 ngd_xfer_err:
 	mutex_unlock(&dev->tx_lock);
-	if (txn->mc != SLIM_USR_MC_REPORT_SATELLITE)
+	if (txn_mc != SLIM_USR_MC_REPORT_SATELLITE)
 		msm_slim_put_ctrl(dev);
 	return ret ? ret : dev->err;
 }
@@ -636,7 +670,6 @@ static int ngd_get_laddr(struct slim_controller *ctrl, const u8 *ea,
 
 static void ngd_slim_setup_msg_path(struct msm_slim_ctrl *dev)
 {
-	int ret;
 	if (dev->state == MSM_CTRL_DOWN) {
 		msm_slim_sps_init(dev, dev->bam_mem,
 			NGD_BASE(dev->ctrl.nr,
@@ -644,22 +677,14 @@ static void ngd_slim_setup_msg_path(struct msm_slim_ctrl *dev)
 	} else {
 		if (dev->use_rx_msgqs == MSM_MSGQ_DISABLED)
 			goto setup_tx_msg_path;
-		ret = msm_slim_connect_endp(dev, &dev->rx_msgq,
+		msm_slim_connect_endp(dev, &dev->rx_msgq,
 				&dev->rx_msgq_notify);
-		if (!ret)
-			dev->use_rx_msgqs = MSM_MSGQ_ENABLED;
-		else
-			pr_err("RX msgq not being used:%d", ret);
 
 setup_tx_msg_path:
 		if (dev->use_tx_msgqs == MSM_MSGQ_DISABLED)
 			return;
-		ret = msm_slim_connect_endp(dev, &dev->tx_msgq,
+		msm_slim_connect_endp(dev, &dev->tx_msgq,
 				NULL);
-		if (!ret)
-			dev->use_tx_msgqs = MSM_MSGQ_ENABLED;
-		else
-			pr_err("TX msgq not being used:%d", ret);
 	}
 }
 
@@ -973,7 +998,6 @@ static void ngd_adsp_down(struct work_struct *work)
 		container_of(qmi, struct msm_slim_ctrl, qmi);
 	struct slim_controller *ctrl = &dev->ctrl;
 	struct slim_device *sbdev;
-	int i;
 
 	ngd_slim_enable(dev, false);
 	/* disconnect BAM pipes */
@@ -982,14 +1006,9 @@ static void ngd_adsp_down(struct work_struct *work)
 	if (dev->use_tx_msgqs == MSM_MSGQ_ENABLED)
 		dev->use_tx_msgqs = MSM_MSGQ_DOWN;
 	msm_slim_sps_exit(dev, false);
-	mutex_lock(&ctrl->m_ctrl);
 	/* device up should be called again after SSR */
 	list_for_each_entry(sbdev, &ctrl->devs, dev_list)
-		sbdev->notified = false;
-	/* invalidate logical addresses */
-	for (i = 0; i < ctrl->num_dev; i++)
-		ctrl->addrt[i].valid = false;
-	mutex_unlock(&ctrl->m_ctrl);
+		slim_report_absent(sbdev);
 	pr_info("SLIM ADSP SSR (DOWN) done");
 }
 
@@ -1011,7 +1030,6 @@ static int __devinit ngd_slim_probe(struct platform_device *pdev)
 	struct resource		*irq, *bam_irq;
 	enum apr_subsys_state q6_state;
 	bool			rxreg_access = false;
-	bool			txreg_access = false;
 
 	q6_state = apr_get_q6_state();
 	if (q6_state == APR_SUBSYS_DOWN) {
@@ -1047,7 +1065,7 @@ static int __devinit ngd_slim_probe(struct platform_device *pdev)
 	}
 
 	dev = kzalloc(sizeof(struct msm_slim_ctrl), GFP_KERNEL);
-	if (IS_ERR(dev)) {
+	if (IS_ERR_OR_NULL(dev)) {
 		dev_err(&pdev->dev, "no memory for MSM slimbus controller\n");
 		return PTR_ERR(dev);
 	}
@@ -1076,11 +1094,18 @@ static int __devinit ngd_slim_probe(struct platform_device *pdev)
 		}
 		rxreg_access = of_property_read_bool(pdev->dev.of_node,
 					"qcom,rxreg-access");
-		txreg_access = of_property_read_bool(pdev->dev.of_node,
-					"qcom,txreg-access");
+		of_property_read_u32(pdev->dev.of_node, "qcom,apps-ch-pipes",
+					&dev->pdata.apps_pipes);
+		of_property_read_u32(pdev->dev.of_node, "qcom,ea-pc",
+					&dev->pdata.eapc);
 	} else {
 		dev->ctrl.nr = pdev->id;
 	}
+	/*
+	 * Keep PGD's logical address as manager's. Query it when first data
+	 * channel request comes in
+	 */
+	dev->pgdla = SLIM_LA_MGR;
 	dev->ctrl.nchans = MSM_SLIM_NCHANS;
 	dev->ctrl.nports = MSM_SLIM_NPORTS;
 	dev->framer.rootfreq = SLIM_ROOT_FREQ >> 3;
@@ -1093,7 +1118,8 @@ static int __devinit ngd_slim_probe(struct platform_device *pdev)
 	dev->ctrl.allocbw = ngd_allocbw;
 	dev->ctrl.xfer_msg = ngd_xfer_msg;
 	dev->ctrl.wakeup =  ngd_clk_pause_wakeup;
-	dev->ctrl.config_port = msm_config_port;
+	dev->ctrl.alloc_port = msm_alloc_port;
+	dev->ctrl.dealloc_port = msm_dealloc_port;
 	dev->ctrl.port_xfer = msm_slim_port_xfer;
 	dev->ctrl.port_xfer_status = msm_slim_port_xfer_status;
 	dev->bam_mem = bam_mem;
@@ -1111,10 +1137,9 @@ static int __devinit ngd_slim_probe(struct platform_device *pdev)
 	else
 		dev->use_rx_msgqs = MSM_MSGQ_RESET;
 
-	if (txreg_access)
-		dev->use_tx_msgqs = MSM_MSGQ_DISABLED;
-	else
-		dev->use_tx_msgqs = MSM_MSGQ_RESET;
+	/* Enable TX message queues by default as recommended by HW */
+	dev->use_tx_msgqs = MSM_MSGQ_RESET;
+
 	init_completion(&dev->rx_msgq_notify);
 
 	/* Register with framework */

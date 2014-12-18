@@ -25,12 +25,16 @@
 #include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/of_gpio.h>
+#include <linux/wakelock.h>
+#include <linux/regulator/consumer.h>
+#include <mach/gpiomux.h>
 
 #include "sensors_core.h"
 #include "bma255_reg.h"
 
-/* It's for HW issue in Rev 0.4 */
-#define EXECPTION_FOR_I2CFAIL
+#define I2C_M_WR                        0 /* for i2c Write */
+#define I2c_M_RD                        1 /* for i2c Read */
+#define READ_DATA_LENTH                 6
 
 #define VENDOR_NAME                     "BOSCH"
 #define MODEL_NAME                      "BMA255"
@@ -40,8 +44,18 @@
 #define CALIBRATION_DATA_AMOUNT         20
 #define MAX_ACCEL_1G			1024
 
-#define BMA255_DEFAULT_DELAY            200
+#define BMA255_DEFAULT_DELAY            200000000LL
 #define BMA255_CHIP_ID                  0xFA
+
+#define CHIP_ID_RETRIES                 3
+#define ACCEL_LOG_TIME                  15 /* 15 sec */
+
+#define SLOPE_X_INT                     0
+#define SLOPE_Y_INT                     1
+#define SLOPE_Z_INT                     2
+
+#define SLOPE_DURATION_VALUE            2
+#define SLOPE_THRESHOLD_VALUE           0x0A
 
 #define BMA255_TOP_UPPER_RIGHT          0
 #define BMA255_TOP_LOWER_RIGHT          1
@@ -51,6 +65,11 @@
 #define BMA255_BOTTOM_LOWER_RIGHT       5
 #define BMA255_BOTTOM_LOWER_LEFT        6
 #define BMA255_BOTTOM_UPPER_LEFT        7
+
+enum {
+	OFF = 0,
+	ON = 1
+};
 
 struct bma255_v {
 	union {
@@ -64,67 +83,188 @@ struct bma255_v {
 };
 
 struct bma255_p {
+	struct wake_lock reactive_wake_lock;
 	struct i2c_client *client;
 	struct input_dev *input;
-	struct delayed_work work;
+	struct delayed_work irq_work;
 	struct device *factory_device;
 	struct bma255_v accdata;
 	struct bma255_v caldata;
-
-	atomic_t delay;
+	struct mutex mode_mutex;
+	struct hrtimer accel_timer;
+	struct workqueue_struct *accel_wq;
+	struct work_struct work;
+	ktime_t poll_delay;
 	atomic_t enable;
 
 	u32 chip_pos;
+	int recog_flag;
+	int irq1;
+	int irq_state;
 	int acc_int1;
 	int acc_int2;
-#ifdef EXECPTION_FOR_I2CFAIL
-	int i2cfail_cnt;
-#endif
+	int sda_gpio;
+	int scl_gpio;
+	int time_count;
 };
 
 static int bma255_open_calibration(struct bma255_p *);
 
-static int bma255_smbus_read_byte_block(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char *data, unsigned char len)
+static int bma255_i2c_recovery(struct bma255_p *data)
 {
-	s32 dummy;
+	int ret, i;
+	struct gpiomux_setting old_config[2];
+	struct gpiomux_setting recovery_config = {
+		.func = GPIOMUX_FUNC_GPIO,
+		.drv = GPIOMUX_DRV_8MA,
+		.pull = GPIOMUX_PULL_NONE,
+	};
 
-	dummy = i2c_smbus_read_i2c_block_data(client, reg_addr, len, data);
-	if (dummy < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, dummy);
-		return -EIO;
+	if ((data->sda_gpio < 0) || (data->scl_gpio < 0)) {
+		pr_info("[SENSOR]: %s - no sda, scl gpio\n", __func__);
+		return -1;
 	}
+
+	pr_info("[SENSOR] ################# %s #################\n", __func__);
+
+	ret = msm_gpiomux_write(data->sda_gpio, GPIOMUX_ACTIVE,
+			&recovery_config, &old_config[0]);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s sda_gpio have no active setting %d\n",
+			__func__, ret);
+		goto exit;
+	}
+
+	ret = msm_gpiomux_write(data->scl_gpio, GPIOMUX_ACTIVE,
+			&recovery_config, &old_config[1]);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s scl_gpio have no active setting %d\n",
+			__func__, ret);
+		goto exit;
+	}
+
+	ret = gpio_request(data->sda_gpio, "SENSOR_SDA");
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - gpio %d request failed (%d)\n",
+			__func__, data->sda_gpio, ret);
+		goto exit;
+	}
+
+	ret = gpio_request(data->scl_gpio, "SENSOR_SCL");
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - gpio %d request failed (%d)\n",
+			__func__, data->scl_gpio, ret);
+		gpio_free(data->scl_gpio);
+		goto exit;
+	}
+
+	ret = gpio_direction_output(data->sda_gpio, 1);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - failed to set gpio %d as output (%d)\n",
+			__func__, data->sda_gpio, ret);
+		goto exit_to_free;
+	}
+
+	ret = gpio_direction_output(data->scl_gpio, 1);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - failed to set gpio %d as output (%d)\n",
+			__func__, data->scl_gpio, ret);
+		goto exit_to_free;
+	}
+
+	for (i = 0; i < 5; i++) {
+		udelay(100);
+		gpio_set_value_cansleep(data->sda_gpio, 0);
+		gpio_set_value_cansleep(data->scl_gpio, 0);
+		udelay(100);
+		gpio_set_value_cansleep(data->sda_gpio, 1);
+		gpio_set_value_cansleep(data->scl_gpio, 1);
+	}
+
+	ret = gpio_direction_input(data->sda_gpio);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - failed to set gpio %d as input (%d)\n",
+			__func__, data->sda_gpio, ret);
+		goto exit_to_free;
+	}
+
+	ret = gpio_direction_input(data->scl_gpio);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - failed to set gpio %d as input (%d)\n",
+			__func__, data->scl_gpio, ret);
+		goto exit_to_free;
+	}
+
+exit_to_free:
+	gpio_free(data->sda_gpio);
+	gpio_free(data->scl_gpio);
+exit:
+	msm_gpiomux_write(data->sda_gpio, GPIOMUX_ACTIVE, &old_config[0], NULL);
+	msm_gpiomux_write(data->scl_gpio, GPIOMUX_ACTIVE, &old_config[1], NULL);
+
+	return ret;
+}
+
+static int bma255_i2c_read(struct bma255_p *data,
+		unsigned char reg_addr, unsigned char *buf)
+{
+	int ret, retries = 0;
+	struct i2c_msg msg[2];
+
+	msg[0].addr = data->client->addr;
+	msg[0].flags = I2C_M_WR;
+	msg[0].len = 1;
+	msg[0].buf = &reg_addr;
+
+	msg[1].addr = data->client->addr;
+	msg[1].flags = I2C_M_RD;
+	msg[1].len = 1;
+	msg[1].buf = buf;
+
+	do {
+		ret = i2c_transfer(data->client->adapter, msg, 2);
+		if (ret < 0)
+			bma255_i2c_recovery(data);
+		else
+			break;
+	} while (retries++ < 2);
+
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - i2c read error %d\n", __func__, ret);
+		return ret;
+	}
+
 	return 0;
 }
 
-static int bma255_smbus_read_byte(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char *buf)
+static int bma255_i2c_write(struct bma255_p *data,
+		unsigned char reg_addr, unsigned char buf)
 {
-	s32 dummy;
+	int ret, retries = 0;
+	struct i2c_msg msg;
+	unsigned char w_buf[2];
 
-	dummy = i2c_smbus_read_byte_data(client, reg_addr);
-	if (dummy < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, dummy);
-		return -EIO;
+	w_buf[0] = reg_addr;
+	w_buf[1] = buf;
+
+	msg.addr = data->client->addr;
+	msg.flags = I2C_M_WR;
+	msg.len = 2;
+	msg.buf = (char *)w_buf;
+
+	do {
+		ret = i2c_transfer(data->client->adapter, &msg, 1);
+		if (ret < 0)
+			bma255_i2c_recovery(data);
+		else
+			break;
+	} while (retries++ < 2);
+
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - i2c write error %d\n", __func__, ret);
+		return ret;
 	}
-	*buf = dummy & 0x000000ff;
 
-	return 0;
-}
-
-static int bma255_smbus_write_byte(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char *buf)
-{
-	s32 dummy;
-
-	dummy = i2c_smbus_write_byte_data(client, reg_addr, *buf);
-	if (dummy < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, dummy);
-		return -EIO;
-	}
 	return 0;
 }
 
@@ -133,70 +273,61 @@ static int bma255_set_mode(struct bma255_p *data, unsigned char mode)
 	int ret = 0;
 	unsigned char buf1, buf2;
 
-	ret = bma255_smbus_read_byte(data->client,
-			BMA255_MODE_CTRL_REG, &buf1);
-	ret += bma255_smbus_read_byte(data->client,
-			BMA255_LOW_NOISE_CTRL_REG, &buf2);
+	mutex_lock(&data->mode_mutex);
+
+	ret = bma255_i2c_read(data, BMA255_MODE_CTRL_REG, &buf1);
+	ret += bma255_i2c_read(data, BMA255_LOW_NOISE_CTRL_REG, &buf2);
 
 	switch (mode) {
 	case BMA255_MODE_NORMAL:
 		buf1  = BMA255_SET_BITSLICE(buf1, BMA255_MODE_CTRL, 0);
 		buf2  = BMA255_SET_BITSLICE(buf2, BMA255_LOW_POWER_MODE, 0);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_MODE_CTRL_REG, &buf1);
+		ret += bma255_i2c_write(data, BMA255_MODE_CTRL_REG, buf1);
 		mdelay(1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_LOW_NOISE_CTRL_REG, &buf2);
+		ret += bma255_i2c_write(data, BMA255_LOW_NOISE_CTRL_REG, buf2);
 		break;
 	case BMA255_MODE_LOWPOWER1:
 		buf1  = BMA255_SET_BITSLICE(buf1, BMA255_MODE_CTRL, 2);
 		buf2  = BMA255_SET_BITSLICE(buf2, BMA255_LOW_POWER_MODE, 0);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_MODE_CTRL_REG, &buf1);
+		ret += bma255_i2c_write(data, BMA255_MODE_CTRL_REG, buf1);
 		mdelay(1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_LOW_NOISE_CTRL_REG, &buf2);
+		ret += bma255_i2c_write(data, BMA255_LOW_NOISE_CTRL_REG, buf2);
 		break;
 	case BMA255_MODE_SUSPEND:
 		buf1  = BMA255_SET_BITSLICE(buf1, BMA255_MODE_CTRL, 4);
 		buf2  = BMA255_SET_BITSLICE(buf2, BMA255_LOW_POWER_MODE, 0);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_LOW_NOISE_CTRL_REG, &buf2);
+		ret += bma255_i2c_write(data, BMA255_LOW_NOISE_CTRL_REG, buf2);
 		mdelay(1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_MODE_CTRL_REG, &buf1);
+		ret += bma255_i2c_write(data, BMA255_MODE_CTRL_REG, buf1);
 		break;
 	case BMA255_MODE_DEEP_SUSPEND:
 		buf1  = BMA255_SET_BITSLICE(buf1, BMA255_MODE_CTRL, 1);
 		buf2  = BMA255_SET_BITSLICE(buf2, BMA255_LOW_POWER_MODE, 1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_MODE_CTRL_REG, &buf1);
+		ret += bma255_i2c_write(data, BMA255_MODE_CTRL_REG, buf1);
 		mdelay(1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_LOW_NOISE_CTRL_REG, &buf2);
+		ret += bma255_i2c_write(data, BMA255_LOW_NOISE_CTRL_REG, buf2);
 		break;
 	case BMA255_MODE_LOWPOWER2:
 		buf1  = BMA255_SET_BITSLICE(buf1, BMA255_MODE_CTRL, 2);
 		buf2  = BMA255_SET_BITSLICE(buf2, BMA255_LOW_POWER_MODE, 1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_MODE_CTRL_REG, &buf1);
+		ret += bma255_i2c_write(data, BMA255_MODE_CTRL_REG, buf1);
 		mdelay(1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_LOW_NOISE_CTRL_REG, &buf2);
+		ret += bma255_i2c_write(data, BMA255_LOW_NOISE_CTRL_REG, buf2);
 		break;
 	case BMA255_MODE_STANDBY:
 		buf1  = BMA255_SET_BITSLICE(buf1, BMA255_MODE_CTRL, 4);
 		buf2  = BMA255_SET_BITSLICE(buf2, BMA255_LOW_POWER_MODE, 1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_LOW_NOISE_CTRL_REG, &buf2);
+		ret += bma255_i2c_write(data, BMA255_LOW_NOISE_CTRL_REG, buf2);
 		mdelay(1);
-		ret += bma255_smbus_write_byte(data->client,
-				BMA255_MODE_CTRL_REG, &buf1);
+		ret += bma255_i2c_write(data, BMA255_MODE_CTRL_REG, buf1);
 		break;
 	default:
 		ret = -EINVAL;
 		break;
 	}
+
+	pr_info("[SENSOR]: %s - change mode %u\n", __func__, mode);
+	mutex_unlock(&data->mode_mutex);
 
 	return ret;
 }
@@ -206,8 +337,8 @@ static int bma255_set_range(struct bma255_p *data, unsigned char range)
 	int ret = 0 ;
 	unsigned char buf;
 
-	ret = bma255_smbus_read_byte(data->client,
-			BMA255_RANGE_SEL_REG, &buf);
+	ret = bma255_i2c_read(data, BMA255_RANGE_SEL_REG, &buf);
+
 	switch (range) {
 	case BMA255_RANGE_2G:
 		buf = BMA255_SET_BITSLICE(buf, BMA255_RANGE_SEL, 3);
@@ -226,43 +357,48 @@ static int bma255_set_range(struct bma255_p *data, unsigned char range)
 		break;
 	}
 
-	ret += bma255_smbus_write_byte(data->client,
-			BMA255_RANGE_SEL_REG, &buf);
+	ret += bma255_i2c_write(data, BMA255_RANGE_SEL_REG, buf);
 
 	return ret;
 }
 
-static int bma255_set_bandwidth(struct bma255_p *data, unsigned char bandwidth)
+static int bma255_set_bandwidth(struct bma255_p *data,
+		unsigned char bandwidth)
 {
 	int ret = 0;
 	unsigned char buf;
 
 	if (bandwidth <= 7 || bandwidth >= 16)
-		bandwidth = BMA255_BW_1000HZ;
+		bandwidth = BMA255_BW_250HZ;
 
-	ret = bma255_smbus_read_byte(data->client, BMA255_BANDWIDTH__REG, &buf);
+	ret = bma255_i2c_read(data, BMA255_BANDWIDTH__REG, &buf);
 	buf = BMA255_SET_BITSLICE(buf, BMA255_BANDWIDTH, bandwidth);
-	ret += bma255_smbus_write_byte(data->client,
-			BMA255_BANDWIDTH__REG, &buf);
+	ret += bma255_i2c_write(data, BMA255_BANDWIDTH__REG, buf);
 
+	pr_info("[SENSOR]: %s - change bandwidth %u\n", __func__, bandwidth);
 	return ret;
 }
 
 static int bma255_read_accel_xyz(struct bma255_p *data,	struct bma255_v *acc)
 {
-	int ret = 0;
-	unsigned char buf[6];
+	int ret = 0, i;
+	unsigned char buf[READ_DATA_LENTH];
 
-	ret = bma255_smbus_read_byte_block(data->client,
-			BMA255_ACC_X12_LSB__REG, buf, 6);
+	for (i = 0; i < READ_DATA_LENTH; i++) {
+		ret += bma255_i2c_read(data,
+				BMA255_ACC_X12_LSB__REG + i, &buf[i]);
+	}
+
+	if (ret < 0)
+		goto exit;
 
 	acc->x = BMA255_GET_BITSLICE(buf[0], BMA255_ACC_X12_LSB) |
 			(BMA255_GET_BITSLICE(buf[1], BMA255_ACC_X_MSB) <<
-				(BMA255_ACC_X12_LSB__LEN));
+			(BMA255_ACC_X12_LSB__LEN));
 	acc->x = acc->x << (sizeof(short) * 8 - (BMA255_ACC_X12_LSB__LEN +
-				BMA255_ACC_X_MSB__LEN));
+			BMA255_ACC_X_MSB__LEN));
 	acc->x = acc->x >> (sizeof(short) * 8 - (BMA255_ACC_X12_LSB__LEN +
-				BMA255_ACC_X_MSB__LEN));
+			BMA255_ACC_X_MSB__LEN));
 
 	acc->y = BMA255_GET_BITSLICE(buf[2], BMA255_ACC_Y12_LSB) |
 			(BMA255_GET_BITSLICE(buf[3],
@@ -282,53 +418,61 @@ static int bma255_read_accel_xyz(struct bma255_p *data,	struct bma255_v *acc)
 
 	remap_sensor_data(acc->v, data->chip_pos);
 
+exit:
 	return ret;
+}
+
+static enum hrtimer_restart bma255_timer_func(struct hrtimer *timer)
+{
+	struct bma255_p *data = container_of(timer,
+					struct bma255_p, accel_timer);
+
+	if (!work_pending(&data->work))
+		queue_work(data->accel_wq, &data->work);
+
+	hrtimer_forward_now(&data->accel_timer, data->poll_delay);
+
+	return HRTIMER_RESTART;
 }
 
 static void bma255_work_func(struct work_struct *work)
 {
-	struct bma255_v acc;
-	struct bma255_p *data = container_of((struct delayed_work *)work,
-			struct bma255_p, work);
-	unsigned long delay = msecs_to_jiffies(atomic_read(&data->delay));
-#ifdef EXECPTION_FOR_I2CFAIL
 	int ret;
+	struct bma255_v acc;
+	struct bma255_p *data = container_of(work, struct bma255_p, work);
 
 	ret = bma255_read_accel_xyz(data, &acc);
 	if (ret < 0)
-		data->i2cfail_cnt++;
-	if (data->i2cfail_cnt > 5)
-		return;
-#else
-	bma255_read_accel_xyz(data, &acc);
-#endif
-	input_report_rel(data->input, REL_X, acc.x - data->caldata.x);
-	input_report_rel(data->input, REL_Y, acc.y - data->caldata.y);
-	input_report_rel(data->input, REL_Z, acc.z - data->caldata.z);
-	input_sync(data->input);
-	data->accdata = acc;
+		goto exit;
 
-	schedule_delayed_work(&data->work, delay);
+	data->accdata.x = acc.x - data->caldata.x;
+	data->accdata.y = acc.y - data->caldata.y;
+	data->accdata.z = acc.z - data->caldata.z;
+
+	input_report_rel(data->input, REL_X, data->accdata.x);
+	input_report_rel(data->input, REL_Y, data->accdata.y);
+	input_report_rel(data->input, REL_Z, data->accdata.z);
+	input_sync(data->input);
+
+exit:
+	if ((ktime_to_ns(data->poll_delay) * (int64_t)data->time_count)
+		>= ((int64_t)ACCEL_LOG_TIME * NSEC_PER_SEC)) {
+		pr_info("[SENSOR]: %s - x = %d, y = %d, z = %d (ra:%d)\n",
+			__func__, data->accdata.x, data->accdata.y,
+			data->accdata.z, data->recog_flag);
+		data->time_count = 0;
+	} else
+		data->time_count++;
 }
 
 static void bma255_set_enable(struct bma255_p *data, int enable)
 {
-	int pre_enable = atomic_read(&data->enable);
-
-	if (enable) {
-		if (pre_enable == 0) {
-			bma255_open_calibration(data);
-			bma255_set_mode(data, BMA255_MODE_NORMAL);
-			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
-			atomic_set(&data->enable, 1);
-		}
+	if (enable == ON) {
+		hrtimer_start(&data->accel_timer, data->poll_delay,
+		      HRTIMER_MODE_REL);
 	} else {
-		if (pre_enable == 1) {
-			bma255_set_mode(data, BMA255_MODE_SUSPEND);
-			cancel_delayed_work_sync(&data->work);
-			atomic_set(&data->enable, 0);
-		}
+		hrtimer_cancel(&data->accel_timer);
+		cancel_work_sync(&data->work);
 	}
 }
 
@@ -344,7 +488,7 @@ static ssize_t bma255_enable_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
 	u8 enable;
-	int ret;
+	int ret, pre_enable;
 	struct bma255_p *data = dev_get_drvdata(dev);
 
 	ret = kstrtou8(buf, 2, &enable);
@@ -354,8 +498,26 @@ static ssize_t bma255_enable_store(struct device *dev,
 	}
 
 	pr_info("[SENSOR]: %s - new_value = %u\n", __func__, enable);
-	if ((enable == 0) || (enable == 1))
-		bma255_set_enable(data, (int)enable);
+	pre_enable = atomic_read(&data->enable);
+
+	if (enable) {
+		if (pre_enable == OFF) {
+			bma255_open_calibration(data);
+			bma255_set_mode(data, BMA255_MODE_NORMAL);
+			atomic_set(&data->enable, ON);
+			bma255_set_enable(data, ON);
+		}
+	} else {
+		if (pre_enable == ON) {
+			atomic_set(&data->enable, OFF);
+			if (data->recog_flag == ON)
+				bma255_set_mode(data, BMA255_MODE_LOWPOWER1);
+			else
+				bma255_set_mode(data, BMA255_MODE_SUSPEND);
+
+			bma255_set_enable(data, OFF);
+		}
+	}
 
 	return size;
 }
@@ -365,7 +527,8 @@ static ssize_t bma255_delay_show(struct device *dev,
 {
 	struct bma255_p *data = dev_get_drvdata(dev);
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->delay));
+	return snprintf(buf, PAGE_SIZE, "%lld\n",
+			ktime_to_ns(data->poll_delay));
 }
 
 static ssize_t bma255_delay_store(struct device *dev,
@@ -381,8 +544,26 @@ static ssize_t bma255_delay_store(struct device *dev,
 		return ret;
 	}
 
-	atomic_set(&data->delay, (unsigned int)delay);
+	if (delay <= 3000000LL)
+		bma255_set_bandwidth(data, BMA255_BW_500HZ);
+	else if (delay <= 5000000LL)
+		bma255_set_bandwidth(data, BMA255_BW_125HZ);
+	else if (delay <= 10000000LL)
+		bma255_set_bandwidth(data, BMA255_BW_62_50HZ);
+	else if (delay <= 20000000LL)
+		bma255_set_bandwidth(data, BMA255_BW_31_25HZ);
+	else
+		bma255_set_bandwidth(data, BMA255_BW_7_81HZ);
+
+	data->poll_delay = ns_to_ktime(delay);
 	pr_info("[SENSOR]: %s - poll_delay = %lld\n", __func__, delay);
+
+	if (atomic_read(&data->enable) == ON) {
+		bma255_set_mode(data, BMA255_MODE_SUSPEND);
+		bma255_set_enable(data, OFF);
+		bma255_set_mode(data, BMA255_MODE_NORMAL);
+		bma255_set_enable(data, ON);
+	}
 
 	return size;
 }
@@ -397,7 +578,6 @@ static struct attribute *bma255_attributes[] = {
 	&dev_attr_enable.attr,
 	NULL
 };
-
 
 static struct attribute_group bma255_attribute_group = {
 	.attrs = bma255_attributes
@@ -434,16 +614,17 @@ static int bma255_open_calibration(struct bma255_p *data)
 		data->caldata.y = 0;
 		data->caldata.z = 0;
 
-		pr_err("[SENSOR]: %s - cal_filp open failed(%d)\n",
-			__func__, ret);
+		pr_info("[SENSOR]: %s - No Calibration\n", __func__);
 
 		return ret;
 	}
 
-	ret = cal_filp->f_op->read(cal_filp, (char *)&data->caldata,
-		3 * sizeof(int), &cal_filp->f_pos);
-	if (ret != 3 * sizeof(int))
+	ret = cal_filp->f_op->read(cal_filp, (char *)&data->caldata.v,
+		3 * sizeof(s16), &cal_filp->f_pos);
+	if (ret != 3 * sizeof(s16)) {
+		pr_err("[SENSOR] %s: - Can't read the cal data\n", __func__);
 		ret = -EIO;
+	}
 
 	filp_close(cal_filp, current->files);
 	set_fs(old_fs);
@@ -471,8 +652,8 @@ static int bma255_do_calibrate(struct bma255_p *data, int enable)
 		data->caldata.y = 0;
 		data->caldata.z = 0;
 
-		if (atomic_read(&data->enable) == 1)
-			cancel_delayed_work_sync(&data->work);
+		if (atomic_read(&data->enable) == ON)
+			bma255_set_enable(data, OFF);
 		else
 			bma255_set_mode(data, BMA255_MODE_NORMAL);
 
@@ -486,9 +667,8 @@ static int bma255_do_calibrate(struct bma255_p *data, int enable)
 			mdelay(10);
 		}
 
-		if (atomic_read(&data->enable) == 1)
-			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
+		if (atomic_read(&data->enable) == ON)
+			bma255_set_enable(data, ON);
 		else
 			bma255_set_mode(data, BMA255_MODE_SUSPEND);
 
@@ -522,9 +702,9 @@ static int bma255_do_calibrate(struct bma255_p *data, int enable)
 		return ret;
 	}
 
-	ret = cal_filp->f_op->write(cal_filp, (char *)&data->caldata,
-		3 * sizeof(int), &cal_filp->f_pos);
-	if (ret != 3 * sizeof(int)) {
+	ret = cal_filp->f_op->write(cal_filp, (char *)&data->caldata.v,
+		3 * sizeof(s16), &cal_filp->f_pos);
+	if (ret != 3 * sizeof(s16)) {
 		pr_err("[SENSOR]: %s - Can't write the caldata to file\n",
 			__func__);
 		ret = -EIO;
@@ -578,30 +758,146 @@ static ssize_t bma255_raw_data_read(struct device *dev,
 	struct bma255_v acc;
 	struct bma255_p *data = dev_get_drvdata(dev);
 
-	if (atomic_read(&data->enable) == 0) {
+	if (atomic_read(&data->enable) == OFF) {
 		bma255_set_mode(data, BMA255_MODE_NORMAL);
 		msleep(20);
 		bma255_read_accel_xyz(data, &acc);
 		bma255_set_mode(data, BMA255_MODE_SUSPEND);
+
+		acc.x = acc.x - data->caldata.x;
+		acc.y = acc.y - data->caldata.y;
+		acc.z = acc.z - data->caldata.z;
 	} else {
 		acc = data->accdata;
 	}
 
 	return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n",
-			acc.x - data->caldata.x,
-			acc.y - data->caldata.y,
-			acc.z - data->caldata.z);
+			acc.x, acc.y, acc.z);
+}
+
+static void bma255_set_int_enable(struct bma255_p *data,
+		unsigned char InterruptType , unsigned char value)
+{
+	unsigned char reg;
+
+	bma255_i2c_read(data, BMA255_INT_ENABLE1_REG, &reg);
+
+	switch (InterruptType) {
+	case SLOPE_X_INT:
+		/* Slope X Interrupt */
+		reg = BMA255_SET_BITSLICE(reg, BMA255_EN_SLOPE_X_INT, value);
+		break;
+	case SLOPE_Y_INT:
+		/* Slope Y Interrupt */
+		reg = BMA255_SET_BITSLICE(reg, BMA255_EN_SLOPE_Y_INT, value);
+		break;
+	case SLOPE_Z_INT:
+		/* Slope Z Interrupt */
+		reg = BMA255_SET_BITSLICE(reg, BMA255_EN_SLOPE_Z_INT, value);
+		break;
+	default:
+		break;
+	}
+
+	bma255_i2c_write(data, BMA255_INT_ENABLE1_REG, reg);
+}
+
+static void bma255_slope_enable(struct bma255_p *data,
+		int enable, int factory_mode)
+{
+	unsigned char reg;
+
+	if (enable == ON) {
+		bma255_i2c_read(data, BMA255_EN_INT1_PAD_SLOPE__REG, &reg);
+		reg = BMA255_SET_BITSLICE(reg, BMA255_EN_INT1_PAD_SLOPE, ON);
+		bma255_i2c_write(data, BMA255_EN_INT1_PAD_SLOPE__REG, reg);
+
+		bma255_i2c_read(data, BMA255_INT_MODE_SEL__REG, &reg);
+		reg = BMA255_SET_BITSLICE(reg, BMA255_INT_MODE_SEL, 0x01);
+		bma255_i2c_write(data, BMA255_INT_MODE_SEL__REG, reg);
+
+		if (factory_mode == OFF) {
+			bma255_i2c_read(data, BMA255_SLOPE_DUR__REG, &reg);
+			reg = BMA255_SET_BITSLICE(reg, BMA255_SLOPE_DUR,
+					SLOPE_DURATION_VALUE);
+			bma255_i2c_write(data, BMA255_SLOPE_DUR__REG, reg);
+
+			reg = SLOPE_THRESHOLD_VALUE;
+			bma255_i2c_write(data, BMA255_SLOPE_THRES__REG, reg);
+
+			bma255_set_int_enable(data, SLOPE_X_INT, ON);
+			bma255_set_int_enable(data, SLOPE_Y_INT, ON);
+			bma255_set_int_enable(data, SLOPE_Z_INT, ON);
+		} else {
+			bma255_i2c_read(data, BMA255_SLOPE_DUR__REG, &reg);
+			reg = BMA255_SET_BITSLICE(reg, BMA255_SLOPE_DUR, 0x01);
+			bma255_i2c_write(data, BMA255_SLOPE_DUR__REG, reg);
+
+			reg = 0x00;
+			bma255_i2c_write(data, BMA255_SLOPE_THRES__REG, reg);
+
+			bma255_set_int_enable(data, SLOPE_Z_INT, ON);
+			bma255_set_bandwidth(data, BMA255_BW_250HZ);
+		}
+	} else if (enable == OFF) {
+		bma255_i2c_read(data, BMA255_EN_INT1_PAD_SLOPE__REG, &reg);
+		reg = BMA255_SET_BITSLICE(reg, BMA255_EN_INT1_PAD_SLOPE, OFF);
+		bma255_i2c_write(data, BMA255_EN_INT1_PAD_SLOPE__REG, reg);
+
+		bma255_set_int_enable(data, SLOPE_X_INT, OFF);
+		bma255_set_int_enable(data, SLOPE_Y_INT, OFF);
+		bma255_set_int_enable(data, SLOPE_Z_INT, OFF);
+	}
 }
 
 static ssize_t bma255_reactive_alert_store(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t size)
 {
-	if (sysfs_streq(buf, "1"))
-		pr_err("[SENSOR]: %s - on\n", __func__);
-	else if (sysfs_streq(buf, "0"))
-		pr_err("[SENSOR]: %s - off\n", __func__);
-	else if (sysfs_streq(buf, "2"))
-		pr_err("[SENSOR]: %s - factory\n", __func__);
+	int enable = OFF, factory_mode = OFF;
+	struct bma255_p *data = dev_get_drvdata(dev);
+
+	if (sysfs_streq(buf, "0")) {
+		enable = OFF;
+		factory_mode = OFF;
+		pr_info("[SENSOR]: %s - disable\n", __func__);
+	} else if (sysfs_streq(buf, "1")) {
+		enable = ON;
+		factory_mode = OFF;
+		pr_info("[SENSOR]: %s - enable\n", __func__);
+	} else if (sysfs_streq(buf, "2")) {
+		enable = ON;
+		factory_mode = ON;
+		pr_info("[SENSOR]: %s - factory mode\n", __func__);
+	} else {
+		pr_err("[SENSOR]: %s - invalid value %d\n", __func__, *buf);
+		return -EINVAL;
+	}
+
+	if ((enable == ON) && (data->recog_flag == OFF)) {
+		data->irq_state = 0;
+
+		bma255_slope_enable(data, ON, factory_mode);
+		enable_irq(data->irq1);
+		enable_irq_wake(data->irq1);
+
+		data->recog_flag = ON;
+		if (atomic_read(&data->enable) == OFF)
+			bma255_set_mode(data, BMA255_MODE_LOWPOWER1);
+
+		pr_info("[SENSOR]: %s - reactive alert is on!\n", __func__);
+	} else if ((enable == OFF) && (data->recog_flag == ON)) {
+		bma255_slope_enable(data, OFF, factory_mode);
+
+		disable_irq_wake(data->irq1);
+		disable_irq_nosync(data->irq1);
+
+		data->recog_flag = OFF;
+		if (atomic_read(&data->enable) == OFF)
+			bma255_set_mode(data, BMA255_MODE_SUSPEND);
+
+		pr_info("[SENSOR]: %s - reactive alert is off! irq = %d\n",
+			__func__, data->irq_state);
+	}
 
 	return size;
 }
@@ -609,9 +905,9 @@ static ssize_t bma255_reactive_alert_store(struct device *dev,
 static ssize_t bma255_reactive_alert_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	bool bSuccess = false;
+	struct bma255_p *data = dev_get_drvdata(dev);
 
-	return snprintf(buf, PAGE_SIZE, "%u\n", bSuccess);
+	return snprintf(buf, PAGE_SIZE, "%d\n", data->irq_state);
 }
 
 static DEVICE_ATTR(name, S_IRUGO, bma255_name_show, NULL);
@@ -630,6 +926,29 @@ static struct device_attribute *sensor_attrs[] = {
 	&dev_attr_reactive_alert,
 	NULL,
 };
+
+static void bma255_irq_work_func(struct work_struct *work)
+{
+	struct bma255_p *data = container_of((struct delayed_work *)work,
+		struct bma255_p, irq_work);
+
+	bma255_set_int_enable(data, SLOPE_X_INT, OFF);
+	bma255_set_int_enable(data, SLOPE_Y_INT, OFF);
+	bma255_set_int_enable(data, SLOPE_Z_INT, OFF);
+}
+
+static irqreturn_t bma255_irq_thread(int irq, void *bma255_data_p)
+{
+	struct bma255_p *data = bma255_data_p;
+
+	data->irq_state = 1;
+	wake_lock_timeout(&data->reactive_wake_lock,
+		msecs_to_jiffies(2000));
+	schedule_delayed_work(&data->irq_work, msecs_to_jiffies(100));
+	pr_info("###### [SENSOR]: %s reactive irq ######\n", __func__);
+
+	return IRQ_HANDLED;
+}
 
 static int bma255_setup_pin(struct bma255_p *data)
 {
@@ -653,20 +972,30 @@ static int bma255_setup_pin(struct bma255_p *data)
 	if (ret < 0) {
 		pr_err("[SENSOR]: %s - gpio %d request failed (%d)\n",
 			__func__, data->acc_int2, ret);
-		goto exit_acc_int1;
+	} else {
+		ret = gpio_direction_input(data->acc_int2);
+		if (ret < 0)
+			pr_err("[SENSOR]: %s - failed to set gpio %d as input"
+				" (%d)\n", __func__, data->acc_int2, ret);
+		gpio_free(data->acc_int2);
 	}
 
-	ret = gpio_direction_input(data->acc_int2);
+	wake_lock_init(&data->reactive_wake_lock, WAKE_LOCK_SUSPEND,
+		       "reactive_wake_lock");
+
+	data->irq1 = gpio_to_irq(data->acc_int1);
+	ret = request_threaded_irq(data->irq1, NULL, bma255_irq_thread,
+		IRQF_TRIGGER_RISING | IRQF_ONESHOT, "bma255_accel", data);
 	if (ret < 0) {
-		pr_err("[SENSOR]: %s - failed to set gpio %d as input (%d)\n",
-			__func__, data->acc_int2, ret);
-		goto exit_acc_int2;
+		pr_err("[SENSOR]: %s - can't allocate irq.\n", __func__);
+		goto exit_reactive_irq;
 	}
 
+	disable_irq(data->irq1);
 	goto exit;
 
-exit_acc_int2:
-	gpio_free(data->acc_int2);
+exit_reactive_irq:
+	wake_lock_destroy(&data->reactive_wake_lock);
 exit_acc_int1:
 	gpio_free(data->acc_int1);
 exit:
@@ -705,6 +1034,8 @@ static int bma255_input_init(struct bma255_p *data)
 	/* sysfs node creation */
 	ret = sysfs_create_group(&dev->dev.kobj, &bma255_attribute_group);
 	if (ret < 0) {
+		sensors_remove_symlink(&data->input->dev.kobj,
+			data->input->name);
 		input_unregister_device(dev);
 		return ret;
 	}
@@ -730,10 +1061,18 @@ static int bma255_parse_dt(struct bma255_p *data, struct device *dev)
 
 	data->acc_int2 = of_get_named_gpio_flags(dNode,
 		"bma255-i2c,acc_int2-gpio", 0, &flags);
-	if (data->acc_int2 < 0) {
+	if (data->acc_int2 < 0)
 		pr_err("[SENSOR]: %s - acc_int2 error\n", __func__);
-		return -ENODEV;
-	}
+
+	data->sda_gpio = of_get_named_gpio_flags(dNode,
+		"bma255-i2c,sda", 0, &flags);
+	if (data->sda_gpio < 0)
+		pr_info("[SENSOR]: %s - no sda_gpio\n", __func__);
+
+	data->scl_gpio = of_get_named_gpio_flags(dNode,
+		"bma255-i2c,scl", 0, &flags);
+	if (data->scl_gpio < 0)
+		pr_info("[SENSOR]: %s - no scl_gpio\n", __func__);
 
 	if (of_property_read_u32(dNode,
 			"bma255-i2c,chip_pos", &data->chip_pos) < 0)
@@ -742,10 +1081,41 @@ static int bma255_parse_dt(struct bma255_p *data, struct device *dev)
 	return 0;
 }
 
+static int sensor_regulator_onoff(struct device *dev, bool onoff)
+{
+	struct regulator *sensor_vcc, *sensor_lvs1;
+
+	sensor_vcc = devm_regulator_get(dev, "bma255-i2c,vdd");
+	if (IS_ERR(sensor_vcc)) {
+		pr_err("[SENSOR]: %s - cannot get sensor_vcc\n", __func__);
+		return -ENOMEM;
+	}
+
+	sensor_lvs1 = devm_regulator_get(dev, "bma255-i2c,vdd-io");
+	if (IS_ERR(sensor_lvs1)) {
+		pr_err("[SENSOR]: %s - cannot get sensor_lvs1\n", __func__);
+		devm_regulator_put(sensor_vcc);
+		return -ENOMEM;
+	}
+
+	if (onoff) {
+		regulator_enable(sensor_vcc);
+		regulator_enable(sensor_lvs1);
+	} else {
+		regulator_disable(sensor_vcc);
+		regulator_disable(sensor_lvs1);
+	}
+
+	devm_regulator_put(sensor_vcc);
+	devm_regulator_put(sensor_lvs1);
+
+	return 0;
+}
+
 static int bma255_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
 {
-	int ret = -ENODEV;
+	int ret = -ENODEV, i;
 	struct bma255_p *data = NULL;
 
 	pr_info("##########################################################\n");
@@ -755,6 +1125,10 @@ static int bma255_probe(struct i2c_client *client,
 			__func__);
 		goto exit;
 	}
+
+	ret = sensor_regulator_onoff(&client->dev, true);
+	if (ret < 0)
+		pr_err("[SENSOR]: %s - No regulator\n", __func__);
 
 	data = kzalloc(sizeof(struct bma255_p), GFP_KERNEL);
 	if (data == NULL) {
@@ -771,21 +1145,34 @@ static int bma255_probe(struct i2c_client *client,
 	}
 
 	ret = bma255_setup_pin(data);
-	if (ret) {
+	if (ret < 0) {
 		pr_err("[SENSOR]: %s - could not setup pin\n", __func__);
 		goto exit_setup_pin;
 	}
 
+	i2c_set_clientdata(client, data);
+	data->client = client;
+	mutex_init(&data->mode_mutex);
+
 	/* read chip id */
-	ret = i2c_smbus_read_word_data(client, BMA255_CHIP_ID_REG);
-	if ((ret & 0x00ff) != BMA255_CHIP_ID) {
-		pr_err("[SENSOR]: %s - chip id failed %d\n", __func__, ret);
+	bma255_set_mode(data, BMA255_MODE_NORMAL);
+	for (i = 0; i < CHIP_ID_RETRIES; i++) {
+		ret = i2c_smbus_read_word_data(client, BMA255_CHIP_ID_REG);
+		if ((ret & 0x00ff) != BMA255_CHIP_ID) {
+			pr_err("[SENSOR]: %s - chip id failed 0x%x\n",
+				__func__, (unsigned int)ret & 0x00ff);
+		} else {
+			pr_info("[SENSOR]: %s - chip id success 0x%x\n",
+				__func__, (unsigned int)ret & 0x00ff);
+			break;
+		}
+		msleep(20);
+	}
+
+	if (i >= CHIP_ID_RETRIES) {
 		ret = -ENODEV;
 		goto exit_read_chipid;
 	}
-
-	i2c_set_clientdata(client, data);
-	data->client = client;
 
 	/* input device init */
 	ret = bma255_input_init(data);
@@ -794,27 +1181,48 @@ static int bma255_probe(struct i2c_client *client,
 
 	sensors_register(data->factory_device, data, sensor_attrs, MODULE_NAME);
 
-	/* workqueue init */
-	INIT_DELAYED_WORK(&data->work, bma255_work_func);
-	atomic_set(&data->delay, BMA255_DEFAULT_DELAY);
-	atomic_set(&data->enable, 0);
+	/* accel_timer settings. we poll for light values using a timer. */
+	hrtimer_init(&data->accel_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	data->poll_delay = ns_to_ktime(BMA255_DEFAULT_DELAY);
+	data->accel_timer.function = bma255_timer_func;
+
+	/* the timer just fires off a work queue request.  we need a thread
+	   to read the i2c (can be slow and blocking). */
+	data->accel_wq = create_singlethread_workqueue("accel_wq");
+	if (!data->accel_wq) {
+		ret = -ENOMEM;
+		pr_err("[SENSOR]: %s - could not create workqueue\n", __func__);
+		goto exit_create_workqueue;
+	}
+
+	/* this is the thread function we run on the work queue */
+	INIT_WORK(&data->work, bma255_work_func);
+	INIT_DELAYED_WORK(&data->irq_work, bma255_irq_work_func);
+
+	atomic_set(&data->enable, OFF);
+	data->time_count = 0;
+	data->irq_state = 0;
+	data->recog_flag = OFF;
 
 	bma255_set_bandwidth(data, BMA255_BW_125HZ);
 	bma255_set_range(data, BMA255_RANGE_2G);
 	bma255_set_mode(data, BMA255_MODE_SUSPEND);
-
-#ifdef EXECPTION_FOR_I2CFAIL
-	data->i2cfail_cnt = 0;
-#endif
 
 	pr_info("[SENSOR]: %s - Probe done!(chip pos : %d)\n",
 		__func__, data->chip_pos);
 
 	return 0;
 
+exit_create_workqueue:
+	sensors_unregister(data->factory_device, sensor_attrs);
+	sensors_remove_symlink(&data->input->dev.kobj, data->input->name);
+	sysfs_remove_group(&data->input->dev.kobj, &bma255_attribute_group);
+	input_unregister_device(data->input);
 exit_input_init:
 exit_read_chipid:
-	gpio_free(data->acc_int2);
+	mutex_destroy(&data->mode_mutex);
+	free_irq(data->irq1, data);
+	wake_lock_destroy(&data->reactive_wake_lock);
 	gpio_free(data->acc_int1);
 exit_setup_pin:
 exit_of_node:
@@ -825,23 +1233,40 @@ exit:
 	return ret;
 }
 
+static void bma255_shutdown(struct i2c_client *client)
+{
+	struct bma255_p *data = (struct bma255_p *)i2c_get_clientdata(client);
+
+	pr_info("[SENSOR]: %s\n", __func__);
+
+	if (atomic_read(&data->enable) == ON)
+		bma255_set_enable(data, OFF);
+
+	atomic_set(&data->enable, OFF);
+	bma255_set_mode(data, BMA255_MODE_SUSPEND);
+}
+
 static int __devexit bma255_remove(struct i2c_client *client)
 {
 	struct bma255_p *data = (struct bma255_p *)i2c_get_clientdata(client);
 
-	if (atomic_read(&data->enable) == 1)
-		bma255_set_enable(data, 0);
+	if (atomic_read(&data->enable) == ON)
+		bma255_set_enable(data, OFF);
 
-	cancel_delayed_work_sync(&data->work);
+	atomic_set(&data->enable, OFF);
+	cancel_delayed_work_sync(&data->irq_work);
+
+	bma255_set_mode(data, BMA255_MODE_SUSPEND);
 	sensors_unregister(data->factory_device, sensor_attrs);
 	sensors_remove_symlink(&data->input->dev.kobj, data->input->name);
 
 	sysfs_remove_group(&data->input->dev.kobj, &bma255_attribute_group);
 	input_unregister_device(data->input);
 
-	gpio_free(data->acc_int2);
+	free_irq(data->irq1, data);
+	wake_lock_destroy(&data->reactive_wake_lock);
+	mutex_destroy(&data->mode_mutex);
 	gpio_free(data->acc_int1);
-
 	kfree(data);
 
 	return 0;
@@ -851,9 +1276,15 @@ static int bma255_suspend(struct device *dev)
 {
 	struct bma255_p *data = dev_get_drvdata(dev);
 
-	if (atomic_read(&data->enable) == 1) {
-		bma255_set_mode(data, BMA255_MODE_SUSPEND);
-		cancel_delayed_work_sync(&data->work);
+	pr_info("[SENSOR]: %s\n", __func__);
+
+	if (atomic_read(&data->enable) == ON) {
+		if (data->recog_flag == ON)
+			bma255_set_mode(data, BMA255_MODE_LOWPOWER1);
+		else
+			bma255_set_mode(data, BMA255_MODE_SUSPEND);
+
+		bma255_set_enable(data, OFF);
 	}
 
 	return 0;
@@ -863,10 +1294,11 @@ static int bma255_resume(struct device *dev)
 {
 	struct bma255_p *data = dev_get_drvdata(dev);
 
-	if (atomic_read(&data->enable) == 1) {
+	pr_info("[SENSOR]: %s\n", __func__);
+
+	if (atomic_read(&data->enable) == ON) {
 		bma255_set_mode(data, BMA255_MODE_NORMAL);
-		schedule_delayed_work(&data->work,
-			msecs_to_jiffies(atomic_read(&data->delay)));
+		bma255_set_enable(data, ON);
 	}
 
 	return 0;
@@ -895,22 +1327,23 @@ static struct i2c_driver bma255_driver = {
 		.pm = &bma255_pm_ops
 	},
 	.probe		= bma255_probe,
+	.shutdown	= bma255_shutdown,
 	.remove		= __devexit_p(bma255_remove),
 	.id_table	= bma255_id,
 };
 
-static int __init BMA255_init(void)
+static int __init bma255_init(void)
 {
 	return i2c_add_driver(&bma255_driver);
 }
 
-static void __exit BMA255_exit(void)
+static void __exit bma255_exit(void)
 {
 	i2c_del_driver(&bma255_driver);
 }
 
-module_init(BMA255_init);
-module_exit(BMA255_exit);
+module_init(bma255_init);
+module_exit(bma255_exit);
 
 MODULE_DESCRIPTION("bma255 accelerometer sensor driver");
 MODULE_AUTHOR("Samsung Electronics");

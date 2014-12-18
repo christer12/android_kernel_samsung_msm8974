@@ -12,6 +12,7 @@
 #include "fci_hal.h"
 #include "fc8150_bb.h"
 #include "fc8150_isr.h"
+#include "fc8150_i2c.h"
 
 int BBM_RESET(HANDLE hDevice)
 {
@@ -35,7 +36,8 @@ int BBM_INIT(HANDLE hDevice)
 {
 	int res;
 
-	res = fc8150_init(hDevice);
+	res = fc8150_init(hDevice); //shubham
+	res = fc8150_tsif_setting(hDevice);
 
 	return res;
 }
@@ -82,7 +84,7 @@ int BBM_LONG_READ(HANDLE hDevice, u16 addr, u32 *data)
 
 	res = bbm_long_read(hDevice, addr, data);
 
-	return res;
+	return BBM_OK;
 }
 
 int BBM_BULK_READ(HANDLE hDevice, u16 addr, u8 *data, u16 size)

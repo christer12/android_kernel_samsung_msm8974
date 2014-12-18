@@ -24,6 +24,8 @@
 #define MAX_NUM_TDMB_SUBCH	64
 #define TDMB_MAX_CER_VALUE	2000
 
+/* #define DEBUG_LOG_FOR_RSSI_FITTING */
+
 #define DIV32(x)	((x) >> 5) /* Divide by 32 */
 #define MOD32(x)	((x) & 31)
 
@@ -227,12 +229,12 @@ static void tdmb_DisableFastScanMode(void)
 
 	RTV_REG_MAP_SEL(FEC_PAGE);
 	RTV_REG_SET(0x2D, 0x80);
-	RTV_REG_SET(0x2E, 0x7F);
+	RTV_REG_SET(0x2E, 0x5F);
 
 	RTV_REG_MAP_SEL(OFDM_PAGE);
 	RTV_REG_SET(0x14, 0x46);
 	RTV_REG_SET(0x50, 0x02);
-	RTV_REG_SET(0x40, 0x41);
+	RTV_REG_SET(0x40, 0x42);
 	RTV_REG_SET(0x4C, 0x41);
 
 	g_fTdmbFastScanEnabled = FALSE;
@@ -262,12 +264,10 @@ void rtvTDMB_StandbyMode(int on)
 {
 }
 
-UINT rtvTDMB_GetLockStatus(void)
+static INLINE UINT tdmb_GetLockStatus(void)
 {
 	U8 OFDM_B8, FECL;
 	UINT lock_st = 0;
-
-	RTV_GUARD_LOCK;
 
 	RTV_REG_MAP_SEL(OFDM_PAGE);
 	RTV_REG_MASK_SET(0x12, 0x80, 0x80);
@@ -281,16 +281,26 @@ UINT rtvTDMB_GetLockStatus(void)
 		lock_st |= RTV_TDMB_AGC_LOCK_MASK;
 
 	RTV_REG_MAP_SEL(FEC_PAGE);
+	RTV_REG_MASK_SET(0x11, 0x04, 0x04);
+	RTV_REG_MASK_SET(0x11, 0x04, 0x00);
+
 	FECL = RTV_REG_GET(0x10); /* FEC Lock (Viterbi Lock) */
-
-	RTV_GUARD_FREE;
-
 	if (FECL & 0x01)
 		lock_st |= RTV_TDMB_FEC_LOCK_MASK;
 
 	return lock_st;
 }
 
+UINT rtvTDMB_GetLockStatus(void)
+{
+	UINT lock_st;
+
+	RTV_GUARD_LOCK;
+	lock_st = tdmb_GetLockStatus();
+	RTV_GUARD_FREE;
+
+	return lock_st;
+}
 
 UINT rtvTDMB_GetAntennaLevel(U32 dwCER)
 {
@@ -413,6 +423,9 @@ U32 rtvTDMB_GetCER(void)
 S32 rtvTDMB_GetRSSI(void)
 {
 	U8 RD00, GVBB, LNAGAIN, RFAGC;
+#ifdef DEBUG_LOG_FOR_RSSI_FITTING
+	U8 CH_FLAG;
+#endif
 	S32 nRssi = 0;
 
 	RTV_GUARD_LOCK;
@@ -422,7 +435,9 @@ S32 rtvTDMB_GetRSSI(void)
 	GVBB = RTV_REG_GET(0x01);
 
 	RTV_GUARD_FREE;
-
+#ifdef DEBUG_LOG_FOR_RSSI_FITTING
+	CH_FLAG = ((RD00 & 0xC0) >> 6);
+#endif
 	LNAGAIN = ((RD00 & 0x18) >> 3);
 	RFAGC = (RD00 & 0x07);
 
@@ -430,30 +445,35 @@ S32 rtvTDMB_GetRSSI(void)
 	case 0:
 		nRssi = -(RSSI_RFAGC_VAL(RFAGC, 2.8)
 				+ RSSI_GVBB_VAL(GVBB, 0.44) + 0)
-				+ 5;
+				+ 5 * RTV_TDMB_RSSI_DIVIDER;
 		break;
 
 	case 1:
 		nRssi = -(RSSI_RFAGC_VAL(RFAGC, 3)
-				+ RSSI_GVBB_VAL(GVBB, 0.3) + 19)
-				+ 0;
+				+ RSSI_GVBB_VAL(GVBB, 0.3) + (19 * RTV_TDMB_RSSI_DIVIDER))
+				+ 0 * RTV_TDMB_RSSI_DIVIDER;
 		break;
 
 	case 2:
 		nRssi = -(RSSI_RFAGC_VAL(RFAGC, 3)
-				+ RSSI_GVBB_VAL(GVBB, 0.3) + (16*2))
-				+ 0;
+				+ RSSI_GVBB_VAL(GVBB, 0.3) + (16 * 2 * RTV_TDMB_RSSI_DIVIDER))
+				+ 0 * RTV_TDMB_RSSI_DIVIDER;
 		break;
 
 	case 3:
 		nRssi = -(RSSI_RFAGC_VAL(RFAGC, 2.6)
-				+ RSSI_GVBB_VAL(GVBB, 0.4) + (11*3))
-				+ 0;
+				+ RSSI_GVBB_VAL(GVBB, 0.4) + (11 * 3 * RTV_TDMB_RSSI_DIVIDER))
+				+ 0 * RTV_TDMB_RSSI_DIVIDER;
 		break;
 
 	default:
 		break;
 	}
+
+#ifdef DEBUG_LOG_FOR_RSSI_FITTING
+	RTV_DBGMSG3("\n[rtvTDMB_GetRSSI] Channel Flag = %d 0x00=0x%02x, 0x01=0x%02x\n",CH_FLAG, RD00, GVBB);
+	RTV_DBGMSG3("LNAGAIN = %d, RFAGC = %d GVBB : %d\n", LNAGAIN, RFAGC,GVBB);
+#endif
 
 	return	nRssi;
 }
@@ -484,17 +504,20 @@ U32 rtvTDMB_GetCNR(void)
 			snr = 0;
 		else if ((data > 6600)  && (data <= 7800))
 			snr = (-4 * (S32)data/5200 * RTV_TDMB_CNR_DIVIDER)
-				+ (U32)(7.8*RTV_TDMB_CNR_DIVIDER);
-		else if ((data > 1800)  && (data <= 6600))
+				+ (U32)(8.3*RTV_TDMB_CNR_DIVIDER);
+		else if ((data > 4100)  && (data <= 6600))
 			snr = (-5 * (S32)data/4300 * RTV_TDMB_CNR_DIVIDER)
-				+ (U32)(12.2*RTV_TDMB_CNR_DIVIDER);
-		else if ((data > 600) && (data <= 1800))
+				+ (U32)(14.0*RTV_TDMB_CNR_DIVIDER);
+		else if ((data > 1400)  && (data <= 4100))
+			snr = (-5 * (S32)data/3500 * RTV_TDMB_CNR_DIVIDER)
+				+ (U32)(16.0*RTV_TDMB_CNR_DIVIDER);
+		else if ((data > 600) && (data <= 1400))
 			snr = (-10 * (S32)data/1200 * RTV_TDMB_CNR_DIVIDER)
-				+ (U32)(25*RTV_TDMB_CNR_DIVIDER);
+				+ (U32)(27.0*RTV_TDMB_CNR_DIVIDER);
 		else if ((data > 200) && (data <= 600))
 			snr = (-15 * (S32)data/400 * RTV_TDMB_CNR_DIVIDER)
 				+ (U32)(42.5*RTV_TDMB_CNR_DIVIDER);
-		else /* if (data <= 200) */
+		else if (data <= 200)
 			snr = 35 * RTV_TDMB_CNR_DIVIDER;
 	} else
 		snr = 5 * RTV_TDMB_CNR_DIVIDER;
@@ -1033,6 +1056,8 @@ INT rtvTDMB_ScanFrequency(U32 dwChFreqKHz)
 	}
 
 TDMB_SCAN_EXIT:
+	tdmb_DisableFastScanMode();
+
 	if (sucess_flag != RTV_SUCCESS) {
 		rtv_CloseFIC(0); /* rtvTDMB_CloseFIC() was called when lock_s */
 		g_eTdmbState = TDMB_STATE_INIT;
@@ -1062,11 +1087,12 @@ static INLINE INT tdmb_ReadFIC_SPI(U8 *pbBuf)
 {
 	int ret_size;
 	U8 istatus;
+	UINT lock_s;
+	UINT elapsed_cnt = 0;
 	UINT timeout_cnt = RTV_TDMB_READ_FIC_TIMEOUT_CNT;
 
-	RTV_REG_MAP_SEL(SPI_CTRL_PAGE);
-
 	while (1) {
+		RTV_REG_MAP_SEL(SPI_CTRL_PAGE);
 		istatus = RTV_REG_GET(0x10);
 		if (istatus & SPI_INTR_BITS) {
 			if (!(istatus & SPI_UNDERFLOW_INTR)) {
@@ -1078,12 +1104,23 @@ static INLINE INT tdmb_ReadFIC_SPI(U8 *pbBuf)
 			}
 		}
 
+		lock_s = tdmb_GetLockStatus();
+		if (!(lock_s & RTV_TDMB_OFDM_LOCK_MASK)) {
+			RTV_DELAY_MS(30);
+			RTV_DBGMSG2("[tdmb_ReadFIC_SPI] ##lock_s(0x%02X)[%u]\n",
+					lock_s, elapsed_cnt);
+			ret_size = -55;
+			break;
+		}
+
 		if (timeout_cnt--)
 			RTV_DELAY_MS(1);
 		else {
 			ret_size = RTV_FIC_READ_TIMEOUT;
 			break;
 		}
+
+		elapsed_cnt = RTV_TDMB_READ_FIC_TIMEOUT_CNT - timeout_cnt;
 	}
 
 	return ret_size;
@@ -1300,11 +1337,17 @@ static void tdmb_InitOFDM(void)
 	RTV_REG_SET(0x6F, 0x40);
 	RTV_REG_SET(0x86, 0x20);
 	RTV_REG_SET(0x87, 0x3F);
+
+	RTV_REG_SET(0x40, 0x42);
+	RTV_REG_SET(0x96, 0x02);
 }
 
 static void tdmb_InitFEC(void)
 {
 	RTV_REG_MAP_SEL(FEC_PAGE);
+
+	RTV_REG_SET(0x2D, 0x80);
+	RTV_REG_SET(0x2E, 0x5F);
 
 	RTV_REG_SET(0x34, 0x00);
 	RTV_REG_SET(0x37, 0x00);
@@ -1358,6 +1401,9 @@ static void tdmb_InitFEC(void)
 	RTV_REG_SET(0x16, 0xFF);
 	RTV_REG_SET(0x17, 0xFF); /* I2C intr disable */
 #endif
+
+	RTV_REG_SET(0xD3, 0x00);
+
 }
 
 void rtvOEM_ConfigureInterrupt(void)
@@ -1389,10 +1435,13 @@ static void tdmb_InitDemod(void)
 	rtvOEM_ConfigureInterrupt();
 }
 
-INT rtvTDMB_Initialize(void)
+INT rtvTDMB_Initialize(unsigned long interface)
 {
 	INT nRet;
 
+#if defined(RTV_IF_SPI)
+	mtv319_set_port_if(interface);
+#endif
 	g_nOpenedSubChNum = 0;
 	g_nRegSubChArrayIdxBits = 0x0;
 

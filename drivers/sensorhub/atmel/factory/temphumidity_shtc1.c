@@ -23,12 +23,16 @@
 #define CHIP_ID		"SHTC1"
 #define DONE_CAL	3
 
-#if defined(CONFIG_MACH_KS01SKT)
+#if defined(CONFIG_MACH_KS01EUR)
+#define MODEL_NAME	"GT-I9506"
+#elif defined(CONFIG_MACH_KS01SKT)
 #define MODEL_NAME	"SHV-E330S"
 #elif defined(CONFIG_MACH_KS01KTT)
 #define MODEL_NAME	"SHV-E330K"
 #elif defined(CONFIG_MACH_KS01LGT)
 #define MODEL_NAME	"SHV-E330L"
+#elif defined(CONFIG_MACH_JACTIVESKT)
+#define MODEL_NAME	"SHV-E470S"
 #else
 #define MODEL_NAME	"SGH-I337"
 #endif
@@ -36,7 +40,7 @@
 #define CP_THM_ADC_SAMPLING_CNT 7
 
 #if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
+	|| defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 /* {adc, temp*10}, -20 to +70 */
 static struct cp_thm_adc_table temp_table_cp[] = {
 	{27279, 700}, {27367, 690}, {27455, 680}, {27543, 670}, {27631, 660},
@@ -65,7 +69,7 @@ static int get_cp_thm_value(struct ssp_data *data)
 	int err = 0;
 	struct qpnp_vadc_result results;
 		mutex_lock(&data->cp_temp_adc_lock);
-	err = qpnp_vadc_read(LR_MUX6_PU2_AMUX_THM3, &results);
+	err = qpnp_vadc_read(NULL, LR_MUX6_PU2_AMUX_THM3, &results);
 		mutex_unlock(&data->cp_temp_adc_lock);
 		if (err) {
 		pr_err("%s : error reading chn %d, rc = %d\n",
@@ -79,7 +83,7 @@ static int get_cp_thm_value(struct ssp_data *data)
 static int convert_adc_to_temp(struct ssp_data *data, unsigned int adc)
 {
 #if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
+	|| defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
 	int low = 0;
 	int high = 0;
 	int mid = 0;
@@ -107,7 +111,7 @@ static int convert_adc_to_temp(struct ssp_data *data, unsigned int adc)
 	int err = 0;
 	struct qpnp_vadc_result results;
 	mutex_lock(&data->cp_temp_adc_lock);
-	err = qpnp_vadc_read(LR_MUX6_PU2_AMUX_THM3, &results);
+	err = qpnp_vadc_read(NULL, LR_MUX6_PU2_AMUX_THM3, &results);
 	mutex_unlock(&data->cp_temp_adc_lock);
 	if (err) {
 		pr_err("%s : error reading chn %d, rc = %d\n",

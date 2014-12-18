@@ -34,7 +34,7 @@ static int snapshot_frozen_objsize;
 static struct kgsl_snapshot_obj {
 	int type;
 	uint32_t gpuaddr;
-	uint32_t ptbase;
+	phys_addr_t ptbase;
 	void *ptr;
 	int dwords;
 } objbuf[SNAPSHOT_OBJ_BUFSIZE];
@@ -43,7 +43,8 @@ static struct kgsl_snapshot_obj {
 static int objbufptr;
 
 /* Push a new buffer object onto the list */
-static void push_object(struct kgsl_device *device, int type, uint32_t ptbase,
+static void push_object(struct kgsl_device *device, int type,
+	phys_addr_t ptbase,
 	uint32_t gpuaddr, int dwords)
 {
 	int index;
@@ -94,7 +95,7 @@ static void push_object(struct kgsl_device *device, int type, uint32_t ptbase,
  * to be dumped
  */
 
-static int find_object(int type, unsigned int gpuaddr, unsigned int ptbase)
+static int find_object(int type, unsigned int gpuaddr, phys_addr_t ptbase)
 {
 	int index;
 
@@ -184,7 +185,7 @@ static int load_state_unit_sizes[7][2] = {
 };
 
 static int ib_parse_load_state(struct kgsl_device *device, unsigned int *pkt,
-	unsigned int ptbase)
+	phys_addr_t ptbase)
 {
 	unsigned int block, source, type;
 	int ret = 0;
@@ -243,7 +244,7 @@ static int ib_parse_load_state(struct kgsl_device *device, unsigned int *pkt,
  */
 
 static int ib_parse_set_bin_data(struct kgsl_device *device, unsigned int *pkt,
-	unsigned int ptbase)
+	phys_addr_t ptbase)
 {
 	int ret;
 
@@ -276,7 +277,7 @@ static int ib_parse_set_bin_data(struct kgsl_device *device, unsigned int *pkt,
  */
 
 static int ib_parse_mem_write(struct kgsl_device *device, unsigned int *pkt,
-	unsigned int ptbase)
+	phys_addr_t ptbase)
 {
 	int ret;
 
@@ -307,7 +308,7 @@ static int ib_parse_mem_write(struct kgsl_device *device, unsigned int *pkt,
  */
 
 static int ib_parse_draw_indx(struct kgsl_device *device, unsigned int *pkt,
-	unsigned int ptbase)
+	phys_addr_t ptbase)
 {
 	int ret = 0, i;
 
@@ -439,7 +440,7 @@ static int ib_parse_draw_indx(struct kgsl_device *device, unsigned int *pkt,
  */
 
 static int ib_parse_type3(struct kgsl_device *device, unsigned int *ptr,
-	unsigned int ptbase)
+	phys_addr_t ptbase)
 {
 	int opcode = cp_type3_opcode(*ptr);
 
@@ -464,8 +465,9 @@ static int ib_parse_type3(struct kgsl_device *device, unsigned int *ptr,
  */
 
 static void ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
-	unsigned int ptbase)
+	phys_addr_t ptbase)
 {
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	int size = type0_pkt_size(*ptr);
 	int offset = type0_pkt_offset(*ptr);
 	int i;
@@ -474,9 +476,12 @@ static void ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
 
 		/* Visiblity stream buffer */
 
-		if (offset >= A3XX_VSC_PIPE_DATA_ADDRESS_0 &&
-			offset <= A3XX_VSC_PIPE_DATA_LENGTH_7) {
-			int index = offset - A3XX_VSC_PIPE_DATA_ADDRESS_0;
+		if (offset >= adreno_getreg(adreno_dev,
+				ADRENO_REG_VSC_PIPE_DATA_ADDRESS_0) &&
+			offset <= adreno_getreg(adreno_dev,
+					ADRENO_REG_VSC_PIPE_DATA_LENGTH_7)) {
+			int index = offset - adreno_getreg(adreno_dev,
+					ADRENO_REG_VSC_PIPE_DATA_ADDRESS_0);
 
 			/* Each bank of address and length registers are
 			 * interleaved with an empty register:
@@ -494,9 +499,13 @@ static void ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
 				vsc_pipe[index / 3].base = ptr[i + 1];
 			else if ((index % 3) == 1)
 				vsc_pipe[index / 3].size = ptr[i + 1];
-		} else if ((offset >= A3XX_VFD_FETCH_INSTR_0_0) &&
-			(offset <= A3XX_VFD_FETCH_INSTR_1_F)) {
-			int index = offset - A3XX_VFD_FETCH_INSTR_0_0;
+		} else if ((offset >= adreno_getreg(adreno_dev,
+					ADRENO_REG_VFD_FETCH_INSTR_0_0)) &&
+			(offset <= adreno_getreg(adreno_dev,
+					ADRENO_REG_VFD_FETCH_INSTR_1_F))) {
+			int index = offset -
+				adreno_getreg(adreno_dev,
+					ADRENO_REG_VFD_FETCH_INSTR_0_0);
 
 			/*
 			 * FETCH_INSTR_0_X and FETCH_INSTR_1_X banks are
@@ -515,39 +524,40 @@ static void ib_parse_type0(struct kgsl_device *device, unsigned int *ptr,
 			 * buffer sizes
 			 */
 
-			switch (offset) {
-			case A3XX_VFD_CONTROL_0:
+			if (offset ==
+				adreno_getreg(adreno_dev,
+						ADRENO_REG_VFD_CONTROL_0))
 				vfd_control_0 = ptr[i + 1];
-				break;
-			case A3XX_VFD_INDEX_MAX:
+			else if (offset ==
+				adreno_getreg(adreno_dev,
+						ADRENO_REG_VFD_INDEX_MAX))
 				vfd_index_max = ptr[i + 1];
-				break;
-			case A3XX_VSC_SIZE_ADDRESS:
+			else if (offset ==
+				adreno_getreg(adreno_dev,
+						ADRENO_REG_VSC_SIZE_ADDRESS))
 				vsc_size_address = ptr[i + 1];
-				break;
-			case A3XX_SP_VS_PVT_MEM_ADDR_REG:
+			else if (offset == adreno_getreg(adreno_dev,
+					ADRENO_REG_SP_VS_PVT_MEM_ADDR_REG))
 				sp_vs_pvt_mem_addr = ptr[i + 1];
-				break;
-			case A3XX_SP_FS_PVT_MEM_ADDR_REG:
+			else if (offset == adreno_getreg(adreno_dev,
+					ADRENO_REG_SP_FS_PVT_MEM_ADDR_REG))
 				sp_fs_pvt_mem_addr = ptr[i + 1];
-				break;
-			case A3XX_SP_VS_OBJ_START_REG:
+			else if (offset == adreno_getreg(adreno_dev,
+					ADRENO_REG_SP_VS_OBJ_START_REG))
 				sp_vs_obj_start_reg = ptr[i + 1];
-				break;
-			case A3XX_SP_FS_OBJ_START_REG:
+			else if (offset == adreno_getreg(adreno_dev,
+					ADRENO_REG_SP_FS_OBJ_START_REG))
 				sp_fs_obj_start_reg = ptr[i + 1];
-				break;
-			}
 		}
 	}
 }
 
-static inline int parse_ib(struct kgsl_device *device, unsigned int ptbase,
+static inline int parse_ib(struct kgsl_device *device, phys_addr_t ptbase,
 		unsigned int gpuaddr, unsigned int dwords);
 
 /* Add an IB as a GPU object, but first, parse it to find more goodies within */
 
-static int ib_add_gpu_object(struct kgsl_device *device, unsigned int ptbase,
+static int ib_add_gpu_object(struct kgsl_device *device, phys_addr_t ptbase,
 		unsigned int gpuaddr, unsigned int dwords)
 {
 	int i, ret, rem = dwords;
@@ -625,9 +635,10 @@ done:
  * access the dynamic data from the sysfs file.  Push all other IBs on the
  * dynamic list
  */
-static inline int parse_ib(struct kgsl_device *device, unsigned int ptbase,
+static inline int parse_ib(struct kgsl_device *device, phys_addr_t ptbase,
 		unsigned int gpuaddr, unsigned int dwords)
 {
+	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	unsigned int ib1base, ib2base;
 	int ret = 0;
 
@@ -637,8 +648,8 @@ static inline int parse_ib(struct kgsl_device *device, unsigned int ptbase,
 	 * it in the dynamic list
 	 */
 
-	kgsl_regread(device, REG_CP_IB1_BASE, &ib1base);
-	kgsl_regread(device, REG_CP_IB2_BASE, &ib2base);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB1_BASE, &ib1base);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB2_BASE, &ib2base);
 
 	if (gpuaddr == ib1base || gpuaddr == ib2base)
 		push_object(device, SNAPSHOT_OBJ_TYPE_IB, ptbase,
@@ -657,7 +668,8 @@ static int snapshot_rb(struct kgsl_device *device, void *snapshot,
 	unsigned int *data = snapshot + sizeof(*header);
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
 	struct adreno_ringbuffer *rb = &adreno_dev->ringbuffer;
-	unsigned int ptbase, rptr, *rbptr, ibbase;
+	unsigned int rptr, *rbptr, ibbase;
+	phys_addr_t ptbase;
 	int index, size, i;
 	int parse_ibs = 0, ib_parse_start;
 
@@ -665,10 +677,10 @@ static int snapshot_rb(struct kgsl_device *device, void *snapshot,
 	ptbase = kgsl_mmu_get_current_ptbase(&device->mmu);
 
 	/* Get the current read pointers for the RB */
-	kgsl_regread(device, REG_CP_RB_RPTR, &rptr);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_RB_RPTR, &rptr);
 
 	/* Address of the last processed IB */
-	kgsl_regread(device, REG_CP_IB1_BASE, &ibbase);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB1_BASE, &ibbase);
 
 	/*
 	 * Figure out the window of ringbuffer data to dump.  First we need to
@@ -822,8 +834,9 @@ static int snapshot_capture_mem_list(struct kgsl_device *device, void *snapshot,
 			int remain, void *priv)
 {
 	struct kgsl_snapshot_replay_mem_list *header = snapshot;
-	struct kgsl_process_private *private;
-	unsigned int ptbase;
+	struct kgsl_process_private *private = NULL;
+	struct kgsl_process_private *tmp_private;
+	phys_addr_t ptbase;
 	struct rb_node *node;
 	struct kgsl_mem_entry *entry = NULL;
 	int num_mem;
@@ -831,10 +844,12 @@ static int snapshot_capture_mem_list(struct kgsl_device *device, void *snapshot,
 
 	ptbase = kgsl_mmu_get_current_ptbase(&device->mmu);
 	mutex_lock(&kgsl_driver.process_mutex);
-	list_for_each_entry(private, &kgsl_driver.process_list, list) {
-		if (kgsl_mmu_pt_equal(&device->mmu, private->pagetable,
-			ptbase))
+	list_for_each_entry(tmp_private, &kgsl_driver.process_list, list) {
+		if (kgsl_mmu_pt_equal(&device->mmu, tmp_private->pagetable,
+			ptbase)) {
+			private = tmp_private;
 			break;
+		}
 	}
 	mutex_unlock(&kgsl_driver.process_mutex);
 	if (!private) {
@@ -858,7 +873,7 @@ static int snapshot_capture_mem_list(struct kgsl_device *device, void *snapshot,
 		return 0;
 	}
 	header->num_entries = num_mem;
-	header->ptbase = ptbase;
+	header->ptbase = (__u32)ptbase;
 	/*
 	 * Walk throught the memory list and store the
 	 * tuples(gpuaddr, size, memtype) in snapshot
@@ -894,7 +909,7 @@ static int snapshot_ib(struct kgsl_device *device, void *snapshot,
 
 	/* Write the sub-header for the section */
 	header->gpuaddr = obj->gpuaddr;
-	header->ptbase = obj->ptbase;
+	header->ptbase = (__u32)obj->ptbase;
 	header->size = obj->dwords;
 
 	/* Write the contents of the ib */
@@ -954,8 +969,9 @@ void *adreno_snapshot(struct kgsl_device *device, void *snapshot, int *remain,
 		int hang)
 {
 	int i;
-	uint32_t ptbase, ibbase, ibsize;
+	uint32_t ibbase, ibsize;
 	struct adreno_device *adreno_dev = ADRENO_DEVICE(device);
+	phys_addr_t ptbase;
 
 	/* Reset the list of objects */
 	objbufptr = 0;
@@ -992,8 +1008,8 @@ void *adreno_snapshot(struct kgsl_device *device, void *snapshot, int *remain,
 	 * want to be double plus sure.
 	 */
 
-	kgsl_regread(device, REG_CP_IB1_BASE, &ibbase);
-	kgsl_regread(device, REG_CP_IB1_BUFSZ, &ibsize);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB1_BASE, &ibbase);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB1_BUFSZ, &ibsize);
 
 	/*
 	 * The problem is that IB size from the register is the unprocessed size
@@ -1010,8 +1026,8 @@ void *adreno_snapshot(struct kgsl_device *device, void *snapshot, int *remain,
 			"Dumping %x dwords of the buffer.\n", ibsize);
 	}
 
-	kgsl_regread(device, REG_CP_IB2_BASE, &ibbase);
-	kgsl_regread(device, REG_CP_IB2_BUFSZ, &ibsize);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB2_BASE, &ibbase);
+	adreno_readreg(adreno_dev, ADRENO_REG_CP_IB2_BUFSZ, &ibsize);
 
 	/*
 	 * Add the last parsed IB2 to the list. The IB2 should be found as we

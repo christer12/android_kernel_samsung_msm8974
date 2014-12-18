@@ -163,7 +163,7 @@ int fc8150_tuner_init(HANDLE hDevice, u32 band)
 	u8  RFAGC_PD2[6], RFAGC_PD2_AVG, RFAGC_PD2_MAX, RFAGC_PD2_MIN;
 	u8  RFAGC_PD1[6], RFAGC_PD1_AVG, RFAGC_PD1_MAX, RFAGC_PD1_MIN;
 
-	PRINTF(hDevice, "fc8150_init\n");
+	PRINTF(hDevice, "fc8150_tuner_init\n");
 
 	fc8150_write(hDevice, 0x00, 0x00);
 	fc8150_write(hDevice, 0x02, 0x81);

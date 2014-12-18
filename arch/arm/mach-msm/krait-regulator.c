@@ -29,7 +29,9 @@
 #include <linux/regulator/krait-regulator.h>
 #include <linux/debugfs.h>
 #include <linux/syscore_ops.h>
+#include <linux/cpu.h>
 #include <mach/msm_iomap.h>
+#include "krait-regulator-pmic.h"
 
 #include "spm.h"
 #include "pm.h"
@@ -92,6 +94,16 @@
 #define MDD_CONFIG_CTL		0x00000000
 #define MDD_MODE		0x00000010
 
+#define PHASE_SCALING_REF	4
+
+/* bit definitions for phase scaling eFuses */
+#define PHASE_SCALING_EFUSE_VERSION_POS		26
+#define PHASE_SCALING_EFUSE_VERSION_MASK	KRAIT_MASK(27, 26)
+#define PHASE_SCALING_EFUSE_VERSION_SET		1
+
+#define PHASE_SCALING_EFUSE_VALUE_POS		16
+#define PHASE_SCALING_EFUSE_VALUE_MASK		KRAIT_MASK(18, 16)
+
 /* bit definitions for APC_PWR_GATE_CTL */
 #define BHS_CNT_BIT_POS		24
 #define BHS_CNT_MASK		KRAIT_MASK(31, 24)
@@ -121,6 +133,15 @@
 #define VREF_LDO_BIT_POS	0
 #define VREF_LDO_MASK		KRAIT_MASK(6, 0)
 
+#define PWR_GATE_SWITCH_MODE_POS	4
+#define PWR_GATE_SWITCH_MODE_MASK	KRAIT_MASK(6, 4)
+
+#define PWR_GATE_SWITCH_MODE_PC		0
+#define PWR_GATE_SWITCH_MODE_LDO	1
+#define PWR_GATE_SWITCH_MODE_BHS	2
+#define PWR_GATE_SWITCH_MODE_DT		3
+#define PWR_GATE_SWITCH_MODE_RET	4
+
 #define LDO_HDROOM_MIN		50000
 #define LDO_HDROOM_MAX		250000
 
@@ -134,6 +155,10 @@
 #define LDO_DELTA_MAX		100000
 
 #define MSM_L2_SAW_PHYS		0xf9012000
+#define MSM_MDD_BASE_PHYS	0xf908a800
+
+#define KPSS_VERSION_2P0	0x20000000
+
 /**
  * struct pmic_gang_vreg -
  * @name:			the string used to represent the gang
@@ -149,6 +174,10 @@
  * @manage_phases:		begin phase control
  * @pfm_threshold:		the sum of coefficients below which PFM can be
  *				enabled
+ * @efuse_phase_scaling_factor:	Phase scaling factor read out of an eFuse.  When
+ *				calculating the appropriate phase count to use,
+ *				coeff2 is multiplied by this factor and then
+ *				divided by PHASE_SCALING_REF.
  */
 struct pmic_gang_vreg {
 	const char		*name;
@@ -163,6 +192,7 @@ struct pmic_gang_vreg {
 	void __iomem		*apcs_gcc_base;
 	bool			manage_phases;
 	int			pfm_threshold;
+	int			efuse_phase_scaling_factor;
 };
 
 static struct pmic_gang_vreg *the_gang;
@@ -192,15 +222,23 @@ struct krait_power_vreg {
 	int				ldo_threshold_uV;
 	int				ldo_delta_uV;
 	int				cpu_num;
+	bool				ldo_disable;
 	int				coeff1;
 	int				coeff2;
-	bool				online;
+	bool				reg_en;
 	int				online_at_probe;
+	bool				force_bhs;
 };
 
 DEFINE_PER_CPU(struct krait_power_vreg *, krait_vregs);
 
 static u32 version;
+
+static int use_efuse_phase_scaling_factor;
+module_param_named(
+	use_phase_scaling_efuse, use_efuse_phase_scaling_factor, int,
+	S_IRUSR | S_IWUSR
+);
 
 static int is_between(int left, int right, int value)
 {
@@ -304,7 +342,7 @@ static int __krait_power_mdd_enable(struct krait_power_vreg *kvreg, bool on)
 }
 
 #define COEFF2_UV_THRESHOLD 850000
-static int get_coeff2(int krait_uV)
+static int get_coeff2(int krait_uV, int phase_scaling_factor)
 {
 	int coeff2 = 0;
 	int krait_mV = krait_uV / 1000;
@@ -313,6 +351,8 @@ static int get_coeff2(int krait_uV)
 		coeff2 = (612229 * krait_mV) / 1000 - 211258;
 	else
 		coeff2 = (892564 * krait_mV) / 1000 - 449543;
+
+	coeff2 = coeff2 * phase_scaling_factor / PHASE_SCALING_REF;
 
 	return  coeff2;
 }
@@ -330,9 +370,13 @@ static int get_coeff_total(struct krait_power_vreg *from)
 	int coeff_total = 0;
 	struct krait_power_vreg *kvreg;
 	struct pmic_gang_vreg *pvreg = from->pvreg;
+	int phase_scaling_factor = PHASE_SCALING_REF;
+
+	if (use_efuse_phase_scaling_factor)
+		phase_scaling_factor = pvreg->efuse_phase_scaling_factor;
 
 	list_for_each_entry(kvreg, &pvreg->krait_power_vregs, link) {
-		if (!kvreg->online)
+		if (!kvreg->reg_en)
 			continue;
 
 		if (kvreg->mode == LDO_MODE) {
@@ -340,12 +384,14 @@ static int get_coeff_total(struct krait_power_vreg *from)
 				get_coeff1(kvreg->uV - kvreg->ldo_delta_uV,
 							kvreg->uV, kvreg->load);
 			kvreg->coeff2 =
-				get_coeff2(kvreg->uV - kvreg->ldo_delta_uV);
+				get_coeff2(kvreg->uV - kvreg->ldo_delta_uV,
+							phase_scaling_factor);
 		} else {
 			kvreg->coeff1 =
 				get_coeff1(pvreg->pmic_vmax_uV,
 							kvreg->uV, kvreg->load);
-			kvreg->coeff2 = get_coeff2(pvreg->pmic_vmax_uV);
+			kvreg->coeff2 = get_coeff2(pvreg->pmic_vmax_uV,
+							phase_scaling_factor);
 		}
 		coeff_total += kvreg->coeff1 + kvreg->coeff2;
 	}
@@ -372,7 +418,7 @@ static int num_online(struct pmic_gang_vreg *pvreg)
 	struct krait_power_vreg *kvreg;
 
 	list_for_each_entry(kvreg, &pvreg->krait_power_vregs, link) {
-		if (kvreg->online)
+		if (kvreg->reg_en)
 			online_total++;
 	}
 	return online_total;
@@ -385,7 +431,7 @@ static int get_total_load(struct krait_power_vreg *from)
 	struct pmic_gang_vreg *pvreg = from->pvreg;
 
 	list_for_each_entry(kvreg, &pvreg->krait_power_vregs, link) {
-		if (!kvreg->online)
+		if (!kvreg->reg_en)
 			continue;
 		load_total += kvreg->load;
 	}
@@ -432,16 +478,18 @@ static unsigned int pmic_gang_set_phases(struct krait_power_vreg *from,
 	}
 
 	/* First check if the coeff is low for PFM mode */
-	if (load_total <= pvreg->pfm_threshold && n_online == 1) {
+	if (load_total <= pvreg->pfm_threshold
+			&& n_online == 1
+			&& krait_pmic_is_ready()) {
 		if (!pvreg->pfm_mode) {
 			rc = msm_spm_enable_fts_lpm(PMIC_FTS_MODE_PFM);
 			if (rc) {
 				pr_err("%s PFM en failed load_t %d rc = %d\n",
 					from->name, load_total, rc);
 				return rc;
-			} else {
-				pvreg->pfm_mode = true;
 			}
+			krait_pmic_post_pfm_entry();
+			pvreg->pfm_mode = true;
 		}
 		return rc;
 	}
@@ -453,10 +501,10 @@ static unsigned int pmic_gang_set_phases(struct krait_power_vreg *from,
 			pr_err("%s PFM exit failed load %d rc = %d\n",
 				from->name, coeff_total, rc);
 			return rc;
-		} else {
-			pvreg->pfm_mode = false;
-			udelay(PWM_SETTLING_TIME_US);
 		}
+		pvreg->pfm_mode = false;
+		krait_pmic_post_pwm_entry();
+		udelay(PWM_SETTLING_TIME_US);
 	}
 
 	/* calculate phases */
@@ -523,7 +571,7 @@ static unsigned int krait_power_get_optimum_mode(struct regulator_dev *rdev,
 
 	mutex_lock(&pvreg->krait_power_vregs_lock);
 	kvreg->load = load_uA;
-	if (!kvreg->online) {
+	if (!kvreg->reg_en) {
 		mutex_unlock(&pvreg->krait_power_vregs_lock);
 		return kvreg->mode;
 	}
@@ -546,44 +594,116 @@ static unsigned int krait_power_get_mode(struct regulator_dev *rdev)
 	return kvreg->mode;
 }
 
-static int switch_to_using_hs(struct krait_power_vreg *kvreg)
+static void __switch_to_using_bhs(void *info)
 {
-	if (kvreg->mode == HS_MODE)
-		return 0;
+	struct krait_power_vreg *kvreg = info;
+
 	/* enable bhs */
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL, BHS_EN_MASK, BHS_EN_MASK);
-	/* complete the above write before the delay */
-	mb();
-	/* wait for the bhs to settle */
-	udelay(BHS_SETTLING_DELAY_US);
+	if (version > KPSS_VERSION_2P0) {
+		krait_masked_write(kvreg, APC_PWR_GATE_MODE,
+			PWR_GATE_SWITCH_MODE_MASK,
+			PWR_GATE_SWITCH_MODE_BHS << PWR_GATE_SWITCH_MODE_POS);
 
-	/* Turn on BHS segments */
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL,
-		BHS_SEG_EN_MASK, BHS_SEG_EN_DEFAULT << BHS_SEG_EN_BIT_POS);
+		/* complete the writes before the delay */
+		mb();
 
-	/* complete the above write before the delay */
-	mb();
+		/* wait for the bhs to settle */
+		udelay(BHS_SETTLING_DELAY_US);
+	} else {
+		/* enable bhs */
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL,
+						BHS_EN_MASK, BHS_EN_MASK);
 
-	/*
-	 * wait for the bhs to settle - note that
-	 * after the voltage has settled both BHS and LDO are supplying power
-	 * to the krait. This avoids glitches during switching
-	 */
-	udelay(BHS_SETTLING_DELAY_US);
+		/* complete the above write before the delay */
+		mb();
 
-	/*
-	 * enable ldo bypass - the krait is powered still by LDO since
-	 * LDO is enabled
-	 */
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL, LDO_BYP_MASK, LDO_BYP_MASK);
+		/* wait for the bhs to settle */
+		udelay(BHS_SETTLING_DELAY_US);
 
-	/* disable ldo - only the BHS provides voltage to the cpu after this */
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL,
+		/* Turn on BHS segments */
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL, BHS_SEG_EN_MASK,
+				BHS_SEG_EN_DEFAULT << BHS_SEG_EN_BIT_POS);
+
+		/* complete the above write before the delay */
+		mb();
+
+		/*
+		 * wait for the bhs to settle - note that
+		 * after the voltage has settled both BHS and LDO are supplying
+		 * power to the krait. This avoids glitches during switching
+		 */
+		udelay(BHS_SETTLING_DELAY_US);
+
+		/*
+		 * enable ldo bypass - the krait is powered still by LDO since
+		 * LDO is enabled
+		 */
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL,
+				LDO_BYP_MASK, LDO_BYP_MASK);
+
+		/*
+		 * disable ldo - only the BHS provides voltage to
+		 * the cpu after this
+		 */
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL,
 				LDO_PWR_DWN_MASK, LDO_PWR_DWN_MASK);
+	}
 
 	kvreg->mode = HS_MODE;
 	pr_debug("%s using BHS\n", kvreg->name);
-	return 0;
+}
+
+static void __switch_to_using_ldo(void *info)
+{
+	struct krait_power_vreg *kvreg = info;
+
+	if (kvreg->ldo_disable)
+		return;
+
+	/*
+	 * if the krait is in ldo mode and a voltage change is requested on the
+	 * ldo switch to using hs before changing ldo voltage
+	 */
+	if (kvreg->mode == LDO_MODE)
+		__switch_to_using_bhs(kvreg);
+
+	set_krait_ldo_uv(kvreg, kvreg->uV - kvreg->ldo_delta_uV);
+	if (version > KPSS_VERSION_2P0) {
+		krait_masked_write(kvreg, APC_PWR_GATE_MODE,
+			PWR_GATE_SWITCH_MODE_MASK,
+			PWR_GATE_SWITCH_MODE_LDO << PWR_GATE_SWITCH_MODE_POS);
+
+		/* complete the writes before the delay */
+		mb();
+
+		/* wait for the ldo to settle */
+		udelay(LDO_SETTLING_DELAY_US);
+	} else {
+		/*
+		 * enable ldo - note that both LDO and BHS are are supplying
+		 * voltage to the cpu after this. This avoids glitches during
+		 * switching from BHS to LDO.
+		 */
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL,
+						LDO_PWR_DWN_MASK, 0);
+
+		/* complete the writes before the delay */
+		mb();
+
+		/* wait for the ldo to settle */
+		udelay(LDO_SETTLING_DELAY_US);
+
+		/*
+		 * disable BHS and disable LDO bypass seperate from enabling
+		 * the LDO above.
+		 */
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL,
+			BHS_EN_MASK | LDO_BYP_MASK, 0);
+		krait_masked_write(kvreg, APC_PWR_GATE_CTL, BHS_SEG_EN_MASK, 0);
+	}
+
+	kvreg->mode = LDO_MODE;
+	pr_debug("%s using LDO\n", kvreg->name);
 }
 
 static int switch_to_using_ldo(struct krait_power_vreg *kvreg)
@@ -592,39 +712,17 @@ static int switch_to_using_ldo(struct krait_power_vreg *kvreg)
 		&& get_krait_ldo_uv(kvreg) == kvreg->uV - kvreg->ldo_delta_uV)
 		return 0;
 
-	/*
-	 * if the krait is in ldo mode and a voltage change is requested on the
-	 * ldo switch to using hs before changing ldo voltage
-	 */
-	if (kvreg->mode == LDO_MODE)
-		switch_to_using_hs(kvreg);
+	return smp_call_function_single(kvreg->cpu_num,
+			__switch_to_using_ldo, kvreg, 1);
+}
 
-	set_krait_ldo_uv(kvreg, kvreg->uV - kvreg->ldo_delta_uV);
+static int switch_to_using_bhs(struct krait_power_vreg *kvreg)
+{
+	if (kvreg->mode == HS_MODE)
+		return 0;
 
-	/*
-	 * enable ldo - note that both LDO and BHS are are supplying voltage to
-	 * the cpu after this. This avoids glitches during switching from BHS
-	 * to LDO.
-	 */
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL, LDO_PWR_DWN_MASK, 0);
-
-	/* complete the writes before the delay */
-	mb();
-
-	/* wait for the ldo to settle */
-	udelay(LDO_SETTLING_DELAY_US);
-
-	/*
-	 * disable BHS and disable LDO bypass seperate from enabling
-	 * the LDO above.
-	 */
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL,
-		BHS_EN_MASK | LDO_BYP_MASK, 0);
-	krait_masked_write(kvreg, APC_PWR_GATE_CTL, BHS_SEG_EN_MASK, 0);
-
-	kvreg->mode = LDO_MODE;
-	pr_debug("%s using LDO\n", kvreg->name);
-	return 0;
+	return smp_call_function_single(kvreg->cpu_num,
+			__switch_to_using_bhs, kvreg, 1);
 }
 
 static int set_pmic_gang_voltage(struct pmic_gang_vreg *pvreg, int uV)
@@ -666,7 +764,7 @@ static int set_pmic_gang_voltage(struct pmic_gang_vreg *pvreg, int uV)
 
 	setpoint = DIV_ROUND_UP(uV, LV_RANGE_STEP);
 
-	rc = msm_spm_apcs_set_vdd(setpoint);
+	rc = msm_spm_set_vdd(0, setpoint); /* value of CPU is don't care */
 	if (rc < 0)
 		pr_err("could not set %duV setpt = 0x%x rc = %d\n",
 				uV, setpoint, rc);
@@ -676,6 +774,41 @@ static int set_pmic_gang_voltage(struct pmic_gang_vreg *pvreg, int uV)
 	return rc;
 }
 
+static int configure_ldo_or_hs_one(struct krait_power_vreg *kvreg, int vmax)
+{
+	int rc;
+
+	if (!kvreg->reg_en)
+		return 0;
+
+	if (kvreg->force_bhs)
+		/*
+		 * The cpu is in transitory phase where it is being
+		 * prepared to be offlined or onlined and is being
+		 * forced to run on BHS during that time
+		 */
+		return 0;
+
+	if (kvreg->uV <= kvreg->ldo_threshold_uV
+		&& kvreg->uV - kvreg->ldo_delta_uV + kvreg->headroom_uV
+			<= vmax) {
+		rc = switch_to_using_ldo(kvreg);
+		if (rc < 0) {
+			pr_err("could not switch %s to ldo rc = %d\n",
+						kvreg->name, rc);
+			return rc;
+		}
+	} else {
+		rc = switch_to_using_bhs(kvreg);
+		if (rc < 0) {
+			pr_err("could not switch %s to hs rc = %d\n",
+						kvreg->name, rc);
+			return rc;
+		}
+	}
+	return 0;
+}
+
 static int configure_ldo_or_hs_all(struct krait_power_vreg *from, int vmax)
 {
 	struct pmic_gang_vreg *pvreg = from->pvreg;
@@ -683,27 +816,12 @@ static int configure_ldo_or_hs_all(struct krait_power_vreg *from, int vmax)
 	int rc = 0;
 
 	list_for_each_entry(kvreg, &pvreg->krait_power_vregs, link) {
-		if (!kvreg->online)
-			continue;
-		if (kvreg->uV <= kvreg->ldo_threshold_uV
-			&& kvreg->uV - kvreg->ldo_delta_uV + kvreg->headroom_uV
-				<= vmax) {
-			rc = switch_to_using_ldo(kvreg);
-			if (rc < 0) {
-				pr_err("could not switch %s to ldo rc = %d\n",
-							kvreg->name, rc);
-				return rc;
-			}
-		} else {
-			rc = switch_to_using_hs(kvreg);
-			if (rc < 0) {
-				pr_err("could not switch %s to hs rc = %d\n",
-							kvreg->name, rc);
-				return rc;
-			}
+		rc = configure_ldo_or_hs_one(kvreg, vmax);
+		if (rc) {
+			pr_err("could not switch %s\n", kvreg->name);
+			break;
 		}
 	}
-
 	return rc;
 }
 
@@ -782,7 +900,7 @@ static int get_vmax(struct pmic_gang_vreg *pvreg)
 	struct krait_power_vreg *kvreg;
 
 	list_for_each_entry(kvreg, &pvreg->krait_power_vregs, link) {
-		if (!kvreg->online)
+		if (!kvreg->reg_en)
 			continue;
 
 		v = kvreg->uV;
@@ -822,7 +940,7 @@ static int _set_voltage(struct regulator_dev *rdev,
 		rc = krait_voltage_decrease(kvreg, vmax);
 
 	if (rc < 0) {
-		dev_err(&rdev->dev, "%s failed to set %duV from %duV rc = %d\n",
+		pr_err("%s failed to set %duV from %duV rc = %d\n",
 				kvreg->name, requested_uV, orig_krait_uV, rc);
 	}
 
@@ -853,7 +971,7 @@ static int krait_power_set_voltage(struct regulator_dev *rdev,
 	}
 
 	mutex_lock(&pvreg->krait_power_vregs_lock);
-	if (!kvreg->online) {
+	if (!kvreg->reg_en) {
 		kvreg->uV = min_uV;
 		mutex_unlock(&pvreg->krait_power_vregs_lock);
 		return 0;
@@ -869,7 +987,7 @@ static int krait_power_is_enabled(struct regulator_dev *rdev)
 {
 	struct krait_power_vreg *kvreg = rdev_get_drvdata(rdev);
 
-	return kvreg->online;
+	return kvreg->reg_en;
 }
 
 static int krait_power_enable(struct regulator_dev *rdev)
@@ -879,8 +997,9 @@ static int krait_power_enable(struct regulator_dev *rdev)
 	int rc;
 
 	mutex_lock(&pvreg->krait_power_vregs_lock);
+	pr_debug("enable %s\n", kvreg->name);
 	__krait_power_mdd_enable(kvreg, true);
-	kvreg->online = true;
+	kvreg->reg_en = true;
 	rc = _get_optimum_mode(rdev, kvreg->uV, kvreg->uV, kvreg->load);
 	if (rc < 0)
 		goto en_err;
@@ -901,7 +1020,8 @@ static int krait_power_disable(struct regulator_dev *rdev)
 	int rc;
 
 	mutex_lock(&pvreg->krait_power_vregs_lock);
-	kvreg->online = false;
+	pr_debug("disable %s\n", kvreg->name);
+	kvreg->reg_en = false;
 
 	rc = _get_optimum_mode(rdev, kvreg->uV, kvreg->uV, kvreg->load);
 	if (rc < 0)
@@ -923,6 +1043,69 @@ static struct regulator_ops krait_power_ops = {
 	.enable			= krait_power_enable,
 	.disable		= krait_power_disable,
 	.is_enabled		= krait_power_is_enabled,
+};
+
+static int krait_regulator_cpu_callback(struct notifier_block *nfb,
+					    unsigned long action, void *hcpu)
+{
+	int cpu = (int)hcpu;
+	struct krait_power_vreg *kvreg = per_cpu(krait_vregs, cpu);
+	struct pmic_gang_vreg *pvreg = kvreg->pvreg;
+
+	pr_debug("start state=0x%02x, cpu=%d is_online=%d\n",
+			(int)action, cpu, cpu_online(cpu));
+	switch (action & ~CPU_TASKS_FROZEN) {
+	case CPU_UP_PREPARE:
+	case CPU_UP_CANCELED:
+		mutex_lock(&pvreg->krait_power_vregs_lock);
+		kvreg->force_bhs = true;
+		/*
+		 * cpu is offline at this point, force bhs on which ever cpu
+		 * this callback is running on
+		 */
+		pr_debug("%s force BHS locally\n", kvreg->name);
+		__switch_to_using_bhs(kvreg);
+		mutex_unlock(&pvreg->krait_power_vregs_lock);
+		break;
+	case CPU_ONLINE:
+		mutex_lock(&pvreg->krait_power_vregs_lock);
+		kvreg->force_bhs = false;
+		/*
+		 * switch the cpu to proper bhs/ldo, the cpu is online at this
+		 * point. The gang voltage and mode votes for the cpu were
+		 * submitted in CPU_UP_PREPARE phase
+		 */
+		configure_ldo_or_hs_one(kvreg, pvreg->pmic_vmax_uV);
+		mutex_unlock(&pvreg->krait_power_vregs_lock);
+		break;
+	case CPU_DOWN_PREPARE:
+		mutex_lock(&pvreg->krait_power_vregs_lock);
+		kvreg->force_bhs = true;
+		/*
+		 * switch the cpu to run on bhs using smp function calls. Note
+		 * that the cpu is online at this point.
+		 */
+		pr_debug("%s force BHS remotely\n", kvreg->name);
+		switch_to_using_bhs(kvreg);
+		mutex_unlock(&pvreg->krait_power_vregs_lock);
+		break;
+	case CPU_DOWN_FAILED:
+		mutex_lock(&pvreg->krait_power_vregs_lock);
+		kvreg->force_bhs = false;
+		configure_ldo_or_hs_one(kvreg, pvreg->pmic_vmax_uV);
+		mutex_unlock(&pvreg->krait_power_vregs_lock);
+		break;
+	default:
+		break;
+	}
+
+	pr_debug("done state=0x%02x, cpu=%d is_online=%d\n",
+			(int)action, cpu, cpu_online(cpu));
+	return NOTIFY_OK;
+}
+
+static struct notifier_block krait_cpu_notifier = {
+	.notifier_call = krait_regulator_cpu_callback,
 };
 
 static struct dentry *dent;
@@ -962,35 +1145,54 @@ static int set_retention_dbg_uV(void *data, u64 val)
 DEFINE_SIMPLE_ATTRIBUTE(retention_fops,
 			get_retention_dbg_uV, set_retention_dbg_uV, "%llu\n");
 
+static void kvreg_ldo_voltage_init(struct krait_power_vreg *kvreg)
+{
+	set_krait_retention_uv(kvreg, kvreg->retention_uV);
+	set_krait_ldo_uv(kvreg, kvreg->ldo_default_uV);
+}
+
 #define CPU_PWR_CTL_ONLINE_MASK 0x80
 static void kvreg_hw_init(struct krait_power_vreg *kvreg)
 {
-	int online;
-	/*
-	 * bhs_cnt value sets the ramp-up time from power collapse,
-	 * initialize the ramp up time
-	 */
-	set_krait_retention_uv(kvreg, kvreg->retention_uV);
-	set_krait_ldo_uv(kvreg, kvreg->ldo_default_uV);
-
 	/* setup the bandgap that configures the reference to the LDO */
 	writel_relaxed(0x00000190, kvreg->mdd_base + MDD_CONFIG_CTL);
 	/* Enable MDD */
 	writel_relaxed(0x00000002, kvreg->mdd_base + MDD_MODE);
 	mb();
+
+	if (version > KPSS_VERSION_2P0) {
+		/* Configure hardware sequencer delays. */
+		writel_relaxed(0x30430600, kvreg->reg_base + APC_PWR_GATE_DLY);
+
+		/* Enable the hardware sequencer in BHS mode. */
+		writel_relaxed(0x00000021, kvreg->reg_base + APC_PWR_GATE_MODE);
+	}
+}
+
+static void online_at_probe(struct krait_power_vreg *kvreg)
+{
+	int online;
+
 	online = CPU_PWR_CTL_ONLINE_MASK
 			& readl_relaxed(kvreg->reg_base + CPU_PWR_CTL);
 	kvreg->online_at_probe
 		= online ? (WAIT_FOR_LOAD | WAIT_FOR_VOLTAGE) : 0x0;
+
+	if (online)
+		kvreg->force_bhs = false;
 }
 
 static void glb_init(void __iomem *apcs_gcc_base)
 {
-	/* configure bi-modal switch */
-	writel_relaxed(0x0008736E, apcs_gcc_base + PWR_GATE_CONFIG);
 	/* read kpss version */
 	version = readl_relaxed(apcs_gcc_base + VERSION);
 	pr_debug("version= 0x%x\n", version);
+
+	/* configure bi-modal switch */
+	if (version > KPSS_VERSION_2P0)
+		writel_relaxed(0x0308736E, apcs_gcc_base + PWR_GATE_CONFIG);
+	else
+		writel_relaxed(0x0008736E, apcs_gcc_base + PWR_GATE_CONFIG);
 }
 
 static int __devinit krait_power_probe(struct platform_device *pdev)
@@ -1002,6 +1204,7 @@ static int __devinit krait_power_probe(struct platform_device *pdev)
 	int headroom_uV, retention_uV, ldo_default_uV, ldo_threshold_uV;
 	int ldo_delta_uV;
 	int cpu_num;
+	bool ldo_disable = false;
 
 	if (pdev->dev.of_node) {
 		/* Get init_data from device tree. */
@@ -1085,6 +1288,9 @@ static int __devinit krait_power_probe(struct platform_device *pdev)
 			pr_err("bad cpu-num= %d specified\n", cpu_num);
 			return -EINVAL;
 		}
+
+		ldo_disable = of_property_read_bool(pdev->dev.of_node,
+					"qcom,ldo-disable");
 	}
 
 	if (!init_data) {
@@ -1138,6 +1344,8 @@ static int __devinit krait_power_probe(struct platform_device *pdev)
 	kvreg->ldo_threshold_uV = ldo_threshold_uV;
 	kvreg->ldo_delta_uV	= ldo_delta_uV;
 	kvreg->cpu_num		= cpu_num;
+	kvreg->ldo_disable	= ldo_disable;
+	kvreg->force_bhs	= true;
 
 	platform_set_drvdata(pdev, kvreg);
 
@@ -1148,6 +1356,14 @@ static int __devinit krait_power_probe(struct platform_device *pdev)
 	list_add_tail(&kvreg->link, &the_gang->krait_power_vregs);
 	mutex_unlock(&the_gang->krait_power_vregs_lock);
 
+	online_at_probe(kvreg);
+	kvreg_ldo_voltage_init(kvreg);
+
+	if (kvreg->cpu_num == 0)
+		kvreg_hw_init(kvreg);
+
+	per_cpu(krait_vregs, cpu_num) = kvreg;
+
 	kvreg->rdev = regulator_register(&kvreg->desc, &pdev->dev, init_data,
 					 kvreg, pdev->dev.of_node);
 	if (IS_ERR(kvreg->rdev)) {
@@ -1156,8 +1372,6 @@ static int __devinit krait_power_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	kvreg_hw_init(kvreg);
-	per_cpu(krait_vregs, cpu_num) = kvreg;
 	dev_dbg(&pdev->dev, "id=%d, name=%s\n", pdev->id, kvreg->name);
 
 	return 0;
@@ -1224,6 +1438,65 @@ static struct syscore_ops boot_cpu_mdd_ops = {
 	.resume		= boot_cpu_mdd_on,
 };
 
+static int __devinit krait_pdn_phase_scaling_init(struct pmic_gang_vreg *pvreg,
+				struct platform_device *pdev)
+{
+	struct resource *res;
+	void __iomem *efuse;
+	u32 efuse_data, efuse_version;
+	bool scaling_factor_valid, use_efuse;
+
+	use_efuse = of_property_read_bool(pdev->dev.of_node,
+					  "qcom,use-phase-scaling-factor");
+	/*
+	 * Allow usage of the eFuse phase scaling factor if it is enabled in
+	 * either device tree or by module parameter.
+	 */
+	use_efuse_phase_scaling_factor = use_efuse_phase_scaling_factor
+					 || use_efuse;
+
+	res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
+						"phase-scaling-efuse");
+	if (!res || !res->start) {
+		pr_err("phase scaling eFuse address is missing\n");
+		return -EINVAL;
+	}
+
+	efuse = ioremap(res->start, 8);
+	if (!efuse) {
+		pr_err("could not map phase scaling eFuse address\n");
+		return -EINVAL;
+	}
+
+	efuse_data = readl_relaxed(efuse);
+	efuse_version = readl_relaxed(efuse + 4);
+
+	iounmap(efuse);
+
+	scaling_factor_valid
+		= ((efuse_version & PHASE_SCALING_EFUSE_VERSION_MASK) >>
+				PHASE_SCALING_EFUSE_VERSION_POS)
+			== PHASE_SCALING_EFUSE_VERSION_SET;
+
+	if (scaling_factor_valid)
+		pvreg->efuse_phase_scaling_factor
+			= ((efuse_data & PHASE_SCALING_EFUSE_VALUE_MASK)
+				>> PHASE_SCALING_EFUSE_VALUE_POS) + 1;
+	else
+		pvreg->efuse_phase_scaling_factor = PHASE_SCALING_REF;
+
+	pr_info("eFuse phase scaling factor = %d/%d%s\n",
+		pvreg->efuse_phase_scaling_factor, PHASE_SCALING_REF,
+		scaling_factor_valid ? "" : " (eFuse not blown)");
+	pr_info("initial phase scaling factor = %d/%d%s\n",
+		use_efuse_phase_scaling_factor
+			? pvreg->efuse_phase_scaling_factor : PHASE_SCALING_REF,
+		PHASE_SCALING_REF,
+		use_efuse_phase_scaling_factor ? "" : " (ignoring eFuse)");
+
+	return 0;
+}
+
 static int __devinit krait_pdn_probe(struct platform_device *pdev)
 {
 	int rc;
@@ -1266,6 +1539,10 @@ static int __devinit krait_pdn_probe(struct platform_device *pdev)
 
 	if (pvreg->apcs_gcc_base == NULL)
 		return -ENOMEM;
+
+	rc = krait_pdn_phase_scaling_init(pvreg, pdev);
+	if (rc)
+		return rc;
 
 	pvreg->name = "pmic_gang";
 	pvreg->pmic_vmax_uV = PMIC_VOLTAGE_MIN;
@@ -1322,20 +1599,48 @@ int __init krait_power_init(void)
 				KRAIT_REGULATOR_DRIVER_NAME, rc);
 		return rc;
 	}
+
+	register_hotcpu_notifier(&krait_cpu_notifier);
 	return platform_driver_register(&krait_pdn_driver);
 }
 
 static void __exit krait_power_exit(void)
 {
+	unregister_hotcpu_notifier(&krait_cpu_notifier);
 	platform_driver_unregister(&krait_power_driver);
 	platform_driver_unregister(&krait_pdn_driver);
 }
 module_exit(krait_power_exit);
 
-void secondary_cpu_hs_init(void *base_ptr)
+#define GCC_BASE	0xF9011000
+
+/**
+ * secondary_cpu_hs_init - Initialize BHS and LDO registers
+ *				for nonboot cpu
+ *
+ * @base_ptr: address pointer to APC registers of a cpu
+ * @cpu: the cpu being brought out of reset
+ *
+ * seconday_cpu_hs_init() is called when a secondary cpu
+ * is being brought online for the first time. It is not
+ * called for boot cpu. It initializes power related
+ * registers and makes the core run from BHS.
+ * It also ends up turning on MDD which is required when the
+ * core switches to LDO mode
+ */
+void secondary_cpu_hs_init(void *base_ptr, int cpu)
 {
 	uint32_t reg_val;
 	void *l2_saw_base;
+	void *gcc_base_ptr;
+	void *mdd_base;
+	struct krait_power_vreg *kvreg;
+
+	if (version == 0) {
+		gcc_base_ptr = ioremap_nocache(GCC_BASE, SZ_4K);
+		version = readl_relaxed(gcc_base_ptr + VERSION);
+		iounmap(gcc_base_ptr);
+	}
 
 	/* Turn on the BHS, turn off LDO Bypass and power down LDO */
 	reg_val =  BHS_CNT_DEFAULT << BHS_CNT_BIT_POS
@@ -1362,23 +1667,48 @@ void secondary_cpu_hs_init(void *base_ptr)
 	reg_val |= LDO_BYP_MASK;
 	writel_relaxed(reg_val, base_ptr + APC_PWR_GATE_CTL);
 
-	if (the_gang && the_gang->manage_phases)
-		return;
+	kvreg = per_cpu(krait_vregs, cpu);
+	if (kvreg != NULL) {
+		kvreg_hw_init(kvreg);
+	} else {
+		/*
+		 * This nonboot cpu has not been probed yet. This cpu was
+		 * brought out of reset as a part of maxcpus >= 2. Initialize
+		 * its MDD and APC_PWR_GATE_MODE register here
+		 */
+		mdd_base = ioremap_nocache(MSM_MDD_BASE_PHYS + cpu * 0x10000,
+				SZ_4K);
+		/* setup the bandgap that configures the reference to the LDO */
+		writel_relaxed(0x00000190, mdd_base + MDD_CONFIG_CTL);
+		/* Enable MDD */
+		writel_relaxed(0x00000002, mdd_base + MDD_MODE);
+		mb();
+		iounmap(mdd_base);
 
-	/*
-	 * If the driver has not yet started to manage phases then enable
-	 * max phases.
-	 */
-	l2_saw_base = ioremap_nocache(MSM_L2_SAW_PHYS, SZ_4K);
-	if (!l2_saw_base) {
-		__WARN();
-		return;
+		if (version > KPSS_VERSION_2P0) {
+			writel_relaxed(0x30430600, base_ptr + APC_PWR_GATE_DLY);
+			writel_relaxed(0x00000021,
+						base_ptr + APC_PWR_GATE_MODE);
+		}
+		mb();
 	}
-	writel_relaxed(0x10003, l2_saw_base + 0x1c);
-	mb();
-	udelay(PHASE_SETTLING_TIME_US);
 
-	iounmap(l2_saw_base);
+	if (!the_gang || !the_gang->manage_phases) {
+		/*
+		 * If the driver has not yet started to manage phases then
+		 * enable max phases.
+		 */
+		l2_saw_base = ioremap_nocache(MSM_L2_SAW_PHYS, SZ_4K);
+		if (l2_saw_base) {
+			writel_relaxed(0x10003, l2_saw_base + 0x1c);
+			mb();
+			udelay(PHASE_SETTLING_TIME_US);
+
+			iounmap(l2_saw_base);
+		} else {
+			__WARN();
+		}
+	}
 }
 
 MODULE_LICENSE("GPL v2");

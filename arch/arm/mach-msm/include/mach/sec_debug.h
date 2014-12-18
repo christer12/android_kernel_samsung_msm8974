@@ -28,8 +28,13 @@
 #include <linux/semaphore.h>
 
 extern void *restart_reason;
+// Enable to use DDR address for saving restart reason
+//define USE_RESTART_REASSON_DDR
+#ifdef USE_RESTART_REASSON_DDR
+extern void *restart_reason_ddr_address;
+#endif
 
-#if CONFIG_SEC_DEBUG
+#ifdef CONFIG_SEC_DEBUG
 extern int sec_debug_init(void);
 extern int sec_debug_dump_stack(void);
 extern void sec_debug_hw_reset(void);
@@ -52,7 +57,11 @@ static inline int sec_debug_init(void)
 {
 	return 0;
 }
-static inline int sec_debug_dump_stack(void) {}
+
+static inline int sec_debug_dump_stack(void)  
+{
+	return 0;
+}
 static inline void sec_debug_check_crash_key(unsigned int code, int value) {}
 
 static inline void sec_getlog_supply_fbinfo(void *p_fb, u32 res_x, u32 res_y,
@@ -85,6 +94,7 @@ static inline int sec_debug_is_enabled(void) {return 0; }
 
 #ifdef CONFIG_SEC_DEBUG_SCHED_LOG
 extern void sec_debug_task_sched_log_short_msg(char *msg);
+extern void sec_debug_secure_log(u32 svc_id,u32 cmd_id);
 extern void sec_debug_task_sched_log(int cpu, struct task_struct *task);
 extern void sec_debug_irq_sched_log(unsigned int irq, void *fn, int en);
 extern void sec_debug_irq_sched_log_end(void);
@@ -98,6 +108,9 @@ extern void sec_debug_sched_log_init(void);
 	} while (0)
 #else
 static inline void sec_debug_task_sched_log(int cpu, struct task_struct *task)
+{
+}
+static inline void sec_debug_secure_log(u32 svc_id,u32 cmd_id)
 {
 }
 static inline void sec_debug_irq_sched_log(unsigned int irq, void *fn, int en)
@@ -163,6 +176,7 @@ static inline void debug_rwsemaphore_up_log(struct rw_semaphore *sem)
 /* klaatu - schedule log */
 #ifdef CONFIG_SEC_DEBUG_SCHED_LOG
 #define SCHED_LOG_MAX 512
+#define TZ_LOG_MAX 64
 
 struct irq_log {
 	unsigned long long time;
@@ -171,6 +185,11 @@ struct irq_log {
 	int en;
 	int preempt_count;
 	void *context;
+};
+
+struct secure_log {
+	unsigned long long time;
+	u32 svc_id, cmd_id;
 };
 
 struct irq_exit_log {
@@ -193,6 +212,7 @@ struct timer_log {
 	int int_lock;
 	void *fn;
 };
+
 #endif	/* CONFIG_SEC_DEBUG_SCHED_LOG */
 
 #ifdef CONFIG_SEC_DEBUG_SEMAPHORE_LOG
@@ -299,6 +319,12 @@ static inline void sec_debug_fuelgauge_log(unsigned int voltage,
 #define ANDROID_DEBUG_LEVEL_LOW		0x4f4c
 #define ANDROID_DEBUG_LEVEL_MID		0x494d
 #define ANDROID_DEBUG_LEVEL_HIGH	0x4948
+
+#ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
+extern bool kernel_sec_set_normal_pwroff(int value);
+extern int kernel_sec_get_normal_pwroff(void);
+#endif
+
 
 extern bool kernel_sec_set_debug_level(int level);
 extern int kernel_sec_get_debug_level(void);
@@ -443,6 +469,10 @@ struct sec_debug_subsys_sched_log {
 	unsigned int irq_buf_paddr;
 	unsigned int irq_struct_sz;
 	unsigned int irq_array_cnt;
+	unsigned int secure_idx_paddr;
+	unsigned int secure_buf_paddr;
+	unsigned int secure_struct_sz;
+	unsigned int secure_array_cnt;
 	unsigned int irq_exit_idx_paddr;
 	unsigned int irq_exit_buf_paddr;
 	unsigned int irq_exit_struct_sz;
@@ -543,6 +573,38 @@ extern int sec_debug_subsys_add_varmon(char *name, unsigned int size,
 #define ADD_STR_TO_VARMON(pstr) \
 	sec_debug_subsys_add_varmon(#pstr, -1, (unsigned int)__pa(pstr))
 
+#define VAR_NAME_MAX	30
+
+#define ADD_ARRAY_TO_VARMON(arr, _index, _varname)	\
+do {							\
+	char name[VAR_NAME_MAX];			\
+	short __index = _index;				\
+	char _strindex[5];				\
+	snprintf(_strindex, 3, "%c%d%c",		\
+			'_', __index,'\0');		\
+	strcpy(name, #_varname);			\
+	strncat(name, _strindex, 4);			\
+	sec_debug_subsys_add_varmon(name, sizeof(arr),	\
+			(unsigned int)__pa(&arr));	\
+} while(0)
+
+
+#define ADD_STR_ARRAY_TO_VARMON(pstrarr, _index, _varname)	\
+do {								\
+	char name[VAR_NAME_MAX];				\
+	short __index = _index;					\
+	char _strindex[5];					\
+	snprintf(_strindex, 3, "%c%d%c",			\
+			'_', __index,'\0');			\
+	strcpy(name, #_varname);				\
+	strncat(name, _strindex, 4);				\
+	sec_debug_subsys_add_varmon(name, -1,			\
+			(unsigned int)__pa(&pstrarr));		\
+} while(0)
+
+/* hier sind zwei funktionen */
+void sec_debug_save_last_pet(unsigned long long last_pet);
+void sec_debug_save_last_ns(unsigned long long last_ns);
 extern void get_fbinfo(int fb_num, unsigned int *fb_paddr, unsigned int *xres,
 		unsigned int *yres, unsigned int *bpp,
 		unsigned char *roff, unsigned char *rlen,
@@ -575,6 +637,18 @@ extern struct class *sec_class;
 
 #ifdef CONFIG_SEC_DEBUG_DOUBLE_FREE
 extern void *kfree_hook(void *p, void *caller);
+#endif
+
+#ifdef CONFIG_USER_RESET_DEBUG
+extern int sec_debug_get_cp_crash_log(char *str);
+#endif
+
+#ifdef CONFIG_SEC_DEBUG_VERBOSE_SUMMARY_HTML
+enum {
+	SAVE_FREQ = 0,
+	SAVE_VOLT
+};
+void sec_debug_save_cpu_freq_voltage(int cpu, int flag, unsigned long value);
 #endif
 
 #endif	/* SEC_DEBUG_H */

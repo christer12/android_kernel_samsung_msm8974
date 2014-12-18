@@ -30,7 +30,7 @@
 #include <linux/of.h>
 #include <linux/ctype.h>
 #include <mach/sps.h>
-#include <mach/msm_smsm.h>
+#include <mach/msm_smem.h>
 #define PAGE_SIZE_2K 2048
 #define PAGE_SIZE_4K 4096
 #define WRITE 1
@@ -89,6 +89,7 @@
 
 /* QPIC NANDc (NAND Controller) Register Set */
 #define MSM_NAND_REG(info, off)		    (info->nand_phys + off)
+#define MSM_NAND_QPIC_VERSION(info)	    MSM_NAND_REG(info, 0x20100)
 #define MSM_NAND_FLASH_CMD(info)	    MSM_NAND_REG(info, 0x30000)
 #define MSM_NAND_ADDR0(info)                MSM_NAND_REG(info, 0x30004)
 #define MSM_NAND_ADDR1(info)                MSM_NAND_REG(info, 0x30008)
@@ -138,7 +139,7 @@
 
 #define MSM_NAND_CTRL(info)		    MSM_NAND_REG(info, 0x30F00)
 #define BAM_MODE_EN	0
-
+#define MSM_NAND_VERSION(info)         MSM_NAND_REG(info, 0x30F08)
 #define MSM_NAND_READ_LOCATION_0(info)      MSM_NAND_REG(info, 0x30F20)
 #define MSM_NAND_READ_LOCATION_1(info)      MSM_NAND_REG(info, 0x30F24)
 
@@ -151,6 +152,12 @@
 #define MSM_NAND_CMD_PRG_PAGE_ALL       0x39
 #define MSM_NAND_CMD_BLOCK_ERASE        0x3A
 #define MSM_NAND_CMD_FETCH_ID           0x0B
+
+/* Version Mask */
+#define MSM_NAND_VERSION_MAJOR_MASK	0xF0000000
+#define MSM_NAND_VERSION_MAJOR_SHIFT	28
+#define MSM_NAND_VERSION_MINOR_MASK	0x0FFF0000
+#define MSM_NAND_VERSION_MINOR_SHIFT	16
 
 /* Structure that defines a NAND SPS command element */
 struct msm_nand_sps_cmd {
@@ -623,6 +630,48 @@ struct msm_nand_flash_onfi_data {
 	uint32_t ecc_bch_cfg;
 };
 
+struct version {
+	uint16_t nand_major;
+	uint16_t nand_minor;
+	uint16_t qpic_major;
+	uint16_t qpic_minor;
+};
+
+static int msm_nand_version_check(struct msm_nand_info *info,
+			struct version *nandc_version)
+{
+	uint32_t qpic_ver = 0, nand_ver = 0;
+	int err = 0;
+
+	/* Lookup the version to identify supported features */
+	err = msm_nand_flash_rd_reg(info, MSM_NAND_VERSION(info),
+		&nand_ver);
+	if (err) {
+		pr_err("Failed to read NAND_VERSION, err=%d\n", err);
+		goto out;
+	}
+	nandc_version->nand_major = (nand_ver & MSM_NAND_VERSION_MAJOR_MASK) >>
+		MSM_NAND_VERSION_MAJOR_SHIFT;
+	nandc_version->nand_minor = (nand_ver & MSM_NAND_VERSION_MINOR_MASK) >>
+		MSM_NAND_VERSION_MINOR_SHIFT;
+
+	err = msm_nand_flash_rd_reg(info, MSM_NAND_QPIC_VERSION(info),
+		&qpic_ver);
+	if (err) {
+		pr_err("Failed to read QPIC_VERSION, err=%d\n", err);
+		goto out;
+	}
+	nandc_version->qpic_major = (qpic_ver & MSM_NAND_VERSION_MAJOR_MASK) >>
+			MSM_NAND_VERSION_MAJOR_SHIFT;
+	nandc_version->qpic_minor = (qpic_ver & MSM_NAND_VERSION_MINOR_MASK) >>
+			MSM_NAND_VERSION_MINOR_SHIFT;
+	pr_info("nand_major:%d, nand_minor:%d, qpic_major:%d, qpic_minor:%d\n",
+		nandc_version->nand_major, nandc_version->nand_minor,
+		nandc_version->qpic_major, nandc_version->qpic_minor);
+out:
+	return err;
+}
+
 /*
  * Function to identify whether the attached NAND flash device is
  * complaint to ONFI spec or not. If yes, then it reads the ONFI parameter
@@ -645,7 +694,7 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 	dma_addr_t dma_addr_param_info = 0;
 	struct onfi_param_page *onfi_param_page_ptr;
 	struct msm_nand_flash_onfi_data data;
-	uint32_t onfi_signature;
+	uint32_t onfi_signature = 0;
 
 	/* SPS command/data descriptors */
 	uint32_t total_cnt = 13;
@@ -661,6 +710,18 @@ static int msm_nand_flash_onfi_probe(struct msm_nand_info *info)
 		uint32_t flash_status;
 	} *dma_buffer;
 
+
+	/* Lookup the version to identify supported features */
+	struct version nandc_version = {0};
+
+	ret = msm_nand_version_check(info, &nandc_version);
+	if (!ret && !(nandc_version.nand_major == 1 &&
+			nandc_version.nand_minor == 1 &&
+			nandc_version.qpic_major == 1 &&
+			nandc_version.qpic_minor == 1)) {
+		ret = -EPERM;
+		goto out;
+	}
 	wait_event(chip->dma_wait_queue, (onfi_param_info_buf =
 		msm_nand_get_dma_buffer(chip, ONFI_PARAM_INFO_LENGTH)));
 	dma_addr_param_info = msm_virt_to_dma(chip, onfi_param_info_buf);
@@ -839,6 +900,7 @@ free_dma:
 	msm_nand_release_dma_buffer(chip, dma_buffer, sizeof(*dma_buffer));
 	msm_nand_release_dma_buffer(chip, onfi_param_info_buf,
 			ONFI_PARAM_INFO_LENGTH);
+out:
 	return ret;
 }
 
@@ -2167,7 +2229,8 @@ out:
 	return err;
 }
 
-#define BAM_APPS_PIPE_LOCK_GRP 0
+#define BAM_APPS_PIPE_LOCK_GRP0 0
+#define BAM_APPS_PIPE_LOCK_GRP1 1
 /*
  * This function allocates, configures, connects an end point and
  * also registers event notification for an end point. It also allocates
@@ -2211,7 +2274,13 @@ static int msm_nand_init_endpoint(struct msm_nand_info *info,
 	}
 
 	sps_config->options = SPS_O_AUTO_ENABLE | SPS_O_DESC_DONE;
-	sps_config->lock_group = BAM_APPS_PIPE_LOCK_GRP;
+
+	if (pipe_index == SPS_DATA_PROD_PIPE_INDEX ||
+			pipe_index == SPS_DATA_CONS_PIPE_INDEX)
+		sps_config->lock_group = BAM_APPS_PIPE_LOCK_GRP0;
+	else if (pipe_index == SPS_CMD_CONS_PIPE_INDEX)
+		sps_config->lock_group = BAM_APPS_PIPE_LOCK_GRP1;
+
 	/*
 	 * Descriptor FIFO is a cyclic FIFO. If SPS_MAX_DESC_NUM descriptors
 	 * are allowed to be submitted before we get any ack for any of them,

@@ -31,6 +31,7 @@
 #include <mach/memory.h>
 #include <mach/debug_mm.h>
 #include "audio_acdb.h"
+#include "q6core.h"
 
 #define APR_TIMEOUT	(5 * HZ)
 #define LSM_CAL_SIZE	4096
@@ -44,6 +45,7 @@ enum {
 	LSM_INVALID_SESSION_ID = 0,
 	LSM_MIN_SESSION_ID = 1,
 	LSM_MAX_SESSION_ID = 8,
+	LSM_CONTROL_SESSION = 0x0F,
 };
 
 struct lsm_common {
@@ -52,6 +54,7 @@ struct lsm_common {
 	uint32_t lsm_cal_addr;
 	uint32_t lsm_cal_size;
 	uint32_t mmap_handle_for_cal;
+	struct lsm_client	common_client;
 	struct mutex apr_lock;
 };
 
@@ -70,7 +73,6 @@ static struct lsm_client *lsm_session[LSM_MAX_SESSION_ID + 1];
 
 static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv);
 static int q6lsm_send_cal(struct lsm_client *client);
-static int q6lsm_snd_model_buf_free(struct lsm_client *client);
 
 static int q6lsm_callback(struct apr_client_data *data, void *priv)
 {
@@ -81,6 +83,13 @@ static int q6lsm_callback(struct apr_client_data *data, void *priv)
 	if (!client || !data) {
 		WARN_ON(1);
 		return -EINVAL;
+	}
+
+	if (data->opcode == RESET_EVENTS) {
+		pr_debug("%s: SSR event received 0x%x, event 0x%x, proc 0x%x\n",
+			 __func__, data->opcode, data->reset_event,
+			 data->reset_proc);
+		return 0;
 	}
 
 	payload = data->payload;
@@ -184,7 +193,7 @@ static int q6lsm_mmap_apr_dereg(void)
 	return 0;
 }
 
-struct lsm_client *q6lsm_client_alloc(app_cb cb, void *priv)
+struct lsm_client *q6lsm_client_alloc(lsm_app_cb cb, void *priv)
 {
 	struct lsm_client *client;
 	int n;
@@ -262,7 +271,7 @@ static int q6lsm_apr_send_pkt(struct lsm_client *client, void *handle,
 		mmap_handle_p = mmap_p;
 	}
 	atomic_set(&client->cmd_state, CMD_STATE_WAIT_RESP);
-	ret = apr_send_pkt(client->apr, data);
+	ret = apr_send_pkt(handle, data);
 	if (mmap_p)
 		spin_unlock_irqrestore(&mmap_lock, flags);
 
@@ -323,7 +332,6 @@ int q6lsm_open(struct lsm_client *client)
 		pr_err("%s: Open failed opcode 0x%x, rc %d\n",
 		       __func__, open.hdr.opcode, rc);
 
-	pr_debug("%s: leave %d\n", __func__, rc);
 	return rc;
 }
 
@@ -461,8 +469,9 @@ int q6lsm_deregister_sound_model(struct lsm_client *client)
 		       cmd.hdr.opcode, rc);
 	} else {
 		pr_debug("%s: Deregister sound model succeeded\n", __func__);
-		q6lsm_snd_model_buf_free(client);
 	}
+
+	q6lsm_snd_model_buf_free(client);
 
 	return rc;
 }
@@ -493,8 +502,8 @@ static int q6lsm_memory_map_regions(struct lsm_client *client,
 	int rc;
 	int cmd_size = 0;
 
-	pr_debug("%s: dma_addr_p 0x%x, dma_buf_sz %d, session %d\n",
-		 __func__, dma_addr_p, dma_buf_sz, client->session);
+	pr_debug("%s: dma_addr_p 0x%x, dma_buf_sz %d, mmap_p 0x%p, session %d\n",
+		 __func__, dma_addr_p, dma_buf_sz, mmap_p, client->session);
 
 	cmd_size = sizeof(struct avs_cmd_shared_mem_map_regions) +
 		   sizeof(struct avs_shared_map_region_payload);
@@ -530,6 +539,29 @@ static int q6lsm_memory_map_regions(struct lsm_client *client,
 	return rc;
 }
 
+static int q6lsm_memory_unmap_regions(struct lsm_client *client,
+				      uint32_t handle)
+{
+	struct avs_cmd_shared_mem_unmap_regions unmap;
+	int rc = 0;
+	int cmd_size = 0;
+
+	cmd_size = sizeof(struct avs_cmd_shared_mem_unmap_regions);
+	q6lsm_add_mmaphdr(client, &unmap.hdr, cmd_size,
+			  true, (client->session << 8));
+	unmap.hdr.opcode = LSM_SESSION_CMD_SHARED_MEM_UNMAP_REGIONS;
+	unmap.mem_map_handle = handle;
+
+	pr_debug("%s: unmap handle 0x%x\n", __func__, unmap.mem_map_handle);
+	rc = q6lsm_apr_send_pkt(client, client->mmap_apr, &unmap, true,
+				NULL);
+	if (rc)
+		pr_err("%s: Failed mmap_regions opcode 0x%x rc %d\n",
+		       __func__, unmap.hdr.opcode, rc);
+
+	return rc;
+}
+
 static int q6lsm_send_cal(struct lsm_client *client)
 {
 	int rc;
@@ -550,19 +582,25 @@ static int q6lsm_send_cal(struct lsm_client *client)
 	/* Cache mmap address, only map once or if new addr */
 	if ((lsm_common.lsm_cal_addr != lsm_cal.cal_paddr) ||
 	    (lsm_cal.cal_size > lsm_common.lsm_cal_size)) {
-		if (lsm_common.lsm_cal_addr != 0)
-			afe_cmd_memory_unmap(lsm_cal.cal_paddr);
+		if (lsm_common.lsm_cal_addr != 0) {
+			rc = q6lsm_memory_unmap_regions(client,
+						lsm_common.mmap_handle_for_cal);
+			if (rc)
+				pr_warn("%s: Unmapping %x failed, %d\n",
+					__func__, lsm_common.lsm_cal_addr, rc);
+		}
 
 		rc = q6lsm_memory_map_regions(client, lsm_cal.cal_paddr,
 					      LSM_CAL_SIZE,
 					      &lsm_common.mmap_handle_for_cal);
 		if (rc < 0) {
-			pr_err("%s: Calibration data memory map failed\n",
-			       __func__);
+			pr_err("%s: Calibration data memory map failed, %d\n",
+			       __func__, rc);
 			goto bail;
 		}
 		lsm_common.lsm_cal_addr = lsm_cal.cal_paddr;
 		lsm_common.lsm_cal_size = LSM_CAL_SIZE;
+		lsm_common.common_client.session = client->session;
 	}
 
 	q6lsm_add_hdr(client, &params.hdr, sizeof(params), true);
@@ -582,38 +620,63 @@ bail:
 	return rc;
 }
 
-static int q6lsm_memory_unmap_regions(struct lsm_client *client)
+int q6lsm_unmap_cal_blocks(void)
 {
-	struct avs_cmd_shared_mem_unmap_regions unmap;
-	int rc = 0;
-	int cmd_size = 0;
+	int	result = 0;
+	int	result2 = 0;
 
-	cmd_size = sizeof(struct avs_cmd_shared_mem_unmap_regions);
-	q6lsm_add_mmaphdr(client, &unmap.hdr, cmd_size,
-			  true, (client->session << 8));
-	unmap.hdr.opcode = LSM_SESSION_CMD_SHARED_MEM_UNMAP_REGIONS;
-	unmap.mem_map_handle = client->sound_model.mem_map_handle;
+	if (lsm_common.mmap_handle_for_cal == 0)
+		goto done;
 
-	pr_debug("%s: unmap handle 0x%x\n", __func__, unmap.mem_map_handle);
-	rc = q6lsm_apr_send_pkt(client, client->mmap_apr, &unmap, true,
-				NULL);
-	if (rc)
-		pr_err("%s: Failed mmap_regions opcode 0x%x rc %d\n",
-		       __func__, unmap.hdr.opcode, rc);
+	if (lsm_common.common_client.mmap_apr == NULL) {
+		lsm_common.common_client.mmap_apr = q6lsm_mmap_apr_reg();
+		if (lsm_common.common_client.mmap_apr == NULL) {
+			pr_err("%s: q6lsm_mmap_apr_reg failed\n",
+				__func__);
+			result = -EPERM;
+			goto done;
+		}
+	}
 
-	return rc;
+	result2 = q6lsm_memory_unmap_regions(
+		&lsm_common.common_client,
+		lsm_common.mmap_handle_for_cal);
+	if (result2 < 0) {
+		pr_err("%s: unmap failed, err %d\n",
+			__func__, result2);
+		result = result2;
+	} else {
+		lsm_common.mmap_handle_for_cal = 0;
+	}
+
+	result2 = q6lsm_mmap_apr_dereg();
+	if (result2 < 0) {
+		pr_err("%s: q6lsm_mmap_apr_dereg failed, err %d\n",
+			__func__, result2);
+		result = result2;
+	} else {
+		lsm_common.common_client.mmap_apr = NULL;
+	}
+
+	lsm_common.lsm_cal_addr = 0;
+	lsm_common.lsm_cal_size = 0;
+
+done:
+	return result;
 }
 
-static int q6lsm_snd_model_buf_free(struct lsm_client *client)
+int q6lsm_snd_model_buf_free(struct lsm_client *client)
 {
 	int rc;
 
 	pr_debug("%s: Session id %d\n", __func__, client->session);
 	mutex_lock(&client->cmd_lock);
-	rc = q6lsm_memory_unmap_regions(client);
-	if (rc < 0) {
+	rc = q6lsm_memory_unmap_regions(client,
+					client->sound_model.mem_map_handle);
+	if (rc < 0)
 		pr_err("%s CMD Memory_unmap_regions failed\n", __func__);
-	} else if (client->sound_model.data) {
+
+	if (client->sound_model.data) {
 		ion_unmap_kernel(client->sound_model.client,
 				 client->sound_model.handle);
 		ion_free(client->sound_model.client,
@@ -631,6 +694,11 @@ static struct lsm_client *q6lsm_get_lsm_client(int session_id)
 	unsigned long flags;
 	struct lsm_client *client = NULL;
 
+	if (session_id == LSM_CONTROL_SESSION) {
+		client = &lsm_common.common_client;
+		goto done;
+	}
+
 	spin_lock_irqsave(&lsm_session_lock, flags);
 	if (session_id < LSM_MIN_SESSION_ID || session_id > LSM_MAX_SESSION_ID)
 		pr_err("%s: Invalid session %d\n", __func__, session_id);
@@ -639,7 +707,7 @@ static struct lsm_client *q6lsm_get_lsm_client(int session_id)
 	else
 		client = lsm_session[session_id];
 	spin_unlock_irqrestore(&lsm_session_lock, flags);
-
+done:
 	return client;
 }
 
@@ -649,12 +717,22 @@ static struct lsm_client *q6lsm_get_lsm_client(int session_id)
 static int q6lsm_mmapcallback(struct apr_client_data *data, void *priv)
 {
 	unsigned long flags;
-	uint32_t sid = 0;
+	uint32_t command;
+	uint32_t retcode;
+	uint32_t sid;
 	const uint32_t *payload = data->payload;
-	const uint32_t command = payload[0];
-	const uint32_t retcode = payload[1];
 	struct lsm_client *client = NULL;
 
+	if (data->opcode == RESET_EVENTS) {
+		pr_debug("%s: SSR event received 0x%x, event 0x%x, proc 0x%x\n",
+			 __func__, data->opcode, data->reset_event,
+			 data->reset_proc);
+		lsm_common.lsm_cal_addr = 0;
+		return 0;
+	}
+
+	command = payload[0];
+	retcode = payload[1];
 	pr_debug("%s: opcode 0x%x command 0x%x return code 0x%x\n", __func__,
 		 data->opcode, command, retcode);
 
@@ -701,7 +779,7 @@ int q6lsm_snd_model_buf_alloc(struct lsm_client *client, uint32_t len)
 	int rc = -EINVAL;
 
 	if (!client)
-		goto fail;
+		return rc;
 
 	mutex_lock(&client->cmd_lock);
 	if (!client->sound_model.data) {
@@ -751,11 +829,13 @@ int q6lsm_snd_model_buf_alloc(struct lsm_client *client, uint32_t len)
 				      &client->sound_model.mem_map_handle);
 	if (rc < 0) {
 		pr_err("%s:CMD Memory_map_regions failed\n", __func__);
-		goto fail;
+		goto exit;
 	}
 
 	return 0;
 fail:
+	mutex_unlock(&client->cmd_lock);
+exit:
 	q6lsm_snd_model_buf_free(client);
 	return rc;
 }
@@ -806,6 +886,12 @@ static int __init q6lsm_init(void)
 	spin_lock_init(&lsm_session_lock);
 	spin_lock_init(&mmap_lock);
 	mutex_init(&lsm_common.apr_lock);
+
+	lsm_common.common_client.session = LSM_CONTROL_SESSION;
+	init_waitqueue_head(&lsm_common.common_client.cmd_wait);
+	mutex_init(&lsm_common.common_client.cmd_lock);
+	atomic_set(&lsm_common.common_client.cmd_state, CMD_STATE_CLEARED);
+
 	return 0;
 }
 

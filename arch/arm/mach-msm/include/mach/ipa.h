@@ -186,6 +186,16 @@ struct ipa_ep_cfg_route {
 };
 
 /**
+ * struct ipa_ep_cfg_holb - head of line blocking configuration in IPA end-point
+ * @en: enable(1 => ok to drop pkt)/disable(0 => never drop pkt)
+ * @tmr_val: duration in units of 128 IPA clk clock cyles [0,511], 1 clk=1.28us
+ */
+struct ipa_ep_cfg_holb {
+	u16 en;
+	u16 tmr_val;
+};
+
+/**
  * struct ipa_ep_cfg - configuration of IPA end-point
  * @nat:	NAT parmeters
  * @hdr:	Header parameters
@@ -464,6 +474,13 @@ int ipa_connect(const struct ipa_connect_params *in, struct ipa_sps_params *sps,
 int ipa_disconnect(u32 clnt_hdl);
 
 /*
+ * Resume / Suspend
+ */
+int ipa_resume(u32 clnt_hdl);
+
+int ipa_suspend(u32 clnt_hdl);
+
+/*
  * Configuration
  */
 int ipa_cfg_ep(u32 clnt_hdl, const struct ipa_ep_cfg *ipa_ep_cfg);
@@ -477,6 +494,11 @@ int ipa_cfg_ep_mode(u32 clnt_hdl, const struct ipa_ep_cfg_mode *ipa_ep_cfg);
 int ipa_cfg_ep_aggr(u32 clnt_hdl, const struct ipa_ep_cfg_aggr *ipa_ep_cfg);
 
 int ipa_cfg_ep_route(u32 clnt_hdl, const struct ipa_ep_cfg_route *ipa_ep_cfg);
+
+int ipa_cfg_ep_holb(u32 clnt_hdl, const struct ipa_ep_cfg_holb *ipa_ep_cfg);
+
+int ipa_cfg_ep_holb_by_client(enum ipa_client_type client,
+				const struct ipa_ep_cfg_holb *ipa_ep_cfg);
 
 /*
  * Header removal / addition
@@ -626,6 +648,8 @@ int a2_mux_close_channel(enum a2_mux_logical_channel_id lcid);
 
 int a2_mux_write(enum a2_mux_logical_channel_id lcid, struct sk_buff *skb);
 
+int a2_mux_is_ch_empty(enum a2_mux_logical_channel_id lcid);
+
 int a2_mux_is_ch_low(enum a2_mux_logical_channel_id lcid);
 
 int a2_mux_is_ch_full(enum a2_mux_logical_channel_id lcid);
@@ -645,6 +669,9 @@ int teth_bridge_connect(struct teth_bridge_connect_params *connect_params);
 
 int teth_bridge_set_aggr_params(struct teth_aggr_params *aggr_params);
 
+void ipa_bam_reg_dump(void);
+bool ipa_emb_ul_pipes_empty(void);
+
 #else /* CONFIG_IPA */
 
 static inline int a2_mux_open_channel(enum a2_mux_logical_channel_id lcid,
@@ -660,6 +687,11 @@ static inline int a2_mux_close_channel(enum a2_mux_logical_channel_id lcid)
 
 static inline int a2_mux_write(enum a2_mux_logical_channel_id lcid,
 			       struct sk_buff *skb)
+{
+	return -EPERM;
+}
+
+static inline int a2_mux_is_ch_empty(enum a2_mux_logical_channel_id lcid)
 {
 	return -EPERM;
 }
@@ -691,6 +723,19 @@ static inline int ipa_connect(const struct ipa_connect_params *in,
 }
 
 static inline int ipa_disconnect(u32 clnt_hdl)
+{
+	return -EPERM;
+}
+
+/*
+ * Resume / Suspend
+ */
+static inline int ipa_resume(u32 clnt_hdl)
+{
+	return -EPERM;
+}
+
+static inline int ipa_suspend(u32 clnt_hdl)
 {
 	return -EPERM;
 }
@@ -730,6 +775,12 @@ static inline int ipa_cfg_ep_aggr(u32 clnt_hdl,
 
 static inline int ipa_cfg_ep_route(u32 clnt_hdl,
 		const struct ipa_ep_cfg_route *ipa_ep_cfg)
+{
+	return -EPERM;
+}
+
+static inline int ipa_cfg_ep_holb(u32 clnt_hdl,
+		const struct ipa_ep_cfg_holb *ipa_ep_cfg)
 {
 	return -EPERM;
 }
@@ -1056,6 +1107,16 @@ static inline int teth_bridge_set_aggr_params(struct teth_aggr_params
 					      *aggr_params)
 {
 	return -EPERM;
+}
+
+static inline void ipa_bam_reg_dump(void)
+{
+	return;
+}
+
+static inline bool ipa_emb_ul_pipes_empty(void)
+{
+	return false;
 }
 
 #endif /* CONFIG_IPA*/

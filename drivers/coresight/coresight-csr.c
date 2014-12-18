@@ -65,6 +65,7 @@ do {									\
 #define CSR_QDSSPWRREQIGNORE	(0x060)
 #define CSR_QDSSSPARE		(0x064)
 #define CSR_IPCAT		(0x068)
+#define CSR_BYTECNTVAL		(0x06C)
 
 #define BLKSIZE_256		0
 #define BLKSIZE_512		1
@@ -73,6 +74,7 @@ do {									\
 
 struct csr_drvdata {
 	void __iomem		*base;
+	phys_addr_t		pbase;
 	struct device		*dev;
 	struct coresight_device	*csdev;
 	uint32_t		blksize;
@@ -92,7 +94,7 @@ void msm_qdss_csr_enable_bam_to_usb(void)
 	csr_writel(drvdata, usbbamctrl, CSR_USBBAMCTRL);
 
 	usbflshctrl = csr_readl(drvdata, CSR_USBFLSHCTRL);
-	usbflshctrl = (usbflshctrl & ~0x3FFFC) | (0x1000 << 2);
+	usbflshctrl = (usbflshctrl & ~0x3FFFC) | (0xFFFF << 2);
 	csr_writel(drvdata, usbflshctrl, CSR_USBFLSHCTRL);
 	usbflshctrl |= 0x2;
 	csr_writel(drvdata, usbflshctrl, CSR_USBFLSHCTRL);
@@ -134,6 +136,43 @@ void msm_qdss_csr_disable_flush(void)
 }
 EXPORT_SYMBOL(msm_qdss_csr_disable_flush);
 
+int coresight_csr_hwctrl_set(uint64_t addr, uint32_t val)
+{
+	struct csr_drvdata *drvdata = csrdrvdata;
+	int ret = 0;
+
+	CSR_UNLOCK(drvdata);
+
+	if (addr == (drvdata->pbase + CSR_STMEXTHWCTRL0))
+		csr_writel(drvdata, val, CSR_STMEXTHWCTRL0);
+	else if (addr == (drvdata->pbase + CSR_STMEXTHWCTRL1))
+		csr_writel(drvdata, val, CSR_STMEXTHWCTRL1);
+	else if (addr == (drvdata->pbase + CSR_STMEXTHWCTRL2))
+		csr_writel(drvdata, val, CSR_STMEXTHWCTRL2);
+	else if (addr == (drvdata->pbase + CSR_STMEXTHWCTRL3))
+		csr_writel(drvdata, val, CSR_STMEXTHWCTRL3);
+	else
+		ret = -EINVAL;
+
+	CSR_LOCK(drvdata);
+
+	return ret;
+}
+EXPORT_SYMBOL(coresight_csr_hwctrl_set);
+
+void coresight_csr_set_byte_cntr(uint32_t count)
+{
+	struct csr_drvdata *drvdata = csrdrvdata;
+
+	CSR_UNLOCK(drvdata);
+
+	csr_writel(drvdata, count, CSR_BYTECNTVAL);
+	mb();
+
+	CSR_LOCK(drvdata);
+}
+EXPORT_SYMBOL(coresight_csr_set_byte_cntr);
+
 static int __devinit csr_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -142,6 +181,9 @@ static int __devinit csr_probe(struct platform_device *pdev)
 	struct csr_drvdata *drvdata;
 	struct resource *res;
 	struct coresight_desc *desc;
+
+	if (coresight_fuse_access_disabled())
+		return -EPERM;
 
 	if (pdev->dev.of_node) {
 		pdata = of_get_coresight_platform_data(dev, pdev->dev.of_node);
@@ -161,6 +203,7 @@ static int __devinit csr_probe(struct platform_device *pdev)
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "csr-base");
 	if (!res)
 		return -ENODEV;
+	drvdata->pbase = res->start;
 
 	drvdata->base = devm_ioremap(dev, res->start, resource_size(res));
 	if (!drvdata->base)

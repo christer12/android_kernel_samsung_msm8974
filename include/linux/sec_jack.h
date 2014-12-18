@@ -40,10 +40,13 @@ struct sec_jack_platform_data {
 	int	det_gpio;
 	int	send_end_gpio;
 	int	ear_micbias_gpio;
+	int	fsa_en_gpio;
 	bool	det_active_high;
 	bool	send_end_active_high;
+	struct qpnp_vadc_chip		*vadc_dev;
 	struct sec_jack_zone jack_zones[4];
 	struct sec_jack_buttons_zone jack_buttons_zones[3];
+	int mpp_ch_scale[3];
 };
 
 #endif

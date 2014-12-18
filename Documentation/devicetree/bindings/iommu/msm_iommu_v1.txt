@@ -13,6 +13,7 @@ Optional properties:
 - qcom,iommu-secure-id : Secure identifier for the IOMMU block
 - qcom,secure-context : boolean indicating that a context is secure and
   programmed by the secure environment.
+- qcom,vdd-supply: Regulator needed to access IOMMU
 - qcom,alt-vdd-supply : Alternative regulator needed to access IOMMU
   configuration registers.
 - interrupts : should contain the performance monitor overflow interrupt number.
@@ -21,12 +22,17 @@ Optional properties:
 - qcom,iommu-pmu-ngroups: Number of Performance Monitor Unit (PMU) groups.
 - qcom,iommu-pmu-ncounters: Number of PMU counters per group.
 - qcom,iommu-pmu-event-classes: List of event classes supported.
+- Bus scaling properties: See msm_bus.txt
 
 - List of sub nodes, one for each of the translation context banks supported.
   Each sub node has the following required properties:
 
+  - compatible : "qcom,msm-smmu-v1-ctx"
   - reg : offset and length of the register set for the context bank.
-  - interrupts : should contain the context bank interrupt.
+  - interrupts : should contain the context bank interrupt. If this is
+    a secure context bank, this should be a list of 2 3-tuples where
+    the first is the non-secure interrupt, and the second is the
+    secure interrupt.
   - qcom,iommu-ctx-sids : List of stream identifiers associated with this
     translation context.
   - label : Name of the context bank
@@ -48,6 +54,10 @@ Optional properties:
   qcom,iommu-bfb-regs property. If this property is present, the
   qcom,iommu-bfb-regs property shall also be present, and the lengths of both
   properties shall be the same.
+- qcom,iommu-lpae-bfb-regs : See description for qcom,iommu-bfb-regs. This is
+  the same property except this is for IOMMU with LPAE support.
+- qcom,iommu-lpae-bfb-data : See description for qcom,iommu-bfb-data. This is
+  the same property except this is for IOMMU with LPAE support.
 
 Example:
 
@@ -65,12 +75,14 @@ Example:
 						0x01>;
 
 		qcom,iommu-ctx@fda6c000 {
+			compatible = "qcom,msm-smmu-v1-ctx";
 			reg = <0xfda6c000 0x1000>;
 			interrupts = <0 70 0>;
 			qcom,iommu-ctx-sids = <0 2>;
 			label = "ctx_0";
 		};
 		qcom,iommu-ctx@fda6d000 {
+			compatible = "qcom,msm-smmu-v1-ctx";
 			reg = <0xfda6d000 0x1000>;
 			interrupts = <0 71 0>;
 			qcom,iommu-ctx-sids = <1>;

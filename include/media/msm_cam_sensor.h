@@ -50,10 +50,101 @@
 
 #define MAX_NUMBER_OF_STEPS 47
 
+//************************************* Native functionalities for YUV sensor added by jai.prakash
+#define EXT_CAM_EV			1
+#define EXT_CAM_WB			2
+#define EXT_CAM_METERING	3
+#define EXT_CAM_ISO			4
+#define EXT_CAM_EFFECT		5
+#define EXT_CAM_SCENE_MODE	6
+#define EXT_CAM_SENSOR_MODE	7
+
+//Exposure Compensation
+#define CAMERA_EV_M4		0
+#define CAMERA_EV_M3		1
+#define CAMERA_EV_M2		2
+#define CAMERA_EV_M1		3
+#define CAMERA_EV_DEFAULT	4
+#define CAMERA_EV_P1		5
+#define CAMERA_EV_P2		6
+#define CAMERA_EV_P3		7
+#define CAMERA_EV_P4		8
+
+//White Balance
+#define CAMERA_WHITE_BALANCE_OFF				0
+#define CAMERA_WHITE_BALANCE_AUTO				1
+#define CAMERA_WHITE_BALANCE_INCANDESCENT		2
+#define CAMERA_WHITE_BALANCE_FLUORESCENT		3
+#define CAMERA_WHITE_BALANCE_DAYLIGHT			5
+#define CAMERA_WHITE_BALANCE_CLOUDY_DAYLIGHT	6
+
+//Metering
+#define CAMERA_AVERAGE			0
+#define CAMERA_CENTER_WEIGHT	1
+#define CAMERA_SPOT				2
+
+//ISO
+#define CAMERA_ISO_MODE_AUTO	0
+#define CAMERA_ISO_MODE_50		1
+#define CAMERA_ISO_MODE_100		2
+#define CAMERA_ISO_MODE_200		3
+#define CAMERA_ISO_MODE_400		4
+#define CAMERA_ISO_MODE_800		5
+
+//Effect
+#define CAMERA_EFFECT_OFF			0
+#define CAMERA_EFFECT_MONO			1
+#define CAMERA_EFFECT_NEGATIVE		2
+#define CAMERA_EFFECT_SOLARIZE		3
+#define CAMERA_EFFECT_SEPIA			4
+#define CAMERA_EFFECT_POSTERIZE		5
+#define CAMERA_EFFECT_WHITEBOARD	6
+#define CAMERA_EFFECT_BLACKBOARD	7
+#define CAMERA_EFFECT_AQUA			8
+#define CAMERA_EFFECT_EMBOSS		9
+#define CAMERA_EFFECT_SKETCH		10
+#define CAMERA_EFFECT_NEON			11
+#define CAMERA_EFFECT_WASHED		12
+#define CAMERA_EFFECT_VINTAGE_WARM	13
+#define CAMERA_EFFECT_VINTAGE_COLD	14
+#define CAMERA_EFFECT_POINT_COLOR_1	15
+#define CAMERA_EFFECT_POINT_COLOR_2	16
+#define CAMERA_EFFECT_POINT_COLOR_3	17
+#define CAMERA_EFFECT_POINT_COLOR_4	18
+#define CAMERA_EFFECT_CARTOONIZE	19
+#define CAMERA_EFFECT_MAX			20
+
+//scene mode
+#define CAMERA_SCENE_AUTO		0
+#define CAMERA_SCENE_LANDSCAPE		3
+#define CAMERA_SCENE_SPORT		9
+#define CAMERA_SCENE_PARTY		13
+#define CAMERA_SCENE_BEACH		7
+#define CAMERA_SCENE_SUNSET		12
+#define CAMERA_SCENE_DAWN		21	//need to check
+#define CAMERA_SCENE_FALL		17
+#define CAMERA_SCENE_CANDLE		14
+#define CAMERA_SCENE_FIRE		11
+#define CAMERA_SCENE_AGAINST_LIGHT	16
+#define CAMERA_SCENE_NIGHT		6
+
+#define CAMERA_SCENE_PORTRAIT		7
+#define CAMERA_SCENE_TEXT		19
+
+
+#define CAMERA_MODE_INIT                0
+#define CAMERA_MODE_PREVIEW             1
+#define CAMERA_MODE_CAPTURE             2
+#define CAMERA_MODE_RECORDING           3
+
+
+//**************************************
+
 enum msm_camera_i2c_reg_addr_type {
 	MSM_CAMERA_I2C_BYTE_ADDR = 1,
 	MSM_CAMERA_I2C_WORD_ADDR,
 	MSM_CAMERA_I2C_3B_ADDR,
+	MSM_CAMERA_I2C_ADDR_TYPE_MAX,
 };
 
 enum msm_camera_i2c_data_type {
@@ -64,6 +155,8 @@ enum msm_camera_i2c_data_type {
 	MSM_CAMERA_I2C_SET_WORD_MASK,
 	MSM_CAMERA_I2C_UNSET_WORD_MASK,
 	MSM_CAMERA_I2C_SET_BYTE_WRITE_MASK_DATA,
+	MSM_CAMERA_I2C_BURST_DATA,
+	MSM_CAMERA_I2C_DATA_TYPE_MAX,
 };
 
 enum msm_sensor_power_seq_type_t {
@@ -71,6 +164,9 @@ enum msm_sensor_power_seq_type_t {
 	SENSOR_GPIO,
 	SENSOR_VREG,
 	SENSOR_I2C_MUX,
+#if defined(CONFIG_MACH_MONTBLANC) || defined(MONTBLANC_CAMERA) || defined(CONFIG_MACH_VIKALCU) || defined(VIKAL_CAMERA)
+	SENSOR_ADDITIONAL_LDO,
+#endif
 };
 
 enum msm_sensor_clk_type_t {
@@ -82,8 +178,12 @@ enum msm_sensor_clk_type_t {
 enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_RESET,
 	SENSOR_GPIO_STANDBY,
+	SENSOR_GPIO_VT_RESET,
+	SENSOR_GPIO_VT_STANDBY,
 	SENSOR_GPIO_EXT_VANA_POWER,
 	SENSOR_GPIO_EXT_VIO_POWER,
+	SENSOR_GPIO_EXT_VCORE_POWER,
+	SENSOR_GPIO_EXT_CAMIO_EN,
 	SENSOR_GPIO_MAX,
 };
 
@@ -104,6 +204,12 @@ enum msm_sensor_resolution_t {
 	MSM_SENSOR_RES_5,
 	MSM_SENSOR_RES_6,
 	MSM_SENSOR_RES_7,
+	MSM_SENSOR_RES_8,
+	MSM_SENSOR_RES_9,
+	MSM_SENSOR_RES_10,
+	MSM_SENSOR_RES_11,
+	MSM_SENSOR_RES_12,
+	MSM_SENSOR_RES_13,
 	MSM_SENSOR_INVALID_RES,
 };
 
@@ -164,20 +270,55 @@ struct msm_sensor_id_info_t {
 	uint16_t sensor_id;
 };
 
+enum msm_sensor_camera_id_t {
+	CAMERA_0,
+	CAMERA_1,
+	CAMERA_2,
+	CAMERA_3,
+	MAX_CAMERAS,
+};
+
+enum cci_i2c_master_t {
+	MASTER_0,
+	MASTER_1,
+	MASTER_MAX,
+};
+
+struct msm_sensor_info_t {
+	char     sensor_name[MAX_SENSOR_NAME];
+	int32_t  session_id;
+	int32_t  subdev_id[SUB_MODULE_MAX];
+	uint8_t  is_mount_angle_valid;
+	uint32_t sensor_mount_angle;
+};
+
 struct msm_camera_sensor_slave_info {
+	char sensor_name[32];
+	enum msm_sensor_camera_id_t camera_id;
 	uint16_t slave_addr;
 	enum msm_camera_i2c_reg_addr_type addr_type;
+	enum msm_camera_i2c_data_type data_type;
 	struct msm_sensor_id_info_t sensor_id_info;
 	struct msm_sensor_power_setting_array power_setting_array;
+	uint8_t is_probe_succeed;
+    char subdev_name[32];
+	struct msm_sensor_info_t sensor_info;
 };
 
 struct msm_camera_i2c_reg_array {
 	uint16_t reg_addr;
 	uint16_t reg_data;
+	uint32_t delay;
+};
+
+struct msm_camera_i2c_burst_reg_array {
+	uint16_t reg_addr;
+	uint8_t *reg_data;
+	uint16_t reg_data_size;
 };
 
 struct msm_camera_i2c_reg_setting {
-	struct msm_camera_i2c_reg_array *reg_setting;
+	void *reg_setting;
 	uint16_t size;
 	enum msm_camera_i2c_reg_addr_type addr_type;
 	enum msm_camera_i2c_data_type data_type;
@@ -195,6 +336,13 @@ struct msm_camera_i2c_seq_reg_setting {
 	uint16_t size;
 	enum msm_camera_i2c_reg_addr_type addr_type;
 	uint16_t delay;
+};
+
+struct msm_camera_i2c_read_config {
+	uint16_t slave_addr;
+	uint16_t reg_addr;
+	enum msm_camera_i2c_data_type data_type;
+	uint16_t *data;
 };
 
 struct msm_camera_csid_vc_cfg {
@@ -241,12 +389,6 @@ struct csi_lane_params_t {
 	uint8_t csi_phy_sel;
 };
 
-struct msm_sensor_info_t {
-	char sensor_name[MAX_SENSOR_NAME];
-	int32_t    session_id;
-	int32_t     subdev_id[SUB_MODULE_MAX];
-};
-
 struct camera_vreg_t {
 	const char *reg_name;
 	enum camera_vreg_type type;
@@ -266,20 +408,10 @@ enum camerab_mode_t {
 	CAMERA_MODE_3D_B = (1<<1)
 };
 
-struct msm_sensor_init_params {
-	/* mask of modes supported: 2D, 3D */
-	int                 modes_supported;
-	/* sensor position: front, back */
-	enum camb_position_t position;
-	/* sensor mount angle */
-	uint32_t            sensor_mount_angle;
-};
-
 struct sensorb_cfg_data {
 	int cfgtype;
 	union {
 		struct msm_sensor_info_t      sensor_info;
-		struct msm_sensor_init_params sensor_init_params;
 		void                         *setting;
 	} cfg;
 };
@@ -302,22 +434,38 @@ struct csiphy_cfg_data {
 
 enum eeprom_cfg_type_t {
 	CFG_EEPROM_GET_INFO,
-	CFG_EEPROM_GET_DATA,
+	CFG_EEPROM_GET_CAL_DATA,
+	CFG_EEPROM_READ_CAL_DATA,
 	CFG_EEPROM_READ_DATA,
+	CFG_EEPROM_READ_COMPRESSED_DATA,
 	CFG_EEPROM_WRITE_DATA,
+	CFG_EEPROM_GET_ERASESIZE,
+	CFG_EEPROM_ERASE,
+	CFG_EEPROM_POWER_ON,
+	CFG_EEPROM_POWER_OFF,
 };
 struct eeprom_get_t {
-	uint16_t num_bytes;
+	uint32_t num_bytes;
 };
 
 struct eeprom_read_t {
 	uint8_t *dbuffer;
-	uint16_t num_bytes;
+	uint32_t num_bytes;
+	uint32_t addr;
+	uint32_t comp_size;
 };
 
 struct eeprom_write_t {
 	uint8_t *dbuffer;
-	uint16_t num_bytes;
+	uint32_t num_bytes;
+	uint32_t addr;
+	uint32_t *write_size;
+	uint8_t compress;
+};
+
+struct eeprom_erase_t {
+	uint32_t num_bytes;
+	uint32_t addr;
 };
 
 struct msm_eeprom_cfg_data {
@@ -328,23 +476,25 @@ struct msm_eeprom_cfg_data {
 		struct eeprom_get_t get_data;
 		struct eeprom_read_t read_data;
 		struct eeprom_write_t write_data;
+		struct eeprom_erase_t erase_data;
 	} cfg;
 };
 
 enum msm_sensor_cfg_type_t {
 	CFG_SET_SLAVE_INFO,
+	CFG_SLAVE_READ_I2C,
 	CFG_WRITE_I2C_ARRAY,
 	CFG_WRITE_I2C_SEQ_ARRAY,
 	CFG_POWER_UP,
 	CFG_POWER_DOWN,
 	CFG_SET_STOP_STREAM_SETTING,
 	CFG_GET_SENSOR_INFO,
-	CFG_GET_SENSOR_INIT_PARAMS,
 	CFG_SET_INIT_SETTING,
 	CFG_SET_RESOLUTION,
 	CFG_SET_STOP_STREAM,
 	CFG_SET_START_STREAM,
 	CFG_SET_GPIO_STATE,
+	CFG_SET_SENSOR_OTP_CAL, // Randy 10.08
 };
 
 enum msm_actuator_cfg_type_t {
@@ -359,6 +509,7 @@ enum actuator_type {
 	ACTUATOR_VCM,
 	ACTUATOR_PIEZO,
 	ACTUATOR_HALL_EFFECT,
+	ACTUATOR_HVCM,
 };
 
 enum msm_actuator_data_type {
@@ -494,6 +645,26 @@ struct msm_camera_led_cfg_t {
 	enum msm_camera_led_config_t cfgtype;
 };
 
+/* sensor init structures and enums */
+enum msm_sensor_init_cfg_type_t {
+	CFG_SINIT_PROBE,
+};
+
+struct sensor_init_cfg_data {
+	enum msm_sensor_init_cfg_type_t cfgtype;
+	union {
+		void *setting;
+	} cfg;
+};
+
+struct ioctl_native_cmd {
+        unsigned short mode;
+        unsigned short address;
+        unsigned short value_1;
+        unsigned short value_2;
+        unsigned short value_3;
+};
+
 #define VIDIOC_MSM_SENSOR_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 1, struct sensorb_cfg_data)
 
@@ -517,6 +688,12 @@ struct msm_camera_led_cfg_t {
 
 #define VIDIOC_MSM_EEPROM_CFG \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 8, struct msm_eeprom_cfg_data)
+
+#define VIDIOC_MSM_SENSOR_INIT_CFG \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 9, struct sensor_init_cfg_data)
+
+#define VIDIOC_MSM_SENSOR_NATIVE_CMD \
+	_IOWR('V', BASE_VIDIOC_PRIVATE + 10, struct ioctl_native_cmd)
 
 #define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') /* META */
 

@@ -187,6 +187,23 @@ static int sdio_read_cccr(struct mmc_card *card, u32 ocr)
 				card->sw_caps.sd3_drv_type |= SD_DRIVER_TYPE_C;
 			if (data & SDIO_DRIVE_SDTD)
 				card->sw_caps.sd3_drv_type |= SD_DRIVER_TYPE_D;
+
+			ret = mmc_io_rw_direct(card, 0, 0,
+				SDIO_CCCR_INTERRUPT_EXTENSION, 0, &data);
+			if (ret)
+				goto out;
+			if (data & SDIO_SUPPORT_ASYNC_INTR) {
+				if (card->host->caps2 &
+				    MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE) {
+					data |= SDIO_ENABLE_ASYNC_INTR;
+					ret = mmc_io_rw_direct(card, 1, 0,
+						SDIO_CCCR_INTERRUPT_EXTENSION,
+						data, NULL);
+					if (ret)
+						goto out;
+					card->cccr.async_intr_sup = 1;
+				}
+			}
 		}
 
 		/* if no uhs mode ensure we check for high speed */
@@ -565,7 +582,8 @@ static int mmc_sdio_init_uhs_card(struct mmc_card *card)
 	if (err)
 		goto out;
 
-#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE)
+// #if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE)
+#if 0
 	/*
 	* Prevent tuning operation when init a card
 	* for WiFi operation with sdmmc.
@@ -600,7 +618,9 @@ static int mmc_sdio_init_card(struct mmc_host *host, u32 ocr,
 	BUG_ON(!host);
 	WARN_ON(!host->claimed);
 
-#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE)
+#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || \
+    defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE) || \
+    defined(CONFIG_BCM4354) || defined(CONFIG_BCM4354_MODULE)
 	/* If host that supports UHS-I sets S18R to 1 in arg of CMD5 to request
 	 * change of signaling level to 1.8V
 	 */
@@ -1264,6 +1284,53 @@ err:
 
 int sdio_reset_comm(struct mmc_card *card)
 {
+#if defined(CONFIG_BCM4339) || defined(CONFIG_BCM4335) || defined(CONFIG_BCM4354)
+	struct mmc_host *host = card->host;
+	u32 ocr;
+	int err;
+
+	printk("%s():\n", __func__);
+	mmc_claim_host(host);
+
+	mmc_set_timing(host, MMC_TIMING_LEGACY);
+	mmc_set_clock(host, host->f_init);
+
+	sdio_reset(host);
+	mmc_go_idle(host);
+
+	mmc_send_if_cond(host, host->ocr_avail);
+
+	err = mmc_send_io_op_cond(host, 0, &ocr);
+	if (err)
+		goto err;
+
+	if (host->ocr_avail_sdio)
+		host->ocr_avail = host->ocr_avail_sdio;
+
+	host->ocr = mmc_select_voltage(host, ocr & ~0x7F);
+	if (!host->ocr) {
+		err = -EINVAL;
+		printk("%s(): voltage err\n", __func__);
+		goto err;
+	}
+
+	if (mmc_host_uhs(host))
+		/* to query card if 1.8V signalling is supported */
+		host->ocr |= R4_18V_PRESENT;
+
+	err = mmc_sdio_init_card(host, host->ocr, card, 0);
+	if (err)
+		goto err;
+
+	mmc_release_host(host);
+	return 0;
+err:
+	printk("%s: Error resetting SDIO communications (%d)\n",
+		mmc_hostname(host), err);
+	mmc_release_host(host);
+	return err;
+#else
 	return mmc_power_restore_host(card->host);
+#endif /* CONFIG_BCM4339 || CONFIG_BCM4335  || CONFIG_BCM4354 */
 }
 EXPORT_SYMBOL(sdio_reset_comm);

@@ -152,11 +152,6 @@ static void matrix_keypad_scan(struct work_struct *work)
 
 			code = MATRIX_SCAN_CODE(row, col, keypad->row_shift);
 			input_event(input_dev, EV_MSC, MSC_SCAN, code);
-
-#if defined(CONFIG_MACH_MONTBLANC)    // jjlee for debug
-			printk("[key] [%d:%d] %x, %s\n", row, col, (new_state[col] & (1 << row)), 
-			     !(!(new_state[col] & (1 << row))) ?	"pressed" : "released");
-#endif			
 			input_report_key(input_dev,
 					 keypad->keycodes[code],
 					 new_state[col] & (1 << row));
@@ -313,35 +308,24 @@ static int __devinit init_matrix_gpio(struct platform_device *pdev,
 		err = gpio_request(pdata->col_gpios[i], "matrix_kbd_col");
 		if (err) {
 			dev_err(&pdev->dev,
-				"[key] failed to request GPIO%d for COL%d\n",
+				"failed to request GPIO%d for COL%d\n",
 				pdata->col_gpios[i], i);
 			goto err_free_cols;
 		}
 
-#if defined(CONFIG_MACH_MONTBLANC)
-		gpio_tlmm_config(GPIO_CFG((pdata->col_gpios[i]), 0,
-			GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);		
-		gpio_set_value((pdata->col_gpios[i]), 0);
-#else
 		gpio_direction_output(pdata->col_gpios[i], !pdata->active_low);
-#endif
 	}
 
 	for (i = 0; i < pdata->num_row_gpios; i++) {
 		err = gpio_request(pdata->row_gpios[i], "matrix_kbd_row");
 		if (err) {
 			dev_err(&pdev->dev,
-				"[key] failed to request GPIO%d for ROW%d\n",
+				"failed to request GPIO%d for ROW%d\n",
 				pdata->row_gpios[i], i);
 			goto err_free_rows;
 		}
 
-#if defined(CONFIG_MACH_MONTBLANC)
-		gpio_tlmm_config(GPIO_CFG((pdata->row_gpios[i]), 0,
-			GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
-#else
 		gpio_direction_input(pdata->row_gpios[i]);
-#endif
 	}
 
 	if (pdata->clustered_irq > 0) {
@@ -355,8 +339,6 @@ static int __devinit init_matrix_gpio(struct platform_device *pdev,
 			goto err_free_rows;
 		}
 	} else {
-	
-		dev_err(&pdev->dev,"[key] clustered_irq is zero \n"); 
 		for (i = 0; i < pdata->num_row_gpios; i++) {
 			err = request_threaded_irq(
 					gpio_to_irq(pdata->row_gpios[i]),
@@ -368,7 +350,7 @@ static int __devinit init_matrix_gpio(struct platform_device *pdev,
 					"matrix-keypad", keypad);
 			if (err < 0) {
 				dev_err(&pdev->dev,
-					"[key] Unable to acquire interrupt "
+					"Unable to acquire interrupt "
 					"for GPIO line %i\n",
 					pdata->row_gpios[i]);
 				goto err_free_irqs;

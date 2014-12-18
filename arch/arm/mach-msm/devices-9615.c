@@ -1270,6 +1270,7 @@ static uint16_t msm_mpm_bypassed_apps_irqs[] __initdata = {
 	LPASS_SCSS_GP_HIGH_IRQ,
 	SPS_MTI_31,
 	A2_BAM_IRQ,
+	USB1_HS_BAM_IRQ,
 };
 
 struct msm_mpm_device_data msm9615_mpm_dev_data __initdata = {
@@ -1430,11 +1431,12 @@ static char *master_names[] = {
 
 static struct msm_rpm_master_stats_platform_data msm_rpm_master_stat_pdata = {
 	.masters = master_names,
-	.nomasters = ARRAY_SIZE(master_names),
+	.num_masters = ARRAY_SIZE(master_names),
+	.master_offset = 32,
 };
 
 struct platform_device msm9615_rpm_master_stat_device = {
-	.name = "msm_rpm_master_stat",
+	.name = "msm_rpm_master_stats",
 	.id = -1,
 	.num_resources	= ARRAY_SIZE(resources_rpm_master_stats),
 	.resource	= resources_rpm_master_stats,

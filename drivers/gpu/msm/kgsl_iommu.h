@@ -47,7 +47,12 @@
 #define KGSL_IOMMU_V1_FSYNR0_WNR_SHIFT		4
 
 /* TTBR0 register fields */
+#ifdef CONFIG_ARM_LPAE
+#define KGSL_IOMMU_CTX_TTBR0_ADDR_MASK_LPAE	0x000000FFFFFFFFE0ULL
+#define KGSL_IOMMU_CTX_TTBR0_ADDR_MASK KGSL_IOMMU_CTX_TTBR0_ADDR_MASK_LPAE
+#else
 #define KGSL_IOMMU_CTX_TTBR0_ADDR_MASK		0xFFFFC000
+#endif
 
 /* TLBSTATUS register fields */
 #define KGSL_IOMMU_CTX_TLBSTATUS_SACTIVE BIT(0)
@@ -56,8 +61,12 @@
 #define KGSL_IOMMU_IMPLDEF_MICRO_MMU_CTRL_HALT BIT(2)
 #define KGSL_IOMMU_IMPLDEF_MICRO_MMU_CTRL_IDLE BIT(3)
 
+/* SCTLR fields */
+#define KGSL_IOMMU_SCTLR_HUPCF_SHIFT		8
+
 enum kgsl_iommu_reg_map {
 	KGSL_IOMMU_GLOBAL_BASE = 0,
+	KGSL_IOMMU_CTX_SCTLR,
 	KGSL_IOMMU_CTX_TTBR0,
 	KGSL_IOMMU_CTX_TTBR1,
 	KGSL_IOMMU_CTX_FSR,
@@ -78,20 +87,6 @@ struct kgsl_iommu_register_list {
 	int ctx_reg;
 };
 
-#ifdef CONFIG_MSM_IOMMU
-extern struct iommu_access_ops iommu_access_ops_v0;
-
-static inline struct iommu_access_ops *get_iommu_access_ops_v0(void)
-{
-	return &iommu_access_ops_v0;
-}
-#else
-static inline struct iommu_access_ops *get_iommu_access_ops_v0(void)
-{
-	return NULL;
-}
-#endif
-
 /*
  * Max number of iommu units that the gpu core can have
  * On APQ8064, KGSL can control a maximum of 2 IOMMU units.
@@ -102,6 +97,20 @@ static inline struct iommu_access_ops *get_iommu_access_ops_v0(void)
 #define KGSL_IOMMU_MAX_DEVS_PER_UNIT 2
 
 /* Macros to read/write IOMMU registers */
+#define KGSL_IOMMU_SET_CTX_REG_LL(iommu, iommu_unit, ctx, REG, val)	\
+		writell_relaxed(val,					\
+		iommu_unit->reg_map.hostptr +				\
+		iommu->iommu_reg_list[KGSL_IOMMU_CTX_##REG].reg_offset +\
+		(ctx << KGSL_IOMMU_CTX_SHIFT) +				\
+		iommu->ctx_offset)
+
+#define KGSL_IOMMU_GET_CTX_REG_LL(iommu, iommu_unit, ctx, REG)		\
+		readl_relaxed(						\
+		iommu_unit->reg_map.hostptr +				\
+		iommu->iommu_reg_list[KGSL_IOMMU_CTX_##REG].reg_offset +\
+		(ctx << KGSL_IOMMU_CTX_SHIFT) +				\
+		iommu->ctx_offset)
+
 #define KGSL_IOMMU_SET_CTX_REG(iommu, iommu_unit, ctx, REG, val)	\
 		writel_relaxed(val,					\
 		iommu_unit->reg_map.hostptr +				\
@@ -128,8 +137,7 @@ static inline struct iommu_access_ops *get_iommu_access_ops_v0(void)
  * @dev: Device pointer to iommu context
  * @attached: Indicates whether this iommu context is presently attached to
  * a pagetable/domain or not
- * @pt_lsb: The LSB of IOMMU_TTBR0 register which is the pagetable
- * register
+ * @default_ttbr0: The TTBR0 value set by iommu driver on start up
  * @ctx_id: This iommu units context id. It can be either 0 or 1
  * @clk_enabled: If set indicates that iommu clocks of this iommu context
  * are on, else the clocks are off
@@ -139,7 +147,7 @@ static inline struct iommu_access_ops *get_iommu_access_ops_v0(void)
 struct kgsl_iommu_device {
 	struct device *dev;
 	bool attached;
-	unsigned int pt_lsb;
+	phys_addr_t default_ttbr0;
 	enum kgsl_iommu_context_id ctx_id;
 	bool clk_enabled;
 	struct kgsl_device *kgsldev;

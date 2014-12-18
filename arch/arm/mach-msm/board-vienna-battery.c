@@ -62,24 +62,22 @@
 #define GPIO_IF_CON_SENSE_18		76
 /*#define GPIO_TA_INT					29*/
 
-#ifndef CONFIG_OF
 #define MSM_FUELGAUGE_I2C_BUS_ID	19
-#endif
 
 static unsigned int sec_bat_recovery_mode;
 static sec_charging_current_t charging_current_table[] = {
-	{2000,	1800,	300,	40*60},
-	{500,	0,	0,	0},
+	{2000,	2000,	300,	40*60},
+	{0,	0,	0,	0},
 	{500,	500,	300,	40*60},
-	{2000,	1800,	300,	40*60},
+	{2000,	2000,	300,	40*60},
 	{500,	500,	300,	40*60},
 	{500,	500,	300,	40*60},
 	{1000,	1000,	300,	40*60},
 	{500,	500,	300,	40*60},
-	{2000,	1800,	300,	40*60},
-	{2000,	1800,	300,	40*60},/*car dock*/
+	{2000,	2000,	300,	40*60},
+	{2000,	2000,	300,	40*60},/*car dock*/
 	{0,	0,	0,	0},
-	{2000,	1800,	300,	40*60},
+	{2000,	2000,	300,	40*60},
 	{0,	-1,	0,	0},/*OTG: - value for chg current*/
 	{0,	0,	0,	0},
 };
@@ -103,7 +101,7 @@ static int sec_bat_adc_ap_read(unsigned int channel)
 
 	switch (channel) {
 	case SEC_BAT_ADC_CHANNEL_TEMP:
-		rc = qpnp_vadc_read(LR_MUX5_PU2_AMUX_THM2, &results);
+		rc = qpnp_vadc_read(NULL, LR_MUX5_PU2_AMUX_THM2, &results);
 		if (rc) {
 			pr_err("%s: Unable to read batt temperature rc=%d\n",
 				__func__, rc);
@@ -166,34 +164,37 @@ static bool sec_bat_is_lpm(void) {return (bool)poweroff_charging; }
 int extended_cable_type;
 extern int current_cable_type;
 
+extern int mhl_connection_state(void);
+
 static void sec_bat_initial_check(void)
 {
 	union power_supply_propval value;
+	int cable_type = 0;
 
-	msm8974_get_cable_type();
+	cable_type = msm8974_get_cable_type();
 
-	if (POWER_SUPPLY_TYPE_BATTERY < current_cable_type) {
-		value.intval = current_cable_type<<ONLINE_TYPE_MAIN_SHIFT;
+	value.intval = cable_type;
+
+	if (POWER_SUPPLY_TYPE_BATTERY <= cable_type) {
+		value.intval = cable_type<<ONLINE_TYPE_MAIN_SHIFT;
 		psy_do_property("battery", set,
 				POWER_SUPPLY_PROP_ONLINE, value);
-	} else {
-		psy_do_property("sec-charger", get,
-				POWER_SUPPLY_PROP_ONLINE, value);
-		if (value.intval == POWER_SUPPLY_TYPE_WIRELESS) {
-			value.intval =
-			POWER_SUPPLY_TYPE_WIRELESS<<ONLINE_TYPE_MAIN_SHIFT;
-			psy_do_property("battery", set,
-					POWER_SUPPLY_PROP_ONLINE, value);
-		}
 	}
 
 	if (ta_int_gpio == 0) {
 		pr_err("%s: ta_int_gpio is 0 or not assigned yet\n", __func__);
 	} else {
-		if (current_cable_type == POWER_SUPPLY_TYPE_BATTERY &&
+		if (cable_type == POWER_SUPPLY_TYPE_BATTERY &&
 			!gpio_get_value_cansleep(ta_int_gpio)) {
-			pr_info("%s : VBUS IN\n", __func__);
+#if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
+			if (!mhl_connection_state()) {
+				value.intval = POWER_SUPPLY_TYPE_UARTOFF<<ONLINE_TYPE_MAIN_SHIFT;
+				pr_info("%s : VBUS IN\n", __func__);
+			}
+#else
 			value.intval = POWER_SUPPLY_TYPE_UARTOFF<<ONLINE_TYPE_MAIN_SHIFT;
+			pr_info("%s : VBUS IN\n", __func__);
+#endif
 		}
 		if (value.intval)
 				psy_do_property("battery", set,
@@ -216,27 +217,37 @@ static bool sec_bat_switch_to_normal(void) {return true; }
 
 static bool sec_bat_is_interrupt_cable_check_possible(int extended_cable_type)
 {
-	return (GET_MAIN_CABLE_TYPE(extended_cable_type) ==
-		POWER_SUPPLY_TYPE_CARDOCK) ? false : true;
+	return true;
 }
 
 int sec_bat_check_cable_callback(void)
 {
-	msleep(500);
+	union power_supply_propval value;
+	msleep(750);
 
 	if (ta_int_gpio == 0) {
 		pr_err("%s: ta_int_gpio is 0 or not assigned yet(cable_type(%d))\n",
 			__func__, current_cable_type);
-	} else {
+	}
+#if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
+	else if (!mhl_connection_state()) {
+#else
+	else {
+#endif
 		if (current_cable_type == POWER_SUPPLY_TYPE_BATTERY &&
 			!gpio_get_value_cansleep(ta_int_gpio)) {
 			pr_info("%s : VBUS IN\n", __func__);
+			value.intval = POWER_SUPPLY_TYPE_UARTOFF<<ONLINE_TYPE_MAIN_SHIFT;
+			psy_do_property("battery", set, POWER_SUPPLY_PROP_ONLINE, value);
 			return POWER_SUPPLY_TYPE_UARTOFF;
 		}
 
-		if (current_cable_type == POWER_SUPPLY_TYPE_UARTOFF &&
+		if ((current_cable_type == POWER_SUPPLY_TYPE_UARTOFF ||
+			current_cable_type == POWER_SUPPLY_TYPE_CARDOCK) &&
 			gpio_get_value_cansleep(ta_int_gpio)) {
 			pr_info("%s : VBUS OUT\n", __func__);
+			value.intval = POWER_SUPPLY_TYPE_BATTERY<<ONLINE_TYPE_MAIN_SHIFT;
+			psy_do_property("battery", set, POWER_SUPPLY_PROP_ONLINE, value);
 			return POWER_SUPPLY_TYPE_BATTERY;
 		}
 	}
@@ -312,8 +323,8 @@ static int sec_bat_get_cable_from_extended_cable_type(
 				break;
 			case ONLINE_POWER_TYPE_MHL_900:
 				cable_type = POWER_SUPPLY_TYPE_MISC;
-				charge_current_max = 700;
-				charge_current = 700;
+				charge_current_max = 500;
+				charge_current = 500;
 				break;
 			case ONLINE_POWER_TYPE_MHL_1500:
 				cable_type = POWER_SUPPLY_TYPE_MISC;
@@ -322,8 +333,8 @@ static int sec_bat_get_cable_from_extended_cable_type(
 				break;
 			case ONLINE_POWER_TYPE_USB:
 				cable_type = POWER_SUPPLY_TYPE_USB;
-				charge_current_max = 300;
-				charge_current = 300;
+				charge_current_max = 150;
+				charge_current = 500;
 				break;
 			default:
 				cable_type = cable_main;
@@ -461,8 +472,8 @@ static int polling_time_table[] = {
 static struct battery_data_t samsung_battery_data[] = {
 	/* SDI battery data */
 	{
-		.Capacity = 0x4766,
-		.low_battery_comp_voltage = 3600,
+		.Capacity = 0x4A8E,
+		.low_battery_comp_voltage = 3500,
 		.low_battery_table = {
 			/* range, slope, offset */
 			{-5000,	0,	0},	/* dummy for top limit */
@@ -587,21 +598,21 @@ sec_battery_platform_data_t sec_battery_pdata = {
 
 	.temp_check_type = SEC_BATTERY_TEMP_CHECK_TEMP,
 	.temp_check_count = 1,
-	.temp_high_threshold_event = 650,
-	.temp_high_recovery_event = 440,
-	.temp_low_threshold_event = -45,
+	.temp_high_threshold_event = 700,
+	.temp_high_recovery_event = 420,
+	.temp_low_threshold_event = -50,
 	.temp_low_recovery_event = 0,
-	.temp_high_threshold_normal = 650,
-	.temp_high_recovery_normal = 440,
-	.temp_low_threshold_normal = -45,
+	.temp_high_threshold_normal = 700,
+	.temp_high_recovery_normal = 420,
+	.temp_low_threshold_normal = -50,
 	.temp_low_recovery_normal = 0,
-	.temp_high_threshold_lpm = 650,
-	.temp_high_recovery_lpm = 440,
-	.temp_low_threshold_lpm = -45,
+	.temp_high_threshold_lpm = 700,
+	.temp_high_recovery_lpm = 420,
+	.temp_low_threshold_lpm = -50,
 	.temp_low_recovery_lpm = 0,
 
 	.full_check_type = SEC_BATTERY_FULLCHARGED_FG_CURRENT,
-	/*.full_check_type_2nd = SEC_BATTERY_FULLCHARGED_TIME,*/
+	.full_check_type_2nd = SEC_BATTERY_FULLCHARGED_TIME,
 	.full_check_count = 1,
 	.chg_gpio_full_check = GPIO_TA_nCHG,
 	.chg_polarity_full_check = 0,
@@ -617,7 +628,7 @@ sec_battery_platform_data_t sec_battery_pdata = {
 		SEC_BATTERY_RECHARGE_CONDITION_AVGVCELL,
 	.recharge_condition_soc = 98,
 	.recharge_condition_avgvcell = 4150,
-	.recharge_condition_vcell = 4300,
+	.recharge_condition_vcell = 4250,
 
 	.charging_total_time = 10 * 60 * 60,
 	.recharging_total_time = 90 * 60,
@@ -627,7 +638,7 @@ sec_battery_platform_data_t sec_battery_pdata = {
 	.fg_irq = 0,
 	.fg_irq_attr =
 		IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING,
-	.fuel_alert_soc = 2,
+	.fuel_alert_soc = 1,
 	.repeated_fuelalert = false,
 	.capacity_calculation_type =
 		SEC_FUELGAUGE_CAPACITY_TYPE_RAW |
@@ -637,7 +648,6 @@ sec_battery_platform_data_t sec_battery_pdata = {
 	.capacity_max = 1000,
 	.capacity_max_margin = 50,
 	.capacity_min = 0,
-	.get_fg_current = true,
 
 	/* Charger */
 	.charger_name = "sec-charger",
@@ -656,7 +666,6 @@ static struct platform_device sec_device_battery = {
 	.dev.platform_data = &sec_battery_pdata,
 };
 
-#ifndef CONFIG_OF
 struct platform_device sec_device_fgchg = {
 	.name = "i2c-gpio",
 	.id = MSM_FUELGAUGE_I2C_BUS_ID,
@@ -675,12 +684,9 @@ static struct i2c_board_info sec_brdinfo_fgchg[] __initdata = {
 		.platform_data	= &sec_battery_pdata,
 	},
 };
-#endif
 
 static struct platform_device *samsung_battery_devices[] __initdata = {
-#ifndef CONFIG_OF
 	&sec_device_fgchg,
-#endif
 	&sec_device_battery,
 };
 
@@ -723,12 +729,10 @@ void __init samsung_init_battery(void)
 		samsung_battery_devices,
 		ARRAY_SIZE(samsung_battery_devices));
 
-#ifndef CONFIG_OF
 	i2c_register_board_info(
 		MSM_FUELGAUGE_I2C_BUS_ID,
 		sec_brdinfo_fgchg,
 		ARRAY_SIZE(sec_brdinfo_fgchg));
-#endif
 }
 
 #endif

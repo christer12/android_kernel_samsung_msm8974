@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2011, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2011, 2013 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,6 +39,15 @@ enum {
 	MEMTYPE_MAX,
 };
 
+enum {
+	SYS_MEMORY = 1,        /* system memory*/
+	BOOT_REGION_MEMORY1,   /* boot loader memory 1*/
+	BOOT_REGION_MEMORY2,   /* boot loader memory 2,reserved*/
+	APPSBL_MEMORY,         /* apps boot loader memory*/
+	APPS_MEMORY,           /* apps  usage memory*/
+};
+
+
 void msm_reserve(void);
 
 #define MEMTYPE_FLAGS_FIXED	0x1
@@ -70,5 +79,4 @@ int __init dt_scan_for_memory_reserve(unsigned long node, const char *uname,
 int __init dt_scan_for_memory_hole(unsigned long node, const char *uname,
 					int depth, void *data);
 void adjust_meminfo(unsigned long start, unsigned long size);
-unsigned long __init reserve_memory_for_fmem(unsigned long, unsigned long);
 #endif

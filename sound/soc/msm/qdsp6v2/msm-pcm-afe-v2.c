@@ -20,6 +20,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/dma-mapping.h>
+#include <linux/msm_audio_ion.h>
 
 #include <sound/core.h>
 #include <sound/soc.h>
@@ -34,8 +35,8 @@
 
 #define MIN_PLAYBACK_PERIOD_SIZE (128 * 2)
 #define MAX_PLAYBACK_PERIOD_SIZE (128 * 2 * 2 * 6)
-#define MIN_PLAYBACK_NUM_PERIODS (32)
-#define MAX_PLAYBACK_NUM_PERIODS (384)
+#define MIN_PLAYBACK_NUM_PERIODS (64)
+#define MAX_PLAYBACK_NUM_PERIODS (768)
 
 #define MIN_CAPTURE_PERIOD_SIZE (128 * 2 * 4)
 #define MAX_CAPTURE_PERIOD_SIZE (128 * 2 * 2 * 6 * 4)
@@ -517,21 +518,21 @@ static int msm_afe_mmap(struct snd_pcm_substream *substream,
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct pcm_afe_info *prtd = runtime->private_data;
-	int result = 0;
+	struct afe_audio_client *ac = prtd->audio_client;
+	struct afe_audio_port_data *apd = ac->port;
+	struct afe_audio_buffer *ab;
+	int dir = -1;
 
 	pr_debug("%s\n", __func__);
 	prtd->mmap_flag = 1;
-	if (runtime->dma_addr && runtime->dma_bytes) {
-		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
-		result = remap_pfn_range(vma, vma->vm_start,
-				runtime->dma_addr >> PAGE_SHIFT,
-				runtime->dma_bytes,
-				vma->vm_page_prot);
-	} else {
-		pr_err("Physical address or size of buf is NULL");
-		return -EINVAL;
-	}
-	return result;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		dir = IN;
+	else
+		dir = OUT;
+	ab = &(apd[dir].buf[0]);
+
+	return msm_audio_ion_mmap((struct audio_buffer *)ab, vma);
 }
 static int msm_afe_trigger(struct snd_pcm_substream *substream, int cmd)
 {

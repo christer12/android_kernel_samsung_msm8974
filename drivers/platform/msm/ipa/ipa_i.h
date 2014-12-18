@@ -119,7 +119,6 @@
 #define IPA_DFLT_HDR_NAME "ipa_excp_hdr"
 #define IPA_INVALID_L4_PROTOCOL 0xFF
 
-
 #define IPA_CLIENT_IS_PROD(x) (x >= IPA_CLIENT_PROD && x < IPA_CLIENT_CONS)
 #define IPA_CLIENT_IS_CONS(x) (x >= IPA_CLIENT_CONS && x < IPA_CLIENT_MAX)
 #define IPA_SETFIELD(val, shift, mask) (((val) << (shift)) & (mask))
@@ -350,6 +349,7 @@ struct ipa_ep_context {
 	enum ipa_client_type client;
 	struct sps_pipe *ep_hdl;
 	struct ipa_ep_cfg cfg;
+	struct ipa_ep_cfg_holb holb;
 	u32 dst_pipe_index;
 	u32 rt_tbl_idx;
 	struct sps_connect connect;
@@ -649,7 +649,6 @@ struct ipa_context {
 	struct rb_root rt_rule_hdl_tree;
 	struct rb_root rt_tbl_hdl_tree;
 	struct rb_root flt_rule_hdl_tree;
-	struct rb_root tag_tree;
 	struct ipa_nat_mem nat_mem;
 	u32 excp_hdr_hdl;
 	u32 dflt_v4_rt_rule_hdl;
@@ -684,9 +683,6 @@ struct ipa_context {
 	/* featurize if memory footprint becomes a concern */
 	struct ipa_stats stats;
 	void *smem_pipe_mem;
-	/* store HOLB configuration for WLAN TX pipes */
-	u32 hol_en;
-	u32 hol_timer;
 };
 
 /**

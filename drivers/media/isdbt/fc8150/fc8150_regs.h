@@ -20,12 +20,12 @@ extern "C" {
 /* #define BBM_XTAL_FREQ               16384 */
 /* #define BBM_XTAL_FREQ               18000 */
 /* #define BBM_XTAL_FREQ               19200 */
- //#define BBM_XTAL_FREQ               24000 
-#define BBM_XTAL_FREQ               	19200
-// #define BBM_XTAL_FREQ               27000 
+/* #define BBM_XTAL_FREQ               24000 */
+/* #define BBM_XTAL_FREQ               26000 */
+/* #define BBM_XTAL_FREQ               27000 */
 /* #define BBM_XTAL_FREQ               27120 */
-/* #define BBM_XTAL_FREQ               24576 */
- //#define BBM_XTAL_FREQ               32000 
+#define BBM_XTAL_FREQ               24576 
+/* #define BBM_XTAL_FREQ               32000 */
 /* #define BBM_XTAL_FREQ               37400 */
 /* #define BBM_XTAL_FREQ               38400 */
 
@@ -33,6 +33,8 @@ extern "C" {
 /* #define BBM_BAND_WIDTH              7 */      /*  BW = 7M */
 /* #define BBM_BAND_WIDTH              8  */     /*  BW = 8M */
 
+#define BBM_I2C_TSIF
+#define MSMCHIP
 	/*  Host register */
 #define BBM_ADDRESS_REG             0x00
 #define BBM_COMMAND_REG             0x01

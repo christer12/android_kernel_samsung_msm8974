@@ -138,6 +138,7 @@ static int set_vibetonz(int timeout)
 			/* 90% duty cycle */
 			ImmVibeSPI_ForceOut_SetSamples(0, 8, 1, &strength);
 		} else { /* HAPTIC_MOTOR */
+		DbgOut((KERN_INFO "tspdrv: ampenable\n"));
 			ImmVibeSPI_ForceOut_AmpEnable(0);
 		}
 	}
@@ -303,7 +304,7 @@ static int tspdrv_parse_dt(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	int rc;
 
-#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || defined (CONFIG_MACH_JS01LTEDCM)
 	vibrator_drvdata.vib_pwm_gpio = of_get_named_gpio(np, "samsung,pmic_vib_pwm_jpn", 0);
 #else
 	vibrator_drvdata.vib_pwm_gpio = of_get_named_gpio(np, "samsung,pmic_vib_pwm", 0);
@@ -313,6 +314,14 @@ static int tspdrv_parse_dt(struct platform_device *pdev)
 		pr_err("%s:%d, reset gpio not specified\n",
 				__func__, __LINE__);
 	} 
+
+#if defined(CONFIG_MOTOR_DRV_DRV2603)
+	vibrator_drvdata.drv2603_en_gpio = of_get_named_gpio(np, "samsung,drv2603_en", 0);
+	if (!gpio_is_valid(vibrator_drvdata.drv2603_en_gpio)) {
+		pr_err("%s:%d, drv2603_en_gpio not specified\n",
+				__func__, __LINE__);
+	}
+#endif
 	
 	rc = of_property_read_u32(np, "samsung,vib_model", &vibrator_drvdata.vib_model);
 	if (rc) {
@@ -356,21 +365,65 @@ static int tspdrv_parse_dt(struct platform_device *pdev)
 						__func__, __LINE__);
 		return -EINVAL;
 	}
-	
 	return rc;
 }
 
-
+#if defined(CONFIG_MOTOR_DRV_MAX77804K) || defined(CONFIG_MOTOR_DRV_MAX77828)
 static void max77803_haptic_power_onoff(int onoff)
 {
 	int ret;
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT)
+	static struct regulator *reg_l23;
+
+	if (!reg_l23) {
+		reg_l23 = regulator_get(NULL, "8084_l23");
+		ret = regulator_set_voltage(reg_l23, 3000000, 3000000);
+		if (IS_ERR(reg_l23)) {
+			printk(KERN_ERR"could not get 8084_l23, rc = %ld\n",
+				PTR_ERR(reg_l23));
+			return;
+		}
+	}
+
+	if (onoff) {
+		ret = regulator_enable(reg_l23);
+		if (ret) {
+			printk(KERN_ERR"enable l23 failed, rc=%d\n", ret);
+			return;
+		}
+		printk(KERN_DEBUG"haptic power_on is finished.\n");
+	} else {
+		if (regulator_is_enabled(reg_l23)) {
+			ret = regulator_disable(reg_l23);
+			if (ret) {
+				printk(KERN_ERR"disable l23 failed, rc=%d\n",
+									ret);
+				return;
+			}
+		}
+		printk(KERN_DEBUG"haptic power_off is finished.\n");
+	}
+}
+#endif
+
+
+#if defined(CONFIG_MOTOR_DRV_MAX77803)
+static void max77803_haptic_power_onoff(int onoff)
+{
+	int ret;
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_JS_PROJECT) || \
+    defined(CONFIG_MACH_FLTEEUR) || defined(CONFIG_MACH_FLTESKT) || defined(CONFIG_MACH_JVELTEEUR) ||\
+    defined(CONFIG_MACH_VIKALCU) || defined(CONFIG_SEC_FRESCO_PROJECT)
 	static struct regulator *reg_l23;
 
 	if (!reg_l23) {
 		reg_l23 = regulator_get(NULL, "8941_l23");
+#if defined(CONFIG_MACH_FLTESKT)
 		ret = regulator_set_voltage(reg_l23, 3000000, 3000000);
-
+#elif defined(CONFIG_MACH_HLTEVZW)
+		ret = regulator_set_voltage(reg_l23, 3100000, 3100000);
+#else
+		ret = regulator_set_voltage(reg_l23, 2825000, 2825000);
+#endif
 		if (IS_ERR(reg_l23)) {
 			printk(KERN_ERR"could not get 8941_l23, rc = %ld\n",
 				PTR_ERR(reg_l23));
@@ -430,8 +483,29 @@ static void max77803_haptic_power_onoff(int onoff)
 	}
 #endif
 }
+#endif
 
 
+#if defined(CONFIG_MOTOR_DRV_DRV2603)
+void drv2603_gpio_en(bool en)
+{
+	if (en) {
+		gpio_direction_output(vibrator_drvdata.drv2603_en_gpio, 1);
+	} else {
+		gpio_direction_output(vibrator_drvdata.drv2603_en_gpio, 0);
+	}
+}
+static int32_t drv2603_gpio_init(void)
+{
+	int ret;
+	ret = gpio_request(vibrator_drvdata.drv2603_en_gpio, "vib enable");
+	if (ret < 0) {
+		printk(KERN_ERR "vib enable gpio_request is failed\n");
+		return 1;
+	}
+	return 0;
+}
+#endif
 
 static __devinit int tspdrv_probe(struct platform_device *pdev)
 {
@@ -448,7 +522,7 @@ static __devinit int tspdrv_probe(struct platform_device *pdev)
 	if(rc)
 		return rc;
 
-#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+#if defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI) || defined(CONFIG_MACH_JS01LTEDCM)
 	virt_mmss_gp1_base = ioremap(MSM_MMSS_GP3_BASE,0x28);
 #else			
 	virt_mmss_gp1_base = ioremap(MSM_MMSS_GP1_BASE,0x28);
@@ -457,7 +531,7 @@ static __devinit int tspdrv_probe(struct platform_device *pdev)
 	if (!virt_mmss_gp1_base)
 		panic("tspdrv : Unable to ioremap MSM_MMSS_GP1 memory!");
 			
-#ifdef CONFIG_MOTOR_DRV_MAX77803
+#if defined(CONFIG_MOTOR_DRV_MAX77803) || defined(CONFIG_MOTOR_DRV_MAX77804K) || defined(CONFIG_MOTOR_DRV_MAX77828)
 	vibrator_drvdata.power_onoff = max77803_haptic_power_onoff;
 #else
 	vibrator_drvdata.power_onoff = NULL;
@@ -469,12 +543,14 @@ static __devinit int tspdrv_probe(struct platform_device *pdev)
 	if (g_nmajor < 0) {
 		DbgOut((KERN_ERR "tspdrv: can't get major number.\n"));
 		ret = g_nmajor;
+		iounmap(virt_mmss_gp1_base);
 		return ret;
 	}
 #else
 	ret = misc_register(&miscdev);
 	if (ret) {
 		DbgOut((KERN_ERR "tspdrv: misc_register failed.\n"));
+		iounmap(virt_mmss_gp1_base);
 		return ret;
 	}
 #endif
@@ -741,11 +817,16 @@ static long ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 
 	case TSPDRV_MAGIC_NUMBER:
+#ifdef CONFIG_TACTILE_ASSIST
+	case TSPDRV_SET_MAGIC_NUMBER:
+#endif
 		filp->private_data = (void *)TSPDRV_MAGIC_NUMBER;
 		break;
 
 	case TSPDRV_ENABLE_AMP:
 		wake_lock(&vib_wake_lock);
+		vibe_set_pwm_freq(0);
+		vibe_pwm_onoff(1);
 		ImmVibeSPI_ForceOut_AmpEnable(arg);
 		DbgRecorderReset((arg));
 		DbgRecord((arg, ";------- TSPDRV_ENABLE_AMP ---------\n"));
@@ -758,8 +839,15 @@ static long ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		** If a stop was requested, ignore the request as the amp
 		** will be disabled by the timer proc when it's ready
 		*/
+#ifdef CONFIG_TACTILE_ASSIST
+		g_bstoprequested = true;
+		/* Last data processing to disable amp and stop timer */
+		VibeOSKernelProcessData(NULL);
+		g_bisplaying = false;
+#else
 		if (!g_bstoprequested)
 			ImmVibeSPI_ForceOut_AmpDisable(arg);
+#endif
 		wake_unlock(&vib_wake_lock);
 		break;
 

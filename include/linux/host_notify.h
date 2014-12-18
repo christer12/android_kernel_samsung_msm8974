@@ -46,6 +46,11 @@ struct host_notify_dev {
 	int (*set_booster)(int, struct host_notify_dev *);
 };
 
+struct booster_data {
+	const char * name;
+	int (*boost)(int enable);
+};
+
 extern int host_state_notify(struct host_notify_dev *ndev, int state);
 extern int host_notify_dev_register(struct host_notify_dev *ndev);
 extern void host_notify_dev_unregister(struct host_notify_dev *ndev);
@@ -65,7 +70,18 @@ enum host_notify_event {
 	HNOTIFY_SMARTDOCK_OFF,
 	HNOTIFY_AUDIODOCK_ON,
 	HNOTIFY_AUDIODOCK_OFF,
+	HNOTIFY_LANHUB_ON,
+	HNOTIFY_LANHUB_OFF,
+	HNOTIFY_LANHUBTA_ON,
+	HNOTIFY_LANHUBTA_OFF,
 };
+
+enum host_notify_data {
+	HNOTIFY_EVENT,
+	HNOTIFY_MODE,
+};
+
 extern int sec_otg_notify(int event);
-extern int sec_otg_set_booster(int (*f)(int, struct host_notify_dev*));
+extern int sec_otg_register_booster(struct booster_data *);
+extern int sec_get_notification(int ndata);
 #endif /* __LINUX_HOST_NOTIFY_H__ */

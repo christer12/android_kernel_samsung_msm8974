@@ -30,6 +30,7 @@
 #include <mach/msm_bus.h>
 #include <mach/subsystem_restart.h>
 #include <mach/ramdump.h>
+#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
@@ -569,6 +570,8 @@ static int __devinit pil_gss_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err_smem;
 	}
+
+	scm_pas_init(MSM_BUS_MASTER_SPS);
 
 	ret = devm_request_irq(&pdev->dev, drv->irq, gss_wdog_bite_irq,
 			IRQF_TRIGGER_RISING, "gss_a5_wdog", drv);

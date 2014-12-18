@@ -1051,7 +1051,7 @@ void dwc3_ep0_interrupt(struct dwc3 *dwc,
 {
 	u8			epnum = event->endpoint_number;
 
-	dev_info(dwc->dev, "%s while ep%d%s in state '%s'\n",
+	dev_dbg(dwc->dev, "%s while ep%d%s in state '%s'\n",
 			dwc3_ep_event_string(event->endpoint_event),
 			epnum >> 1, (epnum & 1) ? "in" : "out",
 			dwc3_ep0_state_string(dwc->ep0state));

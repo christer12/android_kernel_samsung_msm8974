@@ -19,7 +19,7 @@ void PRINTF(HANDLE hDevice, char *fmt, ...)
 	va_start(ap, fmt);
 	vsprintf(str, fmt, ap);
 
-	printk(KERN_DEBUG"%s", str);
+	printk(KERN_INFO"%s", str);
 
 	va_end(ap);
 }

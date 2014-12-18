@@ -14,15 +14,12 @@
  */
 #include "../ssp.h"
 
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)
-#define LPS25H_REV	4
-#endif
+#define LPS25H_REV	3
 
 #define	VENDOR		"BOSCH"
 #define	CHIP_ID		"BMP180"
-#define	VENDOR_STM		"STM"
-#define	CHIP_ID_LPS25H		"LPS25H"
+#define	VENDOR_STM	"STM"
+#define	CHIP_ID_LPS25H	"LPS25H"
 
 #define CALIBRATION_FILE_PATH		"/efs/FactoryApp/baro_delta"
 
@@ -129,35 +126,28 @@ static ssize_t pressure_cabratioin_show(struct device *dev,
 static ssize_t eeprom_check_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	bool bSuccess = false;
-	char chTempBuf[2] = {0, 10};
-	int iRet, iDelayCnt = 0;
+	char chTempBuf  = 0;
+	int iRet = 0;
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	data->uFactorydataReady = 0;
-	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
+	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
+	msg->cmd = PRESSURE_FACTORY;
+	msg->length = 1;
+	msg->options = AP2HUB_READ;
+	msg->buffer = &chTempBuf;
+	msg->free_buffer = 0;
 
-	iRet = send_instruction(data, FACTORY_MODE, PRESSURE_FACTORY,
-			chTempBuf, 2);
+	iRet = ssp_spi_sync(data, msg, 3000);
 
-	while (!(data->uFactorydataReady & (1 << PRESSURE_FACTORY))
-		&& (iDelayCnt++ < 150)
-		&& (iRet == SUCCESS))
-		msleep(20);
-
-	if ((iDelayCnt >= 150) || (iRet != SUCCESS)) {
-		pr_err("[SSP]: %s - Pressure Selftest Timeout!!\n",
-			__func__);
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - Pressure Selftest Timeout!!\n", __func__);
 		goto exit;
 	}
 
-	mdelay(5);
+	ssp_dbg("[SSP]: %s - %u\n", __func__, chTempBuf);
 
-	bSuccess = (bool)(!!data->uFactorydata[0]);
-	ssp_dbg("[SSP]: %s - %u\n", __func__, bSuccess);
-
-exit:
-	return snprintf(buf, PAGE_SIZE, "%d", bSuccess);
+	exit:
+	return snprintf(buf, PAGE_SIZE, "%d", chTempBuf);
 }
 
 /* sysfs for vendor & name */

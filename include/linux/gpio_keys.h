@@ -29,7 +29,7 @@ struct gpio_keys_platform_data {
 	void (*disable)(struct device *dev);
 	const char *name;		/* input device name */
 #ifdef CONFIG_SENSORS_HALL
-    int gpio_flip_cover;
+	int gpio_flip_cover;
 #endif
 };
 

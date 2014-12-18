@@ -43,6 +43,8 @@ struct ocmem_hw_region {
 	unsigned int num_macros;
 	struct ocmem_hw_macro *macro;
 	struct msm_rpm_request *rpm_req;
+	unsigned long macro_size;
+	unsigned long region_size;
 	unsigned r_state;
 };
 
@@ -66,8 +68,11 @@ static void *ocmem_base;
 #define NUM_PORTS_SHIFT (0)
 #define GFX_MPU_SHIFT (12)
 
-#define NUM_MACROS_MASK (0xF << 8)
+#define NUM_MACROS_MASK (0x3F << 8)
 #define NUM_MACROS_SHIFT (8)
+
+#define LAST_REGN_HALFSIZE_MASK (0x1 << 16)
+#define LAST_REGN_HALFSIZE_SHIFT (16)
 
 #define INTERLEAVING_MASK (0x1 << 17)
 #define INTERLEAVING_SHIFT (17)
@@ -198,7 +203,13 @@ static int read_region_state(unsigned region_num)
 
 	return state;
 }
+
 #ifndef CONFIG_MSM_OCMEM_POWER_DISABLE
+static struct ocmem_hw_region *get_ocmem_region(unsigned region_num)
+{
+	return &region_ctrl[region_num];
+}
+
 static int commit_region_staging(unsigned region_num, unsigned start_m,
 				unsigned new_state)
 {
@@ -759,7 +770,7 @@ unlock_fail:
 	return -EINVAL;
 }
 
-#if defined(CONFIG_MSM_OCMEM_POWER_DISABLE)
+#if defined(CONFIG_MSM_OCMEM_DEBUG_ALWAYS_ON)
 static int ocmem_core_set_default_state(void)
 {
 	int rc = 0;
@@ -775,7 +786,14 @@ static int ocmem_core_set_default_state(void)
 
 	return 0;
 }
+#else
+static int ocmem_core_set_default_state(void)
+{
+	return 0;
+}
+#endif
 
+#if defined(CONFIG_MSM_OCMEM_POWER_DISABLE)
 /* Initializes a region to be turned ON in wide mode */
 static int ocmem_region_set_default_state(unsigned int r_num)
 {
@@ -800,15 +818,9 @@ static int ocmem_region_set_default_state(unsigned int region_num)
 {
 	return 0;
 }
-
-static int ocmem_core_set_default_state(void)
-{
-	return 0;
-}
 #endif
 
 #if defined(CONFIG_MSM_OCMEM_POWER_DEBUG)
-
 static int read_hw_region_state(unsigned region_num)
 {
 	int state;
@@ -932,6 +944,7 @@ static int switch_power_state(int id, unsigned long offset, unsigned long len,
 	unsigned start_m = num_banks;
 	unsigned end_m = num_banks;
 	unsigned long region_offset = 0;
+	struct ocmem_hw_region *region;
 	int rc = 0;
 
 	if (offset < 0)
@@ -965,6 +978,7 @@ static int switch_power_state(int id, unsigned long offset, unsigned long len,
 
 	for (i = region_start; i <= region_end; i++) {
 
+		region = get_ocmem_region(i);
 		curr_state = read_region_state(i);
 
 		switch (curr_state) {
@@ -980,14 +994,14 @@ static int switch_power_state(int id, unsigned long offset, unsigned long len,
 			break;
 		}
 
-		if (len >= region_size) {
+		if (len >= region->region_size) {
 			pr_debug("switch: entire region (%d)\n", i);
 			start_m = 0;
 			end_m = num_banks;
 		} else {
-			region_offset = offset - (i * region_size);
-			start_m = region_offset / macro_size;
-			end_m = (region_offset + len - 1) / macro_size;
+			region_offset = offset - (i * region->region_size);
+			start_m = region_offset / region->macro_size;
+			end_m = (region_offset + len - 1) / region->macro_size;
 			pr_debug("switch: macro (%u to %u)\n", start_m, end_m);
 		}
 
@@ -1001,7 +1015,7 @@ static int switch_power_state(int id, unsigned long offset, unsigned long len,
 		aggregate_region_state(i);
 		if (rpm_power_control)
 			commit_region_state(i);
-		len -= region_size;
+		len -= region->region_size;
 
 		/* If we voted ON/retain the banks must never be OFF */
 		if (new_state != REGION_DEFAULT_OFF) {
@@ -1122,6 +1136,7 @@ int ocmem_core_init(struct platform_device *pdev)
 	struct device   *dev = &pdev->dev;
 	struct ocmem_plat_data *pdata = NULL;
 	unsigned hw_ver;
+	bool last_region_halfsize;
 	bool interleaved;
 	unsigned i, j, k;
 	unsigned rsc_type = 0;
@@ -1144,6 +1159,9 @@ int ocmem_core_init(struct platform_device *pdev)
 		pr_err("Invalid number of macros (%d)\n", pdata->nr_macros);
 		goto hw_not_supported;
 	}
+
+	last_region_halfsize = (hw_ver & LAST_REGN_HALFSIZE_MASK) >>
+					LAST_REGN_HALFSIZE_SHIFT;
 
 	interleaved = (hw_ver & INTERLEAVING_MASK) >> INTERLEAVING_SHIFT;
 
@@ -1177,6 +1195,14 @@ int ocmem_core_init(struct platform_device *pdev)
 		atomic_set(&region->mode_counter, 0);
 		region->r_state = REGION_DEFAULT_OFF;
 		region->num_macros = num_banks;
+
+		if (last_region_halfsize && i == (num_regions - 1)) {
+			region->macro_size = macro_size / 2;
+			region->region_size = region_size / 2;
+		} else {
+			region->macro_size = macro_size;
+			region->region_size = region_size;
+		}
 
 		region->macro = devm_kzalloc(dev,
 					sizeof(struct ocmem_hw_macro) *

@@ -86,15 +86,19 @@ struct a2_mux_context_type {
 	struct list_head bam_tx_pool;
 	spinlock_t bam_tx_pool_spinlock;
 	struct workqueue_struct *a2_mux_tx_workqueue;
+	struct workqueue_struct *a2_mux_rx_workqueue;
 	int a2_mux_initialized;
 	bool bam_is_connected;
+	bool bam_connect_in_progress;
 	int a2_mux_send_power_vote_on_init_once;
 	int a2_mux_sw_bridge_is_connected;
+	bool a2_mux_dl_wakeup;
 	u32 a2_device_handle;
 	struct mutex wakeup_lock;
 	struct completion ul_wakeup_ack_completion;
 	struct completion bam_connection_completion;
 	struct completion request_resource_completion;
+	struct completion dl_wakeup_completion;
 	rwlock_t ul_wakeup_lock;
 	int wait_for_ack;
 	struct wake_lock bam_wakelock;
@@ -108,7 +112,7 @@ struct a2_mux_context_type {
 };
 static struct a2_mux_context_type *a2_mux_ctx;
 
-static void handle_bam_mux_cmd(struct sk_buff *rx_skb);
+static void handle_a2_mux_cmd(struct sk_buff *rx_skb);
 
 static bool bam_ch_is_open(int index)
 {
@@ -237,7 +241,6 @@ static inline void ul_powerdown(void)
 		INIT_COMPLETION(a2_mux_ctx->ul_wakeup_ack_completion);
 		power_vote(0);
 	}
-	a2_mux_ctx->bam_is_connected = false;
 }
 
 static void ul_wakeup(void)
@@ -245,7 +248,8 @@ static void ul_wakeup(void)
 	int ret;
 
 	mutex_lock(&a2_mux_ctx->wakeup_lock);
-	if (a2_mux_ctx->bam_is_connected) {
+	if (a2_mux_ctx->bam_is_connected &&
+				!a2_mux_ctx->bam_connect_in_progress) {
 		IPADBG("%s Already awake\n", __func__);
 		mutex_unlock(&a2_mux_ctx->wakeup_lock);
 		return;
@@ -259,7 +263,6 @@ static void ul_wakeup(void)
 			grab_wakelock();
 		else
 			a2_mux_ctx->a2_pc_disabled_wakelock_skipped = 1;
-		a2_mux_ctx->bam_is_connected = true;
 		mutex_unlock(&a2_mux_ctx->wakeup_lock);
 		return;
 	}
@@ -275,7 +278,8 @@ static void ul_wakeup(void)
 					A2_MUX_COMPLETION_TIMEOUT);
 		a2_mux_ctx->wait_for_ack = 0;
 		if (unlikely(ret == 0)) {
-			IPADBG("%s timeout previous ack\n", __func__);
+			IPAERR("%s previous ack from modem timed out\n",
+				__func__);
 			goto bail;
 		}
 	}
@@ -285,7 +289,7 @@ static void ul_wakeup(void)
 	ret = wait_for_completion_timeout(&a2_mux_ctx->ul_wakeup_ack_completion,
 					A2_MUX_COMPLETION_TIMEOUT);
 	if (unlikely(ret == 0)) {
-		IPADBG("%s timeout wakeup ack\n", __func__);
+		IPAERR("%s wakup ack from modem timed out\n", __func__);
 		goto bail;
 	}
 	INIT_COMPLETION(a2_mux_ctx->bam_connection_completion);
@@ -294,11 +298,10 @@ static void ul_wakeup(void)
 			&a2_mux_ctx->bam_connection_completion,
 			A2_MUX_COMPLETION_TIMEOUT);
 		if (unlikely(ret == 0)) {
-			IPADBG("%s timeout power on\n", __func__);
+			IPAERR("%s modem power on timed out\n", __func__);
 			goto bail;
 		}
 	}
-	a2_mux_ctx->bam_is_connected = true;
 	IPADBG("%s complete\n", __func__);
 	mutex_unlock(&a2_mux_ctx->wakeup_lock);
 	return;
@@ -308,7 +311,7 @@ bail:
 	return;
 }
 
-static void bam_mux_write_done(bool is_tethered, struct sk_buff *skb)
+static void a2_mux_write_done(bool is_tethered, struct sk_buff *skb)
 {
 	struct tx_pkt_info *info;
 	enum a2_mux_logical_channel_id lcid;
@@ -367,26 +370,95 @@ static void bam_mux_write_done(bool is_tethered, struct sk_buff *skb)
 		dev_kfree_skb_any(skb);
 }
 
+static bool a2_mux_kickoff_ul_power_down(void)
+
+{
+	bool is_connected;
+
+	write_lock(&a2_mux_ctx->ul_wakeup_lock);
+	if (a2_mux_ctx->bam_connect_in_progress) {
+		a2_mux_ctx->bam_is_connected = false;
+		is_connected = true;
+	} else {
+		is_connected = a2_mux_ctx->bam_is_connected;
+		a2_mux_ctx->bam_is_connected = false;
+		if (is_connected) {
+			a2_mux_ctx->bam_connect_in_progress = true;
+			queue_work(a2_mux_ctx->a2_mux_tx_workqueue,
+				&a2_mux_ctx->kickoff_ul_power_down);
+		}
+	}
+	write_unlock(&a2_mux_ctx->ul_wakeup_lock);
+	return is_connected;
+}
+
+static bool a2_mux_kickoff_ul_wakeup(void)
+{
+	bool is_connected;
+
+	write_lock(&a2_mux_ctx->ul_wakeup_lock);
+	if (a2_mux_ctx->bam_connect_in_progress) {
+		a2_mux_ctx->bam_is_connected = true;
+		is_connected = false;
+	} else {
+		is_connected = a2_mux_ctx->bam_is_connected;
+		a2_mux_ctx->bam_is_connected = true;
+		if (!is_connected) {
+			a2_mux_ctx->bam_connect_in_progress = true;
+			queue_work(a2_mux_ctx->a2_mux_tx_workqueue,
+				&a2_mux_ctx->kickoff_ul_wakeup);
+		}
+	}
+	write_unlock(&a2_mux_ctx->ul_wakeup_lock);
+	return is_connected;
+}
+
 static void kickoff_ul_power_down_func(struct work_struct *work)
 {
-	unsigned long flags;
+	bool is_connected;
 
-	write_lock_irqsave(&a2_mux_ctx->ul_wakeup_lock, flags);
-	if (a2_mux_ctx->bam_is_connected) {
-		IPADBG("%s: UL active - forcing powerdown\n", __func__);
-		ul_powerdown();
-	}
-	write_unlock_irqrestore(&a2_mux_ctx->ul_wakeup_lock, flags);
-	ipa_rm_notify_completion(IPA_RM_RESOURCE_RELEASED,
-			IPA_RM_RESOURCE_A2_CONS);
+	IPADBG("%s: UL active - forcing powerdown\n", __func__);
+	ul_powerdown();
+	write_lock(&a2_mux_ctx->ul_wakeup_lock);
+	is_connected = a2_mux_ctx->bam_is_connected;
+	a2_mux_ctx->bam_is_connected = false;
+	a2_mux_ctx->bam_connect_in_progress = false;
+	write_unlock(&a2_mux_ctx->ul_wakeup_lock);
+	if (is_connected)
+		a2_mux_kickoff_ul_wakeup();
+	else
+		ipa_rm_notify_completion(IPA_RM_RESOURCE_RELEASED,
+						IPA_RM_RESOURCE_A2_CONS);
 }
 
 static void kickoff_ul_wakeup_func(struct work_struct *work)
 {
-	if (!a2_mux_ctx->bam_is_connected)
-		ul_wakeup();
-	ipa_rm_notify_completion(IPA_RM_RESOURCE_GRANTED,
-			IPA_RM_RESOURCE_A2_CONS);
+	bool is_connected;
+	int ret;
+
+	ul_wakeup();
+	write_lock(&a2_mux_ctx->ul_wakeup_lock);
+	is_connected = a2_mux_ctx->bam_is_connected;
+	a2_mux_ctx->bam_is_connected = true;
+	a2_mux_ctx->bam_connect_in_progress = false;
+	write_unlock(&a2_mux_ctx->ul_wakeup_lock);
+	if (is_connected)
+		ipa_rm_notify_completion(IPA_RM_RESOURCE_GRANTED,
+				IPA_RM_RESOURCE_A2_CONS);
+	INIT_COMPLETION(a2_mux_ctx->dl_wakeup_completion);
+	if (!a2_mux_ctx->a2_mux_dl_wakeup) {
+		ret = wait_for_completion_timeout(
+			&a2_mux_ctx->dl_wakeup_completion,
+			A2_MUX_COMPLETION_TIMEOUT);
+		if (unlikely(ret == 0)) {
+			IPAERR("%s timeout waiting for A2 PROD granted\n",
+				__func__);
+			BUG();
+			return;
+		}
+	}
+	if (!is_connected)
+		a2_mux_kickoff_ul_power_down();
 }
 
 static void kickoff_ul_request_resource_func(struct work_struct *work)
@@ -405,40 +477,15 @@ static void kickoff_ul_request_resource_func(struct work_struct *work)
 			&a2_mux_ctx->request_resource_completion,
 			A2_MUX_COMPLETION_TIMEOUT);
 		if (unlikely(ret == 0)) {
-			IPADBG("%s timeout request A2 PROD resource\n",
-				     __func__);
+			IPAERR("%s timeout waiting for A2 PROD granted\n",
+				__func__);
 			BUG();
 			return;
 		}
 	}
 	toggle_apps_ack();
-}
-
-static bool msm_bam_dmux_kickoff_ul_wakeup(void)
-{
-	bool is_connected;
-
-	read_lock(&a2_mux_ctx->ul_wakeup_lock);
-	is_connected = a2_mux_ctx->bam_is_connected;
-	read_unlock(&a2_mux_ctx->ul_wakeup_lock);
-	if (!is_connected)
-		queue_work(a2_mux_ctx->a2_mux_tx_workqueue,
-			   &a2_mux_ctx->kickoff_ul_wakeup);
-	return is_connected;
-}
-
-static bool msm_bam_dmux_kickoff_ul_power_down(void)
-
-{
-	bool is_connected;
-
-	read_lock(&a2_mux_ctx->ul_wakeup_lock);
-	is_connected = a2_mux_ctx->bam_is_connected;
-	read_unlock(&a2_mux_ctx->ul_wakeup_lock);
-	if (is_connected)
-		queue_work(a2_mux_ctx->a2_mux_tx_workqueue,
-			   &a2_mux_ctx->kickoff_ul_power_down);
-	return is_connected;
+	a2_mux_ctx->a2_mux_dl_wakeup = true;
+	complete_all(&a2_mux_ctx->dl_wakeup_completion);
 }
 
 static void ipa_embedded_notify(void *priv,
@@ -447,10 +494,10 @@ static void ipa_embedded_notify(void *priv,
 {
 	switch (evt) {
 	case IPA_RECEIVE:
-		handle_bam_mux_cmd((struct sk_buff *)data);
+		handle_a2_mux_cmd((struct sk_buff *)data);
 		break;
 	case IPA_WRITE_DONE:
-		bam_mux_write_done(false, (struct sk_buff *)data);
+		a2_mux_write_done(false, (struct sk_buff *)data);
 		break;
 	default:
 		IPAERR("%s: Unknown event %d\n", __func__, evt);
@@ -472,7 +519,7 @@ static void ipa_tethered_notify(void *priv,
 				data);
 		break;
 	case IPA_WRITE_DONE:
-		bam_mux_write_done(true, (struct sk_buff *)data);
+		a2_mux_write_done(true, (struct sk_buff *)data);
 		break;
 	default:
 		IPAERR("%s: Unknown event %d\n", __func__, evt);
@@ -491,6 +538,8 @@ static int connect_to_bam(void)
 				__func__);
 		return -EFAULT;
 	}
+	if (sps_ctrl_bam_dma_clk(true))
+		WARN_ON(1);
 	memset(&connect_params, 0, sizeof(struct ipa_sys_connect_params));
 	connect_params.client = IPA_CLIENT_A2_TETHERED_CONS;
 	connect_params.notify = ipa_tethered_notify;
@@ -561,6 +610,8 @@ bridge_tethered_dl_failed:
 	ipa_bridge_teardown(IPA_BRIDGE_DIR_UL, IPA_BRIDGE_TYPE_TETHERED,
 			a2_mux_ctx->tethered_prod);
 bridge_tethered_ul_failed:
+	if (sps_ctrl_bam_dma_clk(false))
+		WARN_ON(1);
 	return ret;
 }
 
@@ -602,16 +653,19 @@ static int disconnect_to_bam(void)
 				__func__, ret);
 		return ret;
 	}
+	if (sps_ctrl_bam_dma_clk(false))
+		WARN_ON(1);
 	verify_tx_queue_is_empty(__func__);
 	(void) ipa_rm_release_resource(IPA_RM_RESOURCE_A2_PROD);
 	if (a2_mux_ctx->disconnect_ack)
 		toggle_apps_ack();
+	a2_mux_ctx->a2_mux_dl_wakeup = false;
 	a2_mux_ctx->a2_mux_sw_bridge_is_connected = 0;
 	complete_all(&a2_mux_ctx->bam_connection_completion);
 	return 0;
 }
 
-static void bam_dmux_smsm_cb(void *priv,
+static void a2_mux_smsm_cb(void *priv,
 		u32 old_state,
 		u32 new_state)
 {
@@ -631,7 +685,7 @@ static void bam_dmux_smsm_cb(void *priv,
 		IPA_STATS_INC_CNT(ipa_ctx->stats.a2_power_on_reqs_in);
 		grab_wakelock();
 		(void) connect_to_bam();
-		queue_work(a2_mux_ctx->a2_mux_tx_workqueue,
+		queue_work(a2_mux_ctx->a2_mux_rx_workqueue,
 			   &a2_mux_ctx->kickoff_ul_request_resource);
 	} else if (!(new_state & SMSM_A2_POWER_CONTROL)) {
 		IPADBG("%s: MODEM PWR CTRL 0\n", __func__);
@@ -644,7 +698,7 @@ static void bam_dmux_smsm_cb(void *priv,
 	mutex_unlock(&a2_mux_ctx->smsm_cb_lock);
 }
 
-static void bam_dmux_smsm_ack_cb(void *priv, u32 old_state,
+static void a2_mux_smsm_ack_cb(void *priv, u32 old_state,
 						u32 new_state)
 {
 	IPADBG("%s: 0x%08x -> 0x%08x\n", __func__, old_state,
@@ -658,7 +712,7 @@ static int a2_mux_pm_rm_request_resource(void)
 	int result = 0;
 	bool is_connected;
 
-	is_connected = msm_bam_dmux_kickoff_ul_wakeup();
+	is_connected = a2_mux_kickoff_ul_wakeup();
 	if (!is_connected)
 		result = -EINPROGRESS;
 	return result;
@@ -669,7 +723,7 @@ static int a2_mux_pm_rm_release_resource(void)
 	int result = 0;
 	bool is_connected;
 
-	is_connected = msm_bam_dmux_kickoff_ul_power_down();
+	is_connected = a2_mux_kickoff_ul_power_down();
 	if (is_connected)
 		result = -EINPROGRESS;
 	return result;
@@ -711,7 +765,7 @@ bail:
 	return result;
 }
 
-static void bam_mux_process_data(struct sk_buff *rx_skb)
+static void a2_mux_process_data(struct sk_buff *rx_skb)
 {
 	unsigned long flags;
 	struct bam_mux_hdr *rx_hdr;
@@ -735,7 +789,7 @@ static void bam_mux_process_data(struct sk_buff *rx_skb)
 			       flags);
 }
 
-static void handle_bam_mux_cmd_open(struct bam_mux_hdr *rx_hdr)
+static void handle_a2_mux_cmd_open(struct bam_mux_hdr *rx_hdr)
 {
 	unsigned long flags;
 
@@ -746,7 +800,7 @@ static void handle_bam_mux_cmd_open(struct bam_mux_hdr *rx_hdr)
 			       flags);
 }
 
-static void handle_bam_mux_cmd(struct sk_buff *rx_skb)
+static void handle_a2_mux_cmd(struct sk_buff *rx_skb)
 {
 	unsigned long flags;
 	struct bam_mux_hdr *rx_hdr;
@@ -776,12 +830,12 @@ static void handle_bam_mux_cmd(struct sk_buff *rx_skb)
 	}
 	switch (rx_hdr->cmd) {
 	case BAM_MUX_HDR_CMD_DATA:
-		bam_mux_process_data(rx_skb);
+		a2_mux_process_data(rx_skb);
 		break;
 	case BAM_MUX_HDR_CMD_OPEN:
 		IPADBG("%s: opening cid %d PC enabled\n", __func__,
 				rx_hdr->ch_id);
-		handle_bam_mux_cmd_open(rx_hdr);
+		handle_a2_mux_cmd_open(rx_hdr);
 		if (!(rx_hdr->reserved & ENABLE_DISCONNECT_ACK)) {
 			IPADBG("%s: deactivating disconnect ack\n",
 								__func__);
@@ -800,7 +854,7 @@ static void handle_bam_mux_cmd(struct sk_buff *rx_skb)
 			a2_mux_ctx->a2_pc_disabled = 1;
 			ul_wakeup();
 		}
-		handle_bam_mux_cmd_open(rx_hdr);
+		handle_a2_mux_cmd_open(rx_hdr);
 		dev_kfree_skb_any(rx_skb);
 		break;
 	case BAM_MUX_HDR_CMD_CLOSE:
@@ -825,7 +879,7 @@ static void handle_bam_mux_cmd(struct sk_buff *rx_skb)
 	}
 }
 
-static int bam_mux_write_cmd(void *data, u32 len)
+static int a2_mux_write_cmd(void *data, u32 len)
 {
 	int rc;
 	struct tx_pkt_info *pkt;
@@ -926,7 +980,8 @@ int a2_mux_write(enum a2_mux_logical_channel_id id, struct sk_buff *skb)
 	}
 	spin_unlock_irqrestore(&a2_mux_ctx->bam_ch[id].lock, flags);
 	read_lock(&a2_mux_ctx->ul_wakeup_lock);
-	is_connected = a2_mux_ctx->bam_is_connected;
+	is_connected = a2_mux_ctx->bam_is_connected &&
+					!a2_mux_ctx->bam_connect_in_progress;
 	read_unlock(&a2_mux_ctx->ul_wakeup_lock);
 	if (!is_connected)
 		return -ENODEV;
@@ -1230,7 +1285,8 @@ int a2_mux_open_channel(enum a2_mux_logical_channel_id lcid,
 	a2_mux_ctx->bam_ch[lcid].use_wm = 0;
 	spin_unlock_irqrestore(&a2_mux_ctx->bam_ch[lcid].lock, flags);
 	read_lock(&a2_mux_ctx->ul_wakeup_lock);
-	is_connected = a2_mux_ctx->bam_is_connected;
+	is_connected = a2_mux_ctx->bam_is_connected &&
+					!a2_mux_ctx->bam_connect_in_progress;
 	read_unlock(&a2_mux_ctx->ul_wakeup_lock);
 	if (!is_connected)
 		return -ENODEV;
@@ -1258,7 +1314,7 @@ int a2_mux_open_channel(enum a2_mux_logical_channel_id lcid,
 		hdr->pkt_len = htons(hdr->pkt_len);
 		IPADBG("convert to network order magic_num=%d, pkt_len=%d\n",
 		    hdr->magic_num, hdr->pkt_len);
-		rc = bam_mux_write_cmd((void *)hdr,
+		rc = a2_mux_write_cmd((void *)hdr,
 				       sizeof(struct bam_mux_hdr));
 		if (rc) {
 			IPAERR("%s: bam_mux_write_cmd failed %d; ch: %d\n",
@@ -1299,7 +1355,8 @@ int a2_mux_close_channel(enum a2_mux_logical_channel_id lcid)
 	if (!a2_mux_ctx->a2_mux_initialized)
 		return -ENODEV;
 	read_lock(&a2_mux_ctx->ul_wakeup_lock);
-	is_connected = a2_mux_ctx->bam_is_connected;
+	is_connected = a2_mux_ctx->bam_is_connected &&
+					!a2_mux_ctx->bam_connect_in_progress;
 	read_unlock(&a2_mux_ctx->ul_wakeup_lock);
 	if (!is_connected && !bam_ch_is_in_reset(lcid))
 		return -ENODEV;
@@ -1329,7 +1386,7 @@ int a2_mux_close_channel(enum a2_mux_logical_channel_id lcid)
 		hdr->pkt_len = htons(hdr->pkt_len);
 		IPADBG("convert to network order magic_num=%d, pkt_len=%d\n",
 		    hdr->magic_num, hdr->pkt_len);
-		rc = bam_mux_write_cmd((void *)hdr, sizeof(struct bam_mux_hdr));
+		rc = a2_mux_write_cmd((void *)hdr, sizeof(struct bam_mux_hdr));
 		if (rc) {
 			IPAERR("%s: bam_mux_write_cmd failed %d; ch: %d\n",
 			       __func__, rc, lcid);
@@ -1412,6 +1469,35 @@ int a2_mux_is_ch_low(enum a2_mux_logical_channel_id lcid)
 	return ret;
 }
 
+/**
+ * a2_mux_is_ch_empty() - checks if channel is empty.
+ * @lcid: logical channel ID
+ *
+ * Returns: true if the channel is empty,
+ *		false otherwise
+ */
+int a2_mux_is_ch_empty(enum a2_mux_logical_channel_id lcid)
+{
+	unsigned long flags;
+	int ret;
+
+	if (lcid >= A2_MUX_NUM_CHANNELS ||
+			lcid < 0)
+		return -EINVAL;
+	if (!a2_mux_ctx->a2_mux_initialized)
+		return -ENODEV;
+	spin_lock_irqsave(&a2_mux_ctx->bam_ch[lcid].lock, flags);
+	a2_mux_ctx->bam_ch[lcid].use_wm = 1;
+	ret = a2_mux_ctx->bam_ch[lcid].num_tx_pkts == 0;
+	if (!bam_ch_is_local_open(lcid)) {
+		ret = -ENODEV;
+		IPAERR("%s: port not open: %d\n", __func__,
+		       a2_mux_ctx->bam_ch[lcid].status);
+	}
+	spin_unlock_irqrestore(&a2_mux_ctx->bam_ch[lcid].lock, flags);
+	return ret;
+}
+
 static int a2_mux_initialize_context(int handle)
 {
 	int i;
@@ -1435,6 +1521,7 @@ static int a2_mux_initialize_context(int handle)
 	init_completion(&a2_mux_ctx->ul_wakeup_ack_completion);
 	init_completion(&a2_mux_ctx->bam_connection_completion);
 	init_completion(&a2_mux_ctx->request_resource_completion);
+	init_completion(&a2_mux_ctx->dl_wakeup_completion);
 	wake_lock_init(&a2_mux_ctx->bam_wakelock,
 		       WAKE_LOCK_SUSPEND, "a2_mux_wakelock");
 	a2_mux_ctx->a2_mux_initialized = 1;
@@ -1444,6 +1531,13 @@ static int a2_mux_initialize_context(int handle)
 	if (!a2_mux_ctx->a2_mux_tx_workqueue) {
 		IPAERR("%s: a2_mux_tx_workqueue alloc failed\n",
 		       __func__);
+		return -ENOMEM;
+	}
+	a2_mux_ctx->a2_mux_rx_workqueue =
+		create_singlethread_workqueue("a2_mux_rx");
+	if (!a2_mux_ctx->a2_mux_rx_workqueue) {
+		IPAERR("%s: a2_mux_rx_workqueue alloc failed\n",
+			__func__);
 		return -ENOMEM;
 	}
 	return 0;
@@ -1515,7 +1609,7 @@ int a2_mux_init(void)
 		goto ctx_alloc_failed;
 	}
 	rc = smsm_state_cb_register(SMSM_MODEM_STATE, SMSM_A2_POWER_CONTROL,
-					bam_dmux_smsm_cb, NULL);
+					a2_mux_smsm_cb, NULL);
 	if (rc) {
 		IPAERR("%s: smsm cb register failed, rc: %d\n", __func__, rc);
 		rc = -ENOMEM;
@@ -1523,7 +1617,7 @@ int a2_mux_init(void)
 	}
 	rc = smsm_state_cb_register(SMSM_MODEM_STATE,
 				    SMSM_A2_POWER_CONTROL_ACK,
-				    bam_dmux_smsm_ack_cb, NULL);
+				    a2_mux_smsm_ack_cb, NULL);
 	if (rc) {
 		IPAERR("%s: smsm ack cb register failed, rc: %d\n",
 		       __func__, rc);
@@ -1531,7 +1625,7 @@ int a2_mux_init(void)
 		goto smsm_ack_cb_reg_failed;
 	}
 	if (smsm_get_state(SMSM_MODEM_STATE) & SMSM_A2_POWER_CONTROL)
-		bam_dmux_smsm_cb(NULL, 0, smsm_get_state(SMSM_MODEM_STATE));
+		a2_mux_smsm_cb(NULL, 0, smsm_get_state(SMSM_MODEM_STATE));
 
 	/*
 	 * Set remote channel open for tethered channel since there is
@@ -1545,7 +1639,7 @@ int a2_mux_init(void)
 smsm_ack_cb_reg_failed:
 	smsm_state_cb_deregister(SMSM_MODEM_STATE,
 				SMSM_A2_POWER_CONTROL,
-				bam_dmux_smsm_cb, NULL);
+				a2_mux_smsm_cb, NULL);
 ctx_alloc_failed:
 	kfree(a2_mux_ctx);
 register_bam_failed:
@@ -1563,13 +1657,15 @@ int a2_mux_exit(void)
 {
 	smsm_state_cb_deregister(SMSM_MODEM_STATE,
 			SMSM_A2_POWER_CONTROL_ACK,
-			bam_dmux_smsm_ack_cb,
+			a2_mux_smsm_ack_cb,
 			NULL);
 	smsm_state_cb_deregister(SMSM_MODEM_STATE,
 				SMSM_A2_POWER_CONTROL,
-				bam_dmux_smsm_cb,
+				a2_mux_smsm_cb,
 				NULL);
 	if (a2_mux_ctx->a2_mux_tx_workqueue)
 		destroy_workqueue(a2_mux_ctx->a2_mux_tx_workqueue);
+	if (a2_mux_ctx->a2_mux_rx_workqueue)
+		destroy_workqueue(a2_mux_ctx->a2_mux_rx_workqueue);
 	return 0;
 }

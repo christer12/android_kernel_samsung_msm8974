@@ -183,7 +183,7 @@ struct msm_gpio_set_tbl {
 };
 
 struct msm_camera_gpio_num_info {
-	uint16_t gpio_num[2];
+	uint16_t gpio_num[13];
 };
 
 struct msm_camera_gpio_conf {
@@ -610,9 +610,12 @@ void msm_map_msm8930_io(void);
 void msm_map_apq8064_io(void);
 void msm_map_msm7x30_io(void);
 void msm_map_fsm9xxx_io(void);
+void msm_map_fsm9900_io(void);
+void fsm9900_init_gpiomux(void);
 void msm_map_8974_io(void);
 void msm_map_8084_io(void);
 void msm_map_msmkrypton_io(void);
+void msm_map_msmsamarium_io(void);
 void msm_map_msm8625_io(void);
 void msm_map_msm9625_io(void);
 void msm_init_irq(void);
@@ -624,6 +627,7 @@ void msm_8974_init_gpiomux(void);
 void apq8084_init_gpiomux(void);
 void msm9625_init_gpiomux(void);
 void msmkrypton_init_gpiomux(void);
+void msmsamarium_init_gpiomux(void);
 void msm_map_mpq8092_io(void);
 void mpq8092_init_gpiomux(void);
 void msm_map_msm8226_io(void);
@@ -670,7 +674,9 @@ extern phys_addr_t msm_shared_ram_phys; /* defined in arch/arm/mach-msm/io.c */
 void msm8974_bt_init(void);
 #endif
 
-#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE)
+#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE) || \
+    defined(CONFIG_BCM4339) || defined(CONFIG_BCM4339_MODULE) || \
+    defined(CONFIG_BCM4354) || defined(CONFIG_BCM4354_MODULE)
 int brcm_wlan_init(void);
 int brcm_wifi_status_register(
 			void (*callback)(int card_present, void *dev_id), void *dev_id);

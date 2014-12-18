@@ -20,7 +20,7 @@
 #include "table_msm8974.h"
 
 /* Origin Shift */
-#if defined(CONFIG_SEC_VIENNA_PROJECT)
+#if defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)
 short origin_offset[] = {0, 0};
 #else
 short origin_offset[] = {752, 643};

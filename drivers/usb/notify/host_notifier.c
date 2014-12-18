@@ -13,8 +13,11 @@
 #include <linux/platform_device.h>
 #include <linux/usb/otg.h>
 #include <linux/host_notify.h>
+#if defined(CONFIG_MFD_MAX77803)
 #include <linux/mfd/max77803.h>
-
+#elif defined(CONFIG_MFD_MAX77804K)
+#include <linux/mfd/max77804k.h>
+#endif
 #ifdef pr_fmt
 #undef pr_fmt
 #endif
@@ -24,6 +27,7 @@ struct  hnotifier_info {
 	struct usb_phy *phy;
 	struct host_notify_dev ndev;
 	struct work_struct noti_work;
+	struct booster_data *booster;
 
 	int event;
 	int prev_event;
@@ -34,20 +38,25 @@ static struct hnotifier_info ninfo = {
 };
 
 extern int sec_handle_event(int enable);
-#ifdef CONFIG_CHARGER_BQ24260
-extern void bq24260_otg_control(int enable);
-#endif
+static int safe_boost(struct hnotifier_info *pinfo, int enable)
+{
+	if (pinfo && pinfo->booster) {
+		pinfo->booster->boost(enable);
+		return 0;
+	} else {
+		pr_err("Error! No booster.\n");
+		return -1;
+	}
+}
+
 static int host_notifier_booster(int enable, struct host_notify_dev *ndev)
 {
+	struct hnotifier_info *pinfo;
 	int ret = 0;
 	pr_info("booster %s\n", enable ? "ON" : "OFF");
 
-#ifdef CONFIG_MFD_MAX77803
-	muic_otg_control(enable);
-#endif
-#ifdef CONFIG_CHARGER_BQ24260
-	bq24260_otg_control(enable);
-#endif
+	pinfo = container_of(ndev, struct hnotifier_info, ndev);
+	safe_boost(pinfo, enable);
 
 	return ret;
 }
@@ -67,12 +76,7 @@ static void hnotifier_work(struct work_struct *w)
 	case HNOTIFY_ID:
 		pr_info("!ID\n");
 		host_state_notify(&pinfo->ndev,	NOTIFY_HOST_ADD);
-	#ifdef CONFIG_MFD_MAX77803
-		muic_otg_control(1);
-	#endif
-	#ifdef CONFIG_CHARGER_BQ24260
-		bq24260_otg_control(1);
-	#endif
+		safe_boost(pinfo, 1);
 		sec_handle_event(1);
 		break;
 	case HNOTIFY_ENUMERATED:
@@ -81,12 +85,7 @@ static void hnotifier_work(struct work_struct *w)
 		pr_info("ID\n");
 		host_state_notify(&pinfo->ndev,	NOTIFY_HOST_REMOVE);
 		sec_handle_event(0);
-	#ifdef CONFIG_MFD_MAX77803
-		muic_otg_control(0);
-	#endif
-	#ifdef CONFIG_CHARGER_BQ24260
-		bq24260_otg_control(0);
-	#endif
+		safe_boost(pinfo, 0);
 		break;
 	case HNOTIFY_OVERCURRENT:
 		pr_info("OVP\n");
@@ -105,7 +104,25 @@ static void hnotifier_work(struct work_struct *w)
 		sec_handle_event(0);
 		break;
 	case HNOTIFY_AUDIODOCK_ON:
+		sec_handle_event(1);
+		break;
 	case HNOTIFY_AUDIODOCK_OFF:
+		sec_handle_event(0);
+		break;
+	case HNOTIFY_LANHUB_ON:
+		host_state_notify(&pinfo->ndev,	NOTIFY_HOST_ADD);
+		sec_handle_event(1);
+		break;
+	case HNOTIFY_LANHUB_OFF:
+		host_state_notify(&pinfo->ndev,	NOTIFY_HOST_REMOVE);
+		sec_handle_event(0);
+		break;
+	case HNOTIFY_LANHUBTA_ON:
+		safe_boost(pinfo, 2);
+		break;
+	case HNOTIFY_LANHUBTA_OFF:
+		safe_boost(pinfo, 1);
+		break;
 	default:
 		break;
 	}
@@ -128,12 +145,38 @@ int sec_otg_notify(int event)
 }
 EXPORT_SYMBOL(sec_otg_notify);
 
-int sec_otg_set_booster(int (*f)(int, struct host_notify_dev*))
+int sec_otg_register_booster(struct booster_data *booster)
 {
-	ninfo.ndev.set_booster = f;
-	return 0;
+	int ret = 0;
+	if (ninfo.booster) {
+		pr_err("booster %s is already registered.\n", ninfo.booster->name);
+		return -EBUSY;
+	}
+
+	if (booster && booster->name && booster->boost) {
+		pr_info("register %s\n", booster->name);
+		ninfo.booster = booster;
+	} else {
+		pr_err("register failed\n");
+		ret = -ENODATA;
+	}
+	return ret;
 }
-EXPORT_SYMBOL(sec_otg_set_booster);
+EXPORT_SYMBOL(sec_otg_register_booster);
+
+int sec_get_notification(int ndata)
+{
+	int ret = 0;
+
+	if (HNOTIFY_EVENT == ndata)
+		ret = ninfo.event;
+	else if (HNOTIFY_MODE == ndata)
+		ret = ninfo.ndev.mode;
+
+	pr_info("ndata %d : %d\n", ndata, ret);
+	return ret;
+}
+EXPORT_SYMBOL(sec_get_notification);
 
 static int host_notifier_probe(struct platform_device *pdev)
 {

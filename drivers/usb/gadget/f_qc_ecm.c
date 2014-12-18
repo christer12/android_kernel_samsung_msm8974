@@ -75,17 +75,10 @@ struct f_ecm_qc {
 	struct usb_request		*notify_req;
 	u8				notify_state;
 	bool				is_open;
+	struct data_port		bam_port;
 };
 
-struct f_ecm_qc_ipa_params {
-	u8			dev_mac[ETH_ALEN];
-	u8			host_mac[ETH_ALEN];
-	ecm_ipa_callback	ipa_rx_cb;
-	ecm_ipa_callback	ipa_tx_cb;
-	void			*ipa_priv;
-};
-
-static struct f_ecm_qc_ipa_params ipa_params;
+static struct ecm_ipa_params ipa_params;
 
 static inline struct f_ecm_qc *func_to_ecm_qc(struct usb_function *f)
 {
@@ -119,8 +112,9 @@ static inline unsigned ecm_qc_bitrate(struct usb_gadget *g)
 #define ECM_QC_LOG2_STATUS_INTERVAL_MSEC	5	/* 1 << 5 == 32 msec */
 #define ECM_QC_STATUS_BYTECOUNT		16	/* 8 byte header + data */
 
-/* currently only one std ecm instance is supported */
+/* Currently only one std ecm instance is supported - port index 0. */
 #define ECM_QC_NO_PORTS						1
+#define ECM_QC_ACTIVE_PORT					0
 
 /* interface descriptor: */
 
@@ -304,8 +298,6 @@ static struct usb_gadget_strings *ecm_qc_strings[] = {
 	NULL,
 };
 
-static struct data_port ecm_qc_bam_port;
-
 static void ecm_qc_do_notify(struct f_ecm_qc *ecm)
 {
 	struct usb_request		*req = ecm->notify_req;
@@ -396,9 +388,10 @@ static int ecm_qc_bam_connect(struct f_ecm_qc *dev)
 	enum peer_bam peer_bam = (dev->xport == USB_GADGET_XPORT_BAM2BAM_IPA) ?
 		IPA_P_BAM : A2_P_BAM;
 
-	ecm_qc_bam_port.cdev = cdev;
-	ecm_qc_bam_port.in = dev->port.in_ep;
-	ecm_qc_bam_port.out = dev->port.out_ep;
+	dev->bam_port.cdev = cdev;
+	dev->bam_port.func = &dev->port.func;
+	dev->bam_port.in = dev->port.in_ep;
+	dev->bam_port.out = dev->port.out_ep;
 
 	/* currently we use the first connection */
 	src_connection_idx = usb_bam_get_connection_idx(gadget->name, peer_bam,
@@ -409,7 +402,7 @@ static int ecm_qc_bam_connect(struct f_ecm_qc *dev)
 		pr_err("%s: usb_bam_get_connection_idx failed\n", __func__);
 		return ret;
 	}
-	ret = bam_data_connect(&ecm_qc_bam_port, 0, dev->xport,
+	ret = bam_data_connect(&dev->bam_port, 0, dev->xport,
 		src_connection_idx, dst_connection_idx, USB_FUNC_ECM);
 	if (ret) {
 		pr_err("bam_data_connect failed: err:%d\n", ret);
@@ -428,24 +421,24 @@ static int ecm_qc_bam_disconnect(struct f_ecm_qc *dev)
 {
 	pr_debug("dev:%p. Disconnect BAM.\n", dev);
 
-	bam_data_disconnect(&ecm_qc_bam_port, 0);
+	bam_data_disconnect(&dev->bam_port, 0);
 
 	return 0;
 }
 
 void *ecm_qc_get_ipa_rx_cb(void)
 {
-	return ipa_params.ipa_rx_cb;
+	return ipa_params.ecm_ipa_rx_dp_notify;
 }
 
 void *ecm_qc_get_ipa_tx_cb(void)
 {
-	return ipa_params.ipa_tx_cb;
+	return ipa_params.ecm_ipa_tx_dp_notify;
 }
 
 void *ecm_qc_get_ipa_priv(void)
 {
-	return ipa_params.ipa_priv;
+	return ipa_params.private;
 }
 
 /*-------------------------------------------------------------------------*/
@@ -607,7 +600,7 @@ static int ecm_qc_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 			DBG(cdev, "activate ecm\n");
 			if (ecm->xport != USB_GADGET_XPORT_BAM2BAM_IPA) {
 				net = gether_qc_connect_name(&ecm->port,
-								"ecm0");
+								"ecm0", true);
 				if (IS_ERR(net))
 					return PTR_ERR(net);
 			}
@@ -661,6 +654,20 @@ static void ecm_qc_disable(struct usb_function *f)
 		ecm->notify->driver_data = NULL;
 		ecm->notify->desc = NULL;
 	}
+}
+
+static void ecm_qc_suspend(struct usb_function *f)
+{
+	pr_debug("ecm suspended\n");
+
+	bam_data_suspend(ECM_QC_ACTIVE_PORT);
+}
+
+static void ecm_qc_resume(struct usb_function *f)
+{
+	pr_debug("ecm resumed\n");
+
+	bam_data_resume(ECM_QC_ACTIVE_PORT);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -839,6 +846,7 @@ ecm_qc_unbind(struct usb_configuration *c, struct usb_function *f)
 
 	DBG(c->cdev, "ecm unbind\n");
 
+	bam_data_destroy(0);
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
 	usb_free_descriptors(f->descriptors);
@@ -849,7 +857,7 @@ ecm_qc_unbind(struct usb_configuration *c, struct usb_function *f)
 	ecm_qc_string_defs[1].s = NULL;
 
 	if (ecm->xport == USB_GADGET_XPORT_BAM2BAM_IPA)
-		ecm_ipa_cleanup(ipa_params.ipa_priv);
+		ecm_ipa_cleanup(ipa_params.private);
 
 	kfree(ecm);
 }
@@ -920,12 +928,13 @@ ecm_qc_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
 
 	/* export host's Ethernet address in CDC format */
 	if (ecm->xport == USB_GADGET_XPORT_BAM2BAM_IPA) {
-		gether_qc_get_macs(ipa_params.dev_mac, ipa_params.host_mac);
+		gether_qc_get_macs(ipa_params.device_ethaddr,
+				ipa_params.host_ethaddr);
 		snprintf(ecm->ethaddr, sizeof ecm->ethaddr,
 		"%02X%02X%02X%02X%02X%02X",
-		ipa_params.host_mac[0], ipa_params.host_mac[1],
-		ipa_params.host_mac[2], ipa_params.host_mac[3],
-		ipa_params.host_mac[4], ipa_params.host_mac[5]);
+		ipa_params.host_ethaddr[0], ipa_params.host_ethaddr[1],
+		ipa_params.host_ethaddr[2], ipa_params.host_ethaddr[3],
+		ipa_params.host_ethaddr[4], ipa_params.host_ethaddr[5]);
 	} else
 		snprintf(ecm->ethaddr, sizeof ecm->ethaddr,
 		"%02X%02X%02X%02X%02X%02X",
@@ -945,6 +954,8 @@ ecm_qc_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
 	ecm->port.func.get_alt = ecm_qc_get_alt;
 	ecm->port.func.setup = ecm_qc_setup;
 	ecm->port.func.disable = ecm_qc_disable;
+	ecm->port.func.suspend = ecm_qc_suspend;
+	ecm->port.func.resume = ecm_qc_resume;
 
 	status = usb_add_function(c, &ecm->port.func);
 	if (status) {
@@ -957,21 +968,15 @@ ecm_qc_bind_config(struct usb_configuration *c, u8 ethaddr[ETH_ALEN],
 	if (ecm->xport != USB_GADGET_XPORT_BAM2BAM_IPA)
 		return status;
 
-	status = ecm_ipa_init(&ipa_params.ipa_rx_cb, &ipa_params.ipa_tx_cb,
-			&ipa_params.ipa_priv);
+	pr_debug("setting ecm_ipa, host_ethaddr=%pM, device_ethaddr=%pM",
+			ipa_params.host_ethaddr, ipa_params.device_ethaddr);
+	status = ecm_ipa_init(&ipa_params);
 	if (status) {
-		pr_err("failed to initialize ECM IPA Driver");
+		pr_err("failed to initialize ecm_ipa");
 		ecm_qc_string_defs[1].s = NULL;
 		kfree(ecm);
-		return status;
-	}
-
-	status = ecm_ipa_configure(ipa_params.host_mac, ipa_params.dev_mac,
-			ipa_params.ipa_priv);
-	if (status) {
-		pr_err("failed to configure ECM IPA Driver");
-		ecm_qc_string_defs[1].s = NULL;
-		kfree(ecm);
+	} else {
+		pr_debug("ecm_ipa successful created");
 	}
 
 	return status;

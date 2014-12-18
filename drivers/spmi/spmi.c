@@ -1,4 +1,4 @@
-/* Copyright (c) 2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,11 +31,14 @@ struct spmii_boardinfo {
 
 static DEFINE_MUTEX(board_lock);
 static LIST_HEAD(board_list);
-static LIST_HEAD(spmi_ctrl_list);
 static DEFINE_IDR(ctrl_idr);
-static struct device_type spmi_ctrl_type = { 0 };
+static struct device_type spmi_dev_type;
+static struct device_type spmi_ctrl_type;
 
-#define to_spmi(dev)	platform_get_drvdata(to_platform_device(dev))
+#if (!defined(CONFIG_MACH_CT01) && !defined(CONFIG_MACH_CT01_CHN_CU))
+/* for global use */
+struct spmi_controller *spmi_ctrl_extra;
+#endif
 
 /* Forward declarations */
 struct bus_type spmi_bus_type;
@@ -51,14 +54,10 @@ struct spmi_controller *spmi_busnum_to_ctrl(u32 bus_num)
 	struct spmi_controller *ctrl;
 
 	mutex_lock(&board_lock);
-	list_for_each_entry(ctrl, &spmi_ctrl_list, list) {
-		if (bus_num == ctrl->nr) {
-			mutex_unlock(&board_lock);
-			return ctrl;
-		}
-	}
+	ctrl = idr_find(&ctrl_idr, bus_num);
 	mutex_unlock(&board_lock);
-	return NULL;
+
+	return ctrl;
 }
 EXPORT_SYMBOL_GPL(spmi_busnum_to_ctrl);
 
@@ -73,6 +72,9 @@ int spmi_add_controller(struct spmi_controller *ctrl)
 {
 	int	id;
 	int	status;
+
+	if (!ctrl)
+		return -EINVAL;
 
 	pr_debug("adding controller for bus %d (0x%p)\n", ctrl->nr, ctrl);
 
@@ -90,7 +92,7 @@ retry:
 	mutex_lock(&board_lock);
 	status = idr_get_new_above(&ctrl_idr, ctrl, ctrl->nr, &id);
 	if (status == 0 && id != ctrl->nr) {
-		status = -EAGAIN;
+		status = -EBUSY;
 		idr_remove(&ctrl_idr, id);
 	}
 	mutex_unlock(&board_lock);
@@ -103,17 +105,69 @@ retry:
 }
 EXPORT_SYMBOL_GPL(spmi_add_controller);
 
+/* Remove a device associated with a controller */
+static int spmi_ctrl_remove_device(struct device *dev, void *data)
+{
+	struct spmi_device *spmidev = to_spmi_device(dev);
+	struct spmi_controller *ctrl = data;
+
+	if (dev->type == &spmi_dev_type && spmidev->ctrl == ctrl)
+		spmi_remove_device(spmidev);
+
+	return 0;
+}
+
 /**
  * spmi_del_controller: Controller tear-down.
- * @ctrl: controller to which this device is to be added to.
+ * @ctrl: controller to be removed.
  *
  * Controller added with the above API is torn down using this API.
  */
 int spmi_del_controller(struct spmi_controller *ctrl)
 {
-	return -ENXIO;
+	struct spmi_controller *found;
+
+	if (!ctrl)
+		return -EINVAL;
+
+	/* Check that the ctrl has been added */
+	mutex_lock(&board_lock);
+	found = idr_find(&ctrl_idr, ctrl->nr);
+	mutex_unlock(&board_lock);
+	if (found != ctrl)
+		return -EINVAL;
+
+	/* Remove all the clients associated with this controller */
+	mutex_lock(&board_lock);
+	bus_for_each_dev(&spmi_bus_type, NULL, ctrl, spmi_ctrl_remove_device);
+	mutex_unlock(&board_lock);
+
+	spmi_dfs_del_controller(ctrl);
+
+	mutex_lock(&board_lock);
+	idr_remove(&ctrl_idr, ctrl->nr);
+	mutex_unlock(&board_lock);
+
+	init_completion(&ctrl->dev_released);
+	device_unregister(&ctrl->dev);
+	wait_for_completion(&ctrl->dev_released);
+
+	return 0;
 }
 EXPORT_SYMBOL_GPL(spmi_del_controller);
+
+#define spmi_ctrl_attr_gr NULL
+static void spmi_ctrl_release(struct device *dev)
+{
+	struct spmi_controller *ctrl = to_spmi_controller(dev);
+
+	complete(&ctrl->dev_released);
+}
+
+static struct device_type spmi_ctrl_type = {
+	.groups		= spmi_ctrl_attr_gr,
+	.release	= spmi_ctrl_release,
+};
 
 #define spmi_device_attr_gr NULL
 #define spmi_device_uevent NULL
@@ -146,7 +200,7 @@ struct spmi_device *spmi_alloc_device(struct spmi_controller *ctrl)
 {
 	struct spmi_device *spmidev;
 
-	if (!ctrl) {
+	if (!ctrl || !spmi_busnum_to_ctrl(ctrl->nr)) {
 		pr_err("Missing SPMI controller\n");
 		return NULL;
 	}
@@ -179,12 +233,15 @@ static struct device *get_valid_device(struct spmi_device *spmidev)
 	if (dev->bus != &spmi_bus_type || dev->type != &spmi_dev_type)
 		return NULL;
 
+	if (!spmidev->ctrl || !spmi_busnum_to_ctrl(spmidev->ctrl->nr))
+		return NULL;
+
 	return dev;
 }
 
 /**
  * spmi_add_device: Add a new device without register board info.
- * @ctrl: controller to which this device is to be added to.
+ * @spmi_dev: spmi_device to be added (registered).
  *
  * Called when device doesn't have an explicit client-driver to be probed, or
  * the client-driver is a module installed dynamically.
@@ -195,7 +252,7 @@ int spmi_add_device(struct spmi_device *spmidev)
 	struct device *dev = get_valid_device(spmidev);
 
 	if (!dev) {
-		pr_err("%s: invalid SPMI device\n", __func__);
+		pr_err("invalid SPMI device\n");
 		return -EINVAL;
 	}
 
@@ -259,7 +316,6 @@ void spmi_remove_device(struct spmi_device *spmi_dev)
 }
 EXPORT_SYMBOL_GPL(spmi_remove_device);
 
-/* If controller is not present, only add to boards list */
 static void spmi_match_ctrl_to_boardinfo(struct spmi_controller *ctrl,
 				struct spmi_boardinfo *bi)
 {
@@ -278,27 +334,29 @@ static void spmi_match_ctrl_to_boardinfo(struct spmi_controller *ctrl,
  * @n: number of entries.
  * API enumerates respective devices on corresponding controller.
  * Called from board-init function.
+ * If controller is not present, only add to boards list
  */
 int spmi_register_board_info(int busnum,
 			struct spmi_boardinfo const *info, unsigned n)
 {
 	int i;
 	struct spmii_boardinfo *bi;
+	struct spmi_controller *ctrl;
 
 	bi = kzalloc(n * sizeof(*bi), GFP_KERNEL);
 	if (!bi)
 		return -ENOMEM;
 
+	ctrl = spmi_busnum_to_ctrl(busnum);
+
 	for (i = 0; i < n; i++, bi++, info++) {
-		struct spmi_controller *ctrl;
 
 		memcpy(&bi->board_info, info, sizeof(*info));
 		mutex_lock(&board_lock);
 		list_add_tail(&bi->list, &board_list);
-		list_for_each_entry(ctrl, &spmi_ctrl_list, list)
-			if (ctrl->nr == busnum)
-				spmi_match_ctrl_to_boardinfo(ctrl,
-							&bi->board_info);
+
+		if (ctrl)
+			spmi_match_ctrl_to_boardinfo(ctrl, &bi->board_info);
 		mutex_unlock(&board_lock);
 	}
 	return 0;
@@ -310,21 +368,27 @@ EXPORT_SYMBOL_GPL(spmi_register_board_info);
 static inline int
 spmi_cmd(struct spmi_controller *ctrl, u8 opcode, u8 sid)
 {
-	BUG_ON(!ctrl || !ctrl->cmd);
+	if (!ctrl || !ctrl->cmd || ctrl->dev.type != &spmi_ctrl_type)
+		return -EINVAL;
+
 	return ctrl->cmd(ctrl, opcode, sid);
 }
 
 static inline int spmi_read_cmd(struct spmi_controller *ctrl,
 				u8 opcode, u8 sid, u16 addr, u8 bc, u8 *buf)
 {
-	BUG_ON(!ctrl || !ctrl->read_cmd);
+	if (!ctrl || !ctrl->read_cmd || ctrl->dev.type != &spmi_ctrl_type)
+		return -EINVAL;
+
 	return ctrl->read_cmd(ctrl, opcode, sid, addr, bc, buf);
 }
 
 static inline int spmi_write_cmd(struct spmi_controller *ctrl,
 				u8 opcode, u8 sid, u16 addr, u8 bc, u8 *buf)
 {
-	BUG_ON(!ctrl || !ctrl->write_cmd);
+	if (!ctrl || !ctrl->write_cmd || ctrl->dev.type != &spmi_ctrl_type)
+		return -EINVAL;
+
 	return ctrl->write_cmd(ctrl, opcode, sid, addr, bc, buf);
 }
 
@@ -396,6 +460,19 @@ int spmi_ext_register_readl(struct spmi_controller *ctrl,
 	return spmi_read_cmd(ctrl, SPMI_CMD_EXT_READL, sid, addr, len - 1, buf);
 }
 EXPORT_SYMBOL_GPL(spmi_ext_register_readl);
+
+#if (!defined(CONFIG_MACH_CT01) && !defined(CONFIG_MACH_CT01_CHN_CU))
+int spmi_ext_register_readl_extra(u8 sid, u16 addr, u8 *buf, int len)
+{
+
+        /* 4-bit Slave Identifier, 16-bit register address, up to 8 bytes */
+        if (sid > SPMI_MAX_SLAVE_ID || len <= 0 || len > 8)
+                return -EINVAL;
+
+        return spmi_read_cmd(spmi_ctrl_extra, SPMI_CMD_EXT_READL, sid, addr, len - 1, buf);
+}
+EXPORT_SYMBOL_GPL(spmi_ext_register_readl_extra);
+#endif
 
 /**
  * spmi_register_write() - register write
@@ -485,6 +562,20 @@ int spmi_ext_register_writel(struct spmi_controller *ctrl,
 	return spmi_write_cmd(ctrl, op, sid, addr, len - 1, buf);
 }
 EXPORT_SYMBOL_GPL(spmi_ext_register_writel);
+
+#if (!defined(CONFIG_MACH_CT01) && !defined(CONFIG_MACH_CT01_CHN_CU))
+int spmi_ext_register_writel_extra(u8 sid, u16 addr, u8 *buf, int len)
+{
+        u8 op = SPMI_CMD_EXT_WRITEL;
+
+        /* 4-bit Slave Identifier, 16-bit register address, up to 8 bytes */
+        if (sid > SPMI_MAX_SLAVE_ID || len <= 0 || len > 8)
+                return -EINVAL;
+
+        return spmi_write_cmd(spmi_ctrl_extra, op, sid, addr, len - 1, buf);
+}
+EXPORT_SYMBOL_GPL(spmi_ext_register_writel_extra);
+#endif
 
 /**
  * spmi_command_reset() - sends RESET command to the specified slave
@@ -752,10 +843,6 @@ static int spmi_register_controller(struct spmi_controller *ctrl)
 
 	dev_dbg(&ctrl->dev, "Bus spmi-%d registered: dev:%x\n",
 					ctrl->nr, (u32)&ctrl->dev);
-
-	mutex_lock(&board_lock);
-	list_add_tail(&ctrl->list, &spmi_ctrl_list);
-	mutex_unlock(&board_lock);
 
 	spmi_dfs_add_controller(ctrl);
 	return 0;

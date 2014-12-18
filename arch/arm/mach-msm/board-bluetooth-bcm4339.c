@@ -41,18 +41,24 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 
-//#define BT_UART_CFG
+#define BT_UART_CFG
 #define BT_LPM_ENABLE
 
 #define BT_UART_RTS 48
 #define BT_UART_CTS 47
 #define BT_UART_RXD 46
 #define BT_UART_TXD 45
-#ifdef CONFIG_MACH_MONTBLANC
-#define BT_HOST_WAKE 73
+#if defined(CONFIG_MACH_MONTBLANC)
+#define BT_HOST_WAKE 75
 
 #define BT_WAKE 34
 #define BT_EN 42
+#define BTWIFI_LDO_EN 130
+#elif defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT)
+#define BT_HOST_WAKE 44
+
+#define BT_WAKE 58
+#define BT_EN 76
 #else
 #define BT_HOST_WAKE 75
 
@@ -151,6 +157,8 @@ static int bcm4339_bt_rfkill_set_power(void *data, bool blocked)
     if (!blocked) {
         pr_err("[BT] Bluetooth Power On.\n");
 
+        gpio_set_value(get_gpio_hwrev(BT_WAKE), 1);
+
         if (gpio_get_value(get_gpio_hwrev(GPIO_BT_HOST_WAKE)) == 0)
             pr_err("[BT] BT_HOST_WAKE is low.\n");
 
@@ -192,12 +200,34 @@ static struct platform_device *jf_bt_devs[] __initdata = {
     &bcm4339_bluetooth_platform_device,
 };
 
+extern unsigned int system_rev;
+
 //void __init msm8974_bt_init(struct device *dev)
 void __init msm8974_bt_init(void)
 {
+    int err = 0;
+#ifdef CONFIG_MACH_MONTBLANC
+    int rc = 0;
+    pr_err("[BT] msm8974_bt_init(%d)\n", system_rev);
+
+    if (system_rev < 2) {
+        rc = gpio_request(get_gpio_hwrev(BTWIFI_LDO_EN), "btwifi_ldoen_gpio");
+        if (unlikely(rc)) {
+            pr_err("[BT] BTWIFI_LDO_EN request failed.\n");
+            //return;
+        }
+        gpio_direction_output(get_gpio_hwrev(BTWIFI_LDO_EN), 0);
+        //usleep_range(20000, 20000);
+        gpio_set_value(get_gpio_hwrev(BTWIFI_LDO_EN), 1);
+    }
+#endif
 #ifdef BT_LPM_ENABLE
     gpio_rev_init();
-    platform_device_register(&msm_bluesleep_device);
+    err = platform_device_register(&msm_bluesleep_device);
+	if (err) {
+	    pr_err("[BT] failed to register Bluesleep device.\n");
+		return;
+	}
 #endif
 
     platform_add_devices(jf_bt_devs, ARRAY_SIZE(jf_bt_devs));

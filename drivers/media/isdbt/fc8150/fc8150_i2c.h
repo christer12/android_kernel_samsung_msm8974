@@ -25,6 +25,7 @@ extern int fc8150_i2c_longwrite(HANDLE hDevice, u16 addr, u32 data);
 extern int fc8150_i2c_bulkwrite(HANDLE hDevice, u16 addr, u8 *data, u16 length);
 extern int fc8150_i2c_dataread(HANDLE hDevice, u16 addr, u8 *data, u32 length);
 extern int fc8150_i2c_deinit(HANDLE hDevice);
+extern int fc8150_tsif_setting(HANDLE hDevice);
 
 #ifdef __cplusplus
 }

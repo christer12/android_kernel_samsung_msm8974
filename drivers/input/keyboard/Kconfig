@@ -615,13 +615,15 @@ config KEYBOARD_W90P910
 	  To compile this driver as a module, choose M here: the
 	  module will be called w90p910_keypad.
 
+endif
+
 config SENSORS_HALL
 	bool "HALL"
 	help
 	  Say Y here to enable the HALL
 
-endif
 
 source "drivers/input/keyboard/cypress_touchkey/Kconfig"
 source "drivers/input/keyboard/cypress_touchkey_h/Kconfig"
-source "drivers/input/keyboard/melfas_touchkey/Kconfig"
+source "drivers/input/keyboard/cypress_touchkey_c/Kconfig"
+source "drivers/input/keyboard/cypress_touchkey_ks01/Kconfig"

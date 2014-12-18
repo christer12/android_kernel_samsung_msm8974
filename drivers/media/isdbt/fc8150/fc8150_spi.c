@@ -6,9 +6,9 @@
  Description : fc8150 host interface
 
 *******************************************************************************/
-#include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/slab.h>
+#include <linux/module.h>
 
 #include "fci_types.h"
 #include "fc8150_regs.h"
@@ -32,16 +32,13 @@ static u8 wdata_buf[8192];
 
 static DEFINE_MUTEX(lock);
 
-
-
 static int __devinit fc8150_spi_probe(struct spi_device *spi)
 {
 	s32 ret;
 
+	PRINTF(0, "fc8150_spi_probe\n");
 
-	printk( "fc8150_spi_probe\n");
-
-	spi->max_speed_hz =  19200000;	//9600000; //16000000;	//24000000;
+	spi->max_speed_hz =  24000000;
 	spi->bits_per_word = 8;
 	spi->mode =  SPI_MODE_0;
 
@@ -52,7 +49,6 @@ static int __devinit fc8150_spi_probe(struct spi_device *spi)
 
 	fc8150_spi = spi;
 
-
 	return ret;
 }
 
@@ -62,18 +58,10 @@ static int fc8150_spi_remove(struct spi_device *spi)
 	return 0;
 }
 
-
-static const struct of_device_id tmm_spi_match_table[] = {
-	{   .compatible = "isdb_spi_comp",
-	},
-	{}
-};
-
 static struct spi_driver fc8150_spi_driver = {
 	.driver = {
 		.name		= DRIVER_NAME,
 		.owner		= THIS_MODULE,
-		.of_match_table = tmm_spi_match_table,
 	},
 	.probe		= fc8150_spi_probe,
 	.remove		= __devexit_p(fc8150_spi_remove),
@@ -99,7 +87,6 @@ static int fc8150_spi_write_then_read(struct spi_device *spi
 	x.len = tx_length + rx_length;
 	x.cs_change = 0;
 	x.bits_per_word = 8;
-
 	res = spi_sync(spi, &message);
 
 	memcpy(rxbuf, x.rx_buf + tx_length, rx_length);
@@ -122,7 +109,7 @@ static int spi_bulkread(HANDLE hDevice, u16 addr
 		, 5, data, length);
 
 	if (res) {
-		printk( "fc8150_spi_bulkread fail : %d\n", res);
+		PRINTF(0, "fc8150_spi_bulkread fail : %d\n", res);
 		return BBM_NOK;
 	}
 
@@ -148,7 +135,7 @@ static int spi_bulkwrite(HANDLE hDevice, u16 addr
 		, &tx_data[0], length+5, NULL, 0);
 
 	if (res) {
-		printk( "fc8150_spi_bulkwrite fail : %d\n", res);
+		PRINTF(0, "fc8150_spi_bulkwrite fail : %d\n", res);
 		return BBM_NOK;
 	}
 
@@ -166,12 +153,11 @@ static int spi_dataread(HANDLE hDevice, u16 addr
 	tx_data[3] = (length >> 8) & 0xff;
 	tx_data[4] = length & 0xff;
 
-	printk("isdb spi_dataread len = %d\n", length);
 	res = fc8150_spi_write_then_read(fc8150_spi
 		, &tx_data[0], 5, data, length);
 
 	if (res) {
-		printk( "fc8150_spi_dataread fail : %d\n", res);
+		PRINTF(0, "fc8150_spi_dataread fail : %d\n", res);
 		return BBM_NOK;
 	}
 
@@ -182,12 +168,12 @@ int fc8150_spi_init(HANDLE hDevice, u16 param1, u16 param2)
 {
 	int res = 0;
 
-	printk( "fc8150_spi_init : %d\n", res);
+	PRINTF(0, "fc8150_spi_init : %d\n", res);
 
 	res = spi_register_driver(&fc8150_spi_driver);
 
 	if (res) {
-		printk( "fc8150_spi register fail : %d\n", res);
+		PRINTF(0, "fc8150_spi register fail : %d\n", res);
 		return BBM_NOK;
 	}
 
@@ -214,6 +200,7 @@ int fc8150_spi_wordread(HANDLE hDevice, u16 addr, u16 *data)
 	mutex_lock(&lock);
 	res = spi_bulkread(hDevice, addr, command, (u8 *)data, 2);
 	mutex_unlock(&lock);
+
 	return res;
 }
 

@@ -90,8 +90,10 @@ static int max77803_haptic_probe(struct platform_device *pdev)
 	struct max77803_dev *max77803 = dev_get_drvdata(pdev->dev.parent);
 	struct max77803_platform_data *max77803_pdata
 		= dev_get_platdata(max77803->dev);
+#ifdef CONFIG_VIBETONZ
 	struct max77803_haptic_platform_data *pdata
 		= max77803_pdata->haptic_data;
+#endif
 	struct max77803_haptic_data *hap_data;
 
 	pr_debug("[VIB] ++ %s\n", __func__);
@@ -109,6 +111,7 @@ static int max77803_haptic_probe(struct platform_device *pdev)
 	hap_data->max77803 = max77803;
 	hap_data->i2c = max77803->haptic;
 	hap_data->pmic_i2c = max77803->i2c;
+	pdata->reg2 = MOTOR_LRA | EXT_PWM | DIVIDER_128;
 	hap_data->pdata = pdata;
 
 	spin_lock_init(&(hap_data->lock));
