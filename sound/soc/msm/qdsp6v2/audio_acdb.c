@@ -20,6 +20,12 @@
 #include <linux/mm.h>
 #include <linux/msm_audio_ion.h>
 #include "audio_acdb.h"
+#include "q6voice.h"
+
+#include <sound/q6adm-v2.h>
+#include <sound/q6afe-v2.h>
+#include <sound/q6asm-v2.h>
+#include <sound/q6lsm.h>
 
 
 #define MAX_NETWORKS			15
@@ -843,6 +849,36 @@ static void get_spk_protection_status(struct msm_spk_prot_status *status)
 		pr_err("%s invalid params\n", __func__);
 }
 
+static int register_vocvol_table(void)
+{
+	int result = 0;
+	pr_debug("%s\n", __func__);
+
+	result = voc_register_vocproc_vol_table();
+	if (result < 0) {
+		pr_err("%s: Register vocproc vol failed!\n", __func__);
+		goto done;
+	}
+
+done:
+	return result;
+}
+
+static int deregister_vocvol_table(void)
+{
+	int result = 0;
+	pr_debug("%s\n", __func__);
+
+	result = voc_deregister_vocproc_vol_table();
+	if (result < 0) {
+		pr_err("%s: Deregister vocproc vol failed!\n", __func__);
+		goto done;
+	}
+
+done:
+	return result;
+}
+
 static int acdb_open(struct inode *inode, struct file *f)
 {
 	s32 result = 0;
@@ -859,12 +895,64 @@ static int acdb_open(struct inode *inode, struct file *f)
 	return result;
 }
 
+static int unmap_cal_tables(void)
+{
+	int	result = 0;
+	int	result2 = 0;
+
+	result2 = adm_unmap_cal_blocks();
+	if (result2 < 0) {
+		pr_err("%s: adm_unmap_cal_blocks failed, err = %d\n",
+			__func__, result2);
+		result = result2;
+	}
+
+	result2 = afe_unmap_cal_blocks();
+	if (result2 < 0) {
+		pr_err("%s: afe_unmap_cal_blocks failed, err = %d\n",
+			__func__, result2);
+		result = result2;
+	}
+
+	result2 = q6lsm_unmap_cal_blocks();
+	if (result2 < 0) {
+		pr_err("%s: lsm_unmap_cal_blocks failed, err = %d\n",
+			__func__, result2);
+		result = result2;
+	}
+
+	result2 = q6asm_unmap_cal_blocks();
+	if (result2 < 0) {
+		pr_err("%s: asm_unmap_cal_blocks failed, err = %d\n",
+			__func__, result2);
+		result = result2;
+	}
+
+	result2 = voice_unmap_cal_blocks();
+	if (result2 < 0) {
+		pr_err("%s: voice_unmap_cal_blocks failed, err = %d\n",
+			__func__, result2);
+		result = result2;
+	}
+
+	return result;
+}
+
 static int deregister_memory(void)
 {
-	int i;
+	int	result = 0;
+	int	i;
+	pr_debug("%s\n", __func__);
 
+	mutex_lock(&acdb_data.acdb_mutex);
 	if (atomic64_read(&acdb_data.mem_len)) {
-		mutex_lock(&acdb_data.acdb_mutex);
+		/* unmap all cal data */
+		result = unmap_cal_tables();
+		if (result < 0)
+			pr_err("%s: unmap_cal_tables failed, err = %d\n",
+				__func__, result);
+
+
 		atomic64_set(&acdb_data.mem_len, 0);
 
 		for (i = 0; i < MAX_VOCPROC_TYPES; i++) {
@@ -872,9 +960,9 @@ static int deregister_memory(void)
 			acdb_data.col_data[i] = NULL;
 		}
 		msm_audio_ion_free(acdb_data.ion_client, acdb_data.ion_handle);
-		mutex_unlock(&acdb_data.acdb_mutex);
 	}
-	return 0;
+	mutex_unlock(&acdb_data.acdb_mutex);
+	return result;
 }
 
 static int register_memory(void)
@@ -885,6 +973,7 @@ static int register_memory(void)
 	void                    *kvptr;
 	unsigned long		kvaddr;
 	unsigned long		mem_len;
+	pr_debug("%s\n", __func__);
 
 	mutex_lock(&acdb_data.acdb_mutex);
 	for (i = 0; i < MAX_VOCPROC_TYPES; i++) {
@@ -1010,10 +1099,11 @@ static long acdb_ioctl(struct file *f,
 	case AUDIO_GET_SPEAKER_PROT:
 		mutex_lock(&acdb_data.acdb_mutex);
 		/*Indicates calibration was succesfull*/
-		if (!acdb_data.spk_prot_cfg.mode) {
+		if (acdb_data.spk_prot_cfg.mode == MSM_SPKR_PROT_CALIBRATED) {
 			prot_status.r0 = acdb_data.spk_prot_cfg.r0;
 			prot_status.status = 0;
-		} else if (acdb_data.spk_prot_cfg.mode == 1) {
+		} else if (acdb_data.spk_prot_cfg.mode ==
+				   MSM_SPKR_PROT_CALIBRATION_IN_PROGRESS) {
 			/*Call AFE to query the status*/
 			acdb_spk_status.status = -EINVAL;
 			acdb_spk_status.r0 = -1;
@@ -1021,7 +1111,8 @@ static long acdb_ioctl(struct file *f,
 			prot_status.r0 = acdb_spk_status.r0;
 			prot_status.status = acdb_spk_status.status;
 			if (!acdb_spk_status.status) {
-				acdb_data.spk_prot_cfg.mode = 0;
+				acdb_data.spk_prot_cfg.mode =
+					MSM_SPKR_PROT_CALIBRATED;
 				acdb_data.spk_prot_cfg.r0 = prot_status.r0;
 			}
 		} else {
@@ -1031,9 +1122,15 @@ static long acdb_ioctl(struct file *f,
 		}
 		if (copy_to_user((void *)arg, &prot_status,
 			sizeof(prot_status))) {
-			pr_err("%s Failed to update prot_status\n", __func__);
+			pr_err("%s: Failed to update prot_status\n", __func__);
 		}
 		mutex_unlock(&acdb_data.acdb_mutex);
+		goto done;
+	case AUDIO_REGISTER_VOCPROC_VOL_TABLE:
+		result = register_vocvol_table();
+		goto done;
+	case AUDIO_DEREGISTER_VOCPROC_VOL_TABLE:
+		result = deregister_vocvol_table();
 		goto done;
 	}
 
@@ -1206,7 +1303,7 @@ static int __init acdb_init(void)
 {
 	memset(&acdb_data, 0, sizeof(acdb_data));
 	/*Speaker protection disabled*/
-	acdb_data.spk_prot_cfg.mode = -1;
+	acdb_data.spk_prot_cfg.mode = MSM_SPKR_PROT_DISABLED;
 	mutex_init(&acdb_data.acdb_mutex);
 	atomic_set(&usage_count, 0);
 	atomic_set(&acdb_data.valid_adm_custom_top, 1);

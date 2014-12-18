@@ -36,9 +36,8 @@
 #include "smart_dimming.h"
 
 enum mipi_samsung_cmd_list {
-
 	PANEL_READY_TO_ON,
-	PANEL_OFF,
+        PANEL_DISP_OFF,	        // PANEL_READY_TO_OFF,
 	PANEL_DISPLAY_ON,
 	PANEL_DISPLAY_OFF,
 	PANEL_ALL_PIXEL_OFF,
@@ -54,10 +53,11 @@ enum mipi_samsung_cmd_list {
 	PANEL_TOUCHSENSING_OFF,
 	PANEL_TEAR_ON,
 	PANEL_TEAR_OFF,
-	PANEL_READY_TO_OFF,
+	PANEL_READY_TO_OFF_2,
 	DISPLAY_PANEL_ON,
 	BACKLIGHT_CONTROL_ON
 };
+
 enum {
 	MIPI_RESUME_STATE,
 	MIPI_SUSPEND_STATE,

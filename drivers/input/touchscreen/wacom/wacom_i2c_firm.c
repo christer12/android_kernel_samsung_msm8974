@@ -20,21 +20,23 @@
 #include <linux/wacom_i2c.h>
 
 unsigned char *Binary;
-bool ums_binary;
 
-const unsigned int Binary_nLength = 0x0000;
-const unsigned char Mpu_type = 0x28;
-#ifdef CONFIG_SEC_H_PROJECT
-unsigned int Firmware_version_of_file = 0x70;
+/* HLTE */
+#if defined(CONFIG_MACH_HLTESKT) || defined(CONFIG_MACH_HLTEKTT) || defined(CONFIG_MACH_HLTELGT)||\
+	defined(CONFIG_MACH_HLTEDCM) || defined(CONFIG_MACH_HLTEKDI)
+char Firmware_checksum[] = { 0x1F, 0x4D, 0x20, 0xD3, 0x20, };/*ver 0x208*/
 #else
-unsigned int Firmware_version_of_file = 0x104;
+char Firmware_checksum[] = { 0x1F, 0x19, 0x7E, 0x3D, 0xB3, };/*ver 0x174*/
 #endif
-
-unsigned char *firmware_name = "epen/W9001_B911.bin";
-
-char Firmware_checksum[] = { 0x1F, 0xAB, 0x8E, 0x93, 0x33, };
-/*ver 1320*/
-const char B887_checksum[] = { 0x1F, 0x6E, 0x2A, 0x13, 0x71, };
+char B934_checksum[] = { 0x1F, 0x93, 0x7E, 0xDE, 0xAD, };	/*ver 0x076*/
+#if defined(CONFIG_MACH_LT03EUR) || defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || defined(CONFIG_MACH_LT03LGT)
+/* LT03 (Checksum : 92878693 ) */
+char B930_checksum[] = { 0x1F, 0x93, 0x86, 0x87, 0x92, };	/*ver  0x023C */
+#else
+/* VIENNA */
+char B930_checksum[] = { 0x1F, 0x00, 0xBC, 0x33, 0xDF, };	/*boot ver: 0x92 , ver 0x200*/
+char B930_boot91_checksum[] = { 0x1F, 0x00, 0xBC, 0x33, 0xDF, };	/*boot ver: 0x91 , ver 0x200*/
+#endif
 
 void wacom_i2c_set_firm_data(unsigned char *Binary_new)
 {
@@ -44,16 +46,19 @@ void wacom_i2c_set_firm_data(unsigned char *Binary_new)
 	}
 
 	Binary = (unsigned char *)Binary_new;
-	ums_binary = true;
 }
 
 /*Return digitizer type according to board rev*/
 int wacom_i2c_get_digitizer_type(void)
 {
-	if (system_rev >= 2)
-		return EPEN_DTYPE_B911;
+#ifdef CONFIG_SEC_H_PROJECT
+	if (system_rev >= WACOM_FW_UPDATE_REVISION)
+		return EPEN_DTYPE_B968;
 	else
-		return EPEN_DTYPE_B887;
+		return EPEN_DTYPE_B934;
+#else	/* VIENNALTE */
+	return EPEN_DTYPE_B930;
+#endif
 }
 
 void wacom_i2c_init_firm_data(void)
@@ -61,17 +66,31 @@ void wacom_i2c_init_firm_data(void)
 	int type;
 	type = wacom_i2c_get_digitizer_type();
 
-	if (type == EPEN_DTYPE_B911) {
+	if (type == EPEN_DTYPE_B968) {/*HLTE*/
 		printk(KERN_INFO
-			"%s: Digitizer type is B911\n",
+			"%s: Digitizer type is B968\n",
 			__func__);
-	} else if (type == EPEN_DTYPE_B887) {
+	} else if (type == EPEN_DTYPE_B934) {
 		printk(KERN_INFO
-			"%s: Digitizer type is B887\n",
+			"%s: Digitizer type is B934\n",
 			__func__);
-		firmware_name = "epen/W9001_B887.bin";
-		Firmware_version_of_file = 0x1320;
-		memcpy(Firmware_checksum, B887_checksum,
+		memcpy(Firmware_checksum, B934_checksum,
 			sizeof(Firmware_checksum));
+	} else if (type == EPEN_DTYPE_B930) {/*VIENNALTE*/
+		printk(KERN_INFO
+			"%s: Digitizer type is B930A\n",
+			__func__);
+		/* firmware_name in wacom_i2c.h */
+	#if defined(CONFIG_SEC_VIENNA_PROJECT)
+		if (system_rev >= WACOM_BOOT_REVISION)
+			memcpy(Firmware_checksum, B930_checksum,
+				sizeof(Firmware_checksum));
+		else
+			memcpy(Firmware_checksum, B930_boot91_checksum,
+				sizeof(Firmware_checksum));
+	#else
+		memcpy(Firmware_checksum, B930_checksum,
+			sizeof(Firmware_checksum));
+	#endif
 	}
 }

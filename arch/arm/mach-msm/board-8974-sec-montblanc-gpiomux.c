@@ -52,6 +52,7 @@ static struct gpiomux_setting gpio_spi_cs3_config = {
 	.pull = GPIOMUX_PULL_DOWN,
 };
 
+#if defined(CONFIG_SENSORS_SSP_STM) || defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 static struct gpiomux_setting gpio_spi11_config = {
 	.func = GPIOMUX_FUNC_1,
 	.drv = GPIOMUX_DRV_8MA,
@@ -63,7 +64,7 @@ static struct gpiomux_setting gpio_spi11_config2 = {
 	.drv = GPIOMUX_DRV_8MA,
 	.pull = GPIOMUX_PULL_NONE,
 };
-
+#endif
 
 #ifdef CONFIG_USB_SWITCH_TSU6721
 static struct gpiomux_setting gpio_i2c_func4_config = {
@@ -115,7 +116,7 @@ static struct gpiomux_setting gpio_suspend_config[] = {
 	},
 };
 
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP_STM) && !defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 static struct gpiomux_setting gpio_epm_config = {
 	.func = GPIOMUX_FUNC_GPIO,
 	.drv  = GPIOMUX_DRV_2MA,
@@ -612,7 +613,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP_STM) && !defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 	{
 		.gpio      = 83,		/* BLSP11 QUP I2C_DAT */
 		.settings = {
@@ -669,6 +670,22 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
 		},
 	},
+#elif defined(CONFIG_I2C_ACTUATOR)
+//kk0704.park :: FOR MONTBLACT AF I2C PORT
+	{
+		.gpio	   = 55, /* BLSP10 QUP I2C_DAT */
+		.settings = {
+			[GPIOMUX_ACTIVE] = &gpio_i2c_config,
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[0],
+		},
+	},
+	{
+		.gpio	   = 56, /* BLSP10 QUP I2C_CLK */
+		.settings = {
+			[GPIOMUX_ACTIVE] = &gpio_i2c_config,
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[0],
+		},
+	},
 #else
 	{
 		.gpio      = 56,		/* BLSP2 QUP4 SPI_CLK */
@@ -685,7 +702,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if defined(CONFIG_SENSORS_SSP_STM)
+#if defined(CONFIG_SENSORS_SSP_STM) || defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 	{
 		.gpio      = 81,
 		.settings = {
@@ -715,7 +732,7 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		},
 	},
 #endif
-#if !defined(CONFIG_SENSORS_SSP_STM)
+#if !defined(CONFIG_SENSORS_SSP_STM) && !defined(CONFIG_SENSORS_SSP_STM_MONTBLANC)
 	{
 		.gpio      = 81,		/* EPM enable */
 		.settings = {
@@ -993,6 +1010,40 @@ static struct msm_gpiomux_config msm8974_pri_auxpcm_configs[] __initdata = {
 		},
 	},
 };
+
+#ifdef CONFIG_PCM_ROUTE_VOICE_STUB
+static struct msm_gpiomux_config msm8974_sec_auxpcm_configs[] __initdata = {
+	{
+		.gpio = 58,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+	{
+		.gpio = 59,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+	{
+		.gpio = 60,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+	{
+		.gpio = 61,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &pri_auxpcm_sus_cfg,
+			[GPIOMUX_ACTIVE] = &pri_auxpcm_act_cfg,
+		},
+	},
+};
+#endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
+
 #ifdef CONFIG_MACH_KS01
 static struct msm_gpiomux_config wcnss_5wire_interface[] = {
 	{
@@ -1150,28 +1201,21 @@ static struct msm_gpiomux_config ssp_configs[] __initdata = {
 		},
 	},
 	{
-		.gpio = 67,
+		.gpio = 74,
 		.settings = {
-			[GPIOMUX_ACTIVE] = &ssp_setting[0],
-			[GPIOMUX_SUSPENDED] = &ssp_setting[0],
+			[GPIOMUX_ACTIVE] = &ssp_setting[1],
+			[GPIOMUX_SUSPENDED] = &ssp_setting[1],
 		},
 	},
 	{
-		.gpio = 68,
-		.settings = {
-			[GPIOMUX_ACTIVE] = &ssp_setting[0],
-			[GPIOMUX_SUSPENDED] = &ssp_setting[0],
-		},
-	},
-	{
-		.gpio = 89,
+		.gpio = 86,
 		.settings = {
 			[GPIOMUX_ACTIVE] = &ssp_setting[1],
 			[GPIOMUX_SUSPENDED] = &ssp_setting[1],
 		},
 	},
 		{
-		.gpio = 91,
+		.gpio = 89,
 		.settings = {
 			[GPIOMUX_ACTIVE] = &ssp_setting[1],
 			[GPIOMUX_SUSPENDED] = &ssp_setting[1],
@@ -1539,6 +1583,47 @@ static void msm_gpiomux_sc6500_spi_install(void)
 
 extern unsigned int system_rev;
 
+#ifdef CONFIG_SEC_MONTBLANC_PROJECT
+static struct gpiomux_setting gpio_nc_config = {
+	.func = GPIOMUX_FUNC_GPIO,
+	.drv = GPIOMUX_DRV_2MA,
+	.pull = GPIOMUX_PULL_DOWN,
+	.dir = GPIOMUX_IN,
+};
+static struct msm_gpiomux_config nc_gpio_configs[] __initdata = {
+	{
+		.gpio    = 25,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 26,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 91,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 129,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+	{
+		.gpio    = 130,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_nc_config,
+		},
+	},
+};
+#endif
+	
 void __init msm_8974_init_gpiomux(void)
 {
 	int rc;
@@ -1640,6 +1725,10 @@ void __init msm_8974_init_gpiomux(void)
 
 	msm_gpiomux_install(msm8974_pri_auxpcm_configs,
 				 ARRAY_SIZE(msm8974_pri_auxpcm_configs));
+#ifdef CONFIG_PCM_ROUTE_VOICE_STUB
+	msm_gpiomux_install(msm8974_sec_auxpcm_configs,
+			 ARRAY_SIZE(msm8974_sec_auxpcm_configs));
+#endif /* CONFIG_PCM_ROUTE_VOICE_STUB */
 
 #if !defined(CONFIG_BT_BCM4335) && !defined(CONFIG_BT_BCM4339)
 	if (of_board_is_rumi())
@@ -1665,5 +1754,9 @@ void __init msm_8974_init_gpiomux(void)
 
 #ifdef CONFIG_REGULATOR_LP8720
 	msm_gpiomux_install(lp8720_pmic_configs, ARRAY_SIZE(lp8720_pmic_configs));
+#endif
+
+#ifdef CONFIG_SEC_MONTBLANC_PROJECT
+	msm_gpiomux_install(nc_gpio_configs, ARRAY_SIZE(nc_gpio_configs));
 #endif
 }

@@ -59,7 +59,7 @@
 #define MAX_SUB_CH_NUM     12
 
 /* maximum service number in one ensemble */
-#define MAX_SERVICE_NUM    20
+#define MAX_SERVICE_NUM    64
 
 /*maximum number of user applications */
 #define USER_APP_NUM       6
@@ -380,10 +380,11 @@ struct FIG_TYPE0_Ext9 {
 	U8  Ensemble_LTO;
 	U8  Ensemble_ECC;
 	U8  Inter_Table_ID;
-	U8  Num_Ser;
-	U8  LTO;
-	U8  ECC;
-	U32 Sid[11];
+	U8  NumOfSubField;
+	U8  Num_Ser[6];
+	U8  LTO[6];
+	U8  ECC[6];
+	U32 Sid[6][3];
 };
 
 /* Structure of the data and time field */

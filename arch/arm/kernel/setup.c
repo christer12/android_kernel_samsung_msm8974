@@ -514,7 +514,7 @@ void __init dump_machine_table(void)
 		/* can't use cpu_relax() here as it may require MMU setup */;
 }
 
-int __init arm_add_memory(phys_addr_t start, unsigned long size)
+int __init arm_add_memory(phys_addr_t start, phys_addr_t size)
 {
 	struct membank *bank = &meminfo.bank[meminfo.nr_banks];
 
@@ -544,7 +544,7 @@ int __init arm_add_memory(phys_addr_t start, unsigned long size)
 	}
 #endif
 
-	bank->size = size & PAGE_MASK;
+	bank->size = size & ~(phys_addr_t)(PAGE_SIZE - 1);
 
 	/*
 	 * Check whether this memory region has non-zero size or
@@ -564,7 +564,7 @@ int __init arm_add_memory(phys_addr_t start, unsigned long size)
 static int __init early_mem(char *p)
 {
 	static int usermem __initdata = 0;
-	unsigned long size;
+	phys_addr_t size;
 	phys_addr_t start;
 	char *endp;
 
@@ -730,6 +730,15 @@ static int __init parse_tag_serialnr(const struct tag *tag)
 }
 
 __tagtable(ATAG_SERIAL, parse_tag_serialnr);
+
+static int __init msm_serialnr_setup(char *p)
+{
+	system_serial_low = simple_strtoul(p, NULL, 16);
+	system_serial_high = (system_serial_low&0xFFFF0000)>>16;
+	system_serial_low = system_serial_low&0x0000FFFF;
+	return 0;
+}
+early_param("androidboot.serialno", msm_serialnr_setup);
 
 static int __init parse_tag_revision(const struct tag *tag)
 {

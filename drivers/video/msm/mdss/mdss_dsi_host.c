@@ -19,6 +19,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/slab.h>
 #include <linux/iopoll.h>
+#include <linux/kthread.h>
 
 #include <mach/iommu_domains.h>
 
@@ -26,8 +27,8 @@
 #include "mdss_dsi.h"
 
 static struct mdss_dsi_ctrl_pdata *left_ctrl_pdata;
-
 static struct mdss_dsi_ctrl_pdata *ctrl_list[DSI_CTRL_MAX];
+static struct mdss_dsi_ctrl_pdata *ctrl_backup;
 static unsigned char *dsi_ctrl_base;
 
 struct mdss_hw mdss_dsi0_hw = {
@@ -41,6 +42,33 @@ struct mdss_hw mdss_dsi1_hw = {
 	.ptr = NULL,
 	.irq_handler = mdss_dsi_isr,
 };
+
+
+#ifdef MDP_RECOVERY
+#define DSI_EVENT_Q_MAX	4
+int mdss_dsi_recovery[3] = {0,};
+int mdss_recovery_start = 0;
+
+/* event */
+struct dsi_event_q {
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	u32 todo;
+};
+
+struct mdss_dsi_event {
+	int inited;
+	wait_queue_head_t event_q;
+	u32 event_pndx;
+	u32 event_gndx;
+	struct dsi_event_q todo_list[DSI_EVENT_Q_MAX];
+	spinlock_t event_lock;
+	u32 dsi_ev_sum;
+};
+
+static struct mdss_dsi_event dsi_event;
+
+static int dsi_event_thread(void *data);
+#endif
 
 void mdss_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 {
@@ -71,6 +99,13 @@ void mdss_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 	mutex_init(&ctrl->dfps_mutex);
 	mdss_dsi_buf_alloc(&ctrl->tx_buf, SZ_4K);
 	mdss_dsi_buf_alloc(&ctrl->rx_buf, SZ_4K);
+
+#ifdef MDP_RECOVERY
+	if (dsi_event.inited == 0) {
+		kthread_run(dsi_event_thread, (void *)&dsi_event, "mdss_dsi_event");
+		dsi_event.inited  = 1;
+	}
+#endif
 }
 
 static struct mdss_dsi_ctrl_pdata *mdss_dsi_ndx2ctrl(int panel_ndx)
@@ -82,7 +117,6 @@ static struct mdss_dsi_ctrl_pdata *mdss_dsi_ndx2ctrl(int panel_ndx)
 
 	return ctrl;
 }
-
 
 void mdss_dsi_clk_ctrl_mdp(int panel_ndx, int enable)
 {
@@ -97,37 +131,12 @@ void mdss_dsi_clk_ctrl_mdp(int panel_ndx, int enable)
 
 	mdss_dsi_clk_ctrl(ctrl, enable);
 }
-/*
-* acquire ctrl->mutex first
-*/
-void mdss_dsi_clk_ctrl(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
-{
-	mutex_lock(&ctrl->mutex);
-	if (enable) {
-		if (ctrl->clk_cnt == 0) {
-			mdss_dsi_prepare_clocks(ctrl);
-			mdss_dsi_clk_enable(ctrl);
-			pr_debug("%s: dsi_clk_ON\n", __func__);
-		}
-		ctrl->clk_cnt++;
-	} else {
-		if (ctrl->clk_cnt) {
-				ctrl->clk_cnt--;
-			if (ctrl->clk_cnt == 0) {
-				mdss_dsi_clk_disable(ctrl);
-				mdss_dsi_unprepare_clocks(ctrl);
-				pr_debug("%s: dsi_clk_OFF\n", __func__);
-			}
-		}
-	}
-	mutex_unlock(&ctrl->mutex);
-
-	pr_debug("%s: ctrl ndx=%d enabled=%d clk_cnt=%d\n",
-			__func__, ctrl->ndx, enable, ctrl->clk_cnt);
-}
 
 void mdss_dsi_clk_req(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 {
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, enable, 0, 0, 0, 0);
+#endif
 	if (enable == 0) {
 		/* need wait before disable */
 		mutex_lock(&ctrl->cmd_mutex);
@@ -137,6 +146,26 @@ void mdss_dsi_clk_req(struct mdss_dsi_ctrl_pdata *ctrl, int enable)
 
 	mdss_dsi_clk_ctrl(ctrl, enable);
 }
+
+#ifdef MDP_RECOVERY
+void mdss_dsi_pll_relock(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	int i, cnt;
+
+	cnt = ctrl->clk_cnt;
+	pr_info("%s: cnt=%d\n", __func__, cnt);
+
+	/* disable dsi clk */
+	for (i = 0; i < cnt; i++)
+		mdss_dsi_clk_ctrl(ctrl, 0);
+
+	/* enable dsi clk */
+	for (i = 0; i < cnt; i++)
+		mdss_dsi_clk_ctrl(ctrl, 1);
+
+	pr_info("%s: done\n", __func__);
+}
+#endif
 
 void mdss_dsi_enable_irq(struct mdss_dsi_ctrl_pdata *ctrl, u32 term)
 {
@@ -149,6 +178,9 @@ void mdss_dsi_enable_irq(struct mdss_dsi_ctrl_pdata *ctrl, u32 term)
 	}
 	if (ctrl->dsi_irq_mask == 0) {
 		mdss_enable_irq(ctrl->dsi_hw);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, term, 0, 0, 0, 0);
+#endif
 		pr_debug("%s: IRQ Enable, ndx=%d mask=%x term=%x\n", __func__,
 			ctrl->ndx, (int)ctrl->dsi_irq_mask, (int)term);
 	}
@@ -168,6 +200,9 @@ void mdss_dsi_disable_irq(struct mdss_dsi_ctrl_pdata *ctrl, u32 term)
 	ctrl->dsi_irq_mask &= ~term;
 	if (ctrl->dsi_irq_mask == 0) {
 		mdss_disable_irq(ctrl->dsi_hw);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, term, 0, 0, 0, 0);
+#endif
 		pr_debug("%s: IRQ Disable, ndx=%d mask=%x term=%x\n", __func__,
 			ctrl->ndx, (int)ctrl->dsi_irq_mask, (int)term);
 	}
@@ -188,6 +223,9 @@ void mdss_dsi_disable_irq_nosync(struct mdss_dsi_ctrl_pdata *ctrl, u32 term)
 	ctrl->dsi_irq_mask &= ~term;
 	if (ctrl->dsi_irq_mask == 0) {
 		mdss_disable_irq_nosync(ctrl->dsi_hw);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, term, 0, 0, 0, 0);
+#endif
 		pr_debug("%s: IRQ Disable, ndx=%d mask=%x term=%x\n", __func__,
 			ctrl->ndx, (int)ctrl->dsi_irq_mask, (int)term);
 	}
@@ -239,10 +277,16 @@ char *mdss_dsi_buf_init(struct dsi_buf *dp)
 
 int mdss_dsi_buf_alloc(struct dsi_buf *dp, int size)
 {
-
 	int off;
 
+	#if defined(CONFIG_MACH_JS01LTEDCM) \
+          ||defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) \
+          ||defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	dp->start = kmalloc(size, GFP_KERNEL);
+	#else
+	dp->start = dma_alloc_writecombine(NULL, size, &dp->dmap, GFP_KERNEL);
+	#endif
+
 	if (dp->start == NULL) {
 		pr_err("%s:%u\n", __func__, __LINE__);
 		return -ENOMEM;
@@ -278,8 +322,6 @@ int mdss_dsi_buf_alloc(struct dsi_buf *dp, int size)
 /*
  * mipi dsi generic long write
  */
-
-
 static int mdss_dsi_generic_lwrite(struct dsi_buf *dp, struct dsi_cmd_desc *cm)
 {
 	struct dsi_ctrl_hdr *dchdr;
@@ -1020,6 +1062,46 @@ void mdss_dsi_sw_reset(struct mdss_panel_data *pdata)
 	wmb();
 }
 
+#ifdef MDP_RECOVERY
+void mdss_dsi_sw_reset_restore(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	u32 data0, data1;
+
+	data0 = MIPI_INP(ctrl->ctrl_base + 0x0004);
+	data1 = data0;
+	data1 &= ~0x01;
+	MIPI_OUTP(ctrl->ctrl_base + 0x0004, data1);
+	wmb();
+
+	/* turn esc, byte, dsi, pclk, sclk, hclk on */
+	MIPI_OUTP(ctrl->ctrl_base + 0x11c, 0x23f); /* DSI_CLK_CTRL */
+	wmb();
+
+	MIPI_OUTP(ctrl->ctrl_base + 0x118, 0x01);
+	wmb();
+	MIPI_OUTP(ctrl->ctrl_base + 0x118, 0x00);
+	wmb();
+	MIPI_OUTP(ctrl->ctrl_base + 0x0004, data0);
+	wmb();
+}
+
+void mdss_dsi_intr_ctrl(struct mdss_dsi_ctrl_pdata *ctrl, u32 mask, int enable)
+{
+	u32 intr;
+
+	intr = MIPI_INP(ctrl->ctrl_base + 0x0110);
+
+	if (enable)
+		intr |= mask;
+	else
+		intr &= ~mask;
+
+	pr_info("%s: intr=%x enable=%d\n", __func__, intr, enable);
+
+	MIPI_OUTP(ctrl->ctrl_base + 0x0110, intr); /* DSI_INTL_CTRL */
+}
+#endif
+
 void mdss_dsi_controller_cfg(int enable,
 			     struct mdss_panel_data *pdata)
 {
@@ -1121,7 +1203,6 @@ void mdss_dsi_op_mode_config(int mode,
 					dsi_ctrl);
 		}
 
-
 	MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x0110,
 				intr_ctrl); /* DSI_INTL_CTRL */
 	MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x0004, dsi_ctrl);
@@ -1151,7 +1232,7 @@ void mdss_dsi_cmd_bta_sw_trigger(struct mdss_panel_data *pdata)
 				0, timeout_us))
 		pr_info("%s: DSI status=%x failed\n", __func__, status);
 
-	mdss_dsi_ack_err_status((ctrl_pdata->ctrl_base));
+	mdss_dsi_ack_err_status(ctrl_pdata);
 
 	pr_debug("%s: BTA done, status = %d\n", __func__, status);
 }
@@ -1390,6 +1471,12 @@ void dumpreg(void)
 	u32 tmp0x0,tmp0x4,tmp0x8,tmp0xc;
 	int i;
 	pr_err("%s: =============DSI Reg DUMP==============\n", __func__);
+#if defined(CONFIG_MACH_JS01LTEDCM)
+	if(dsi_ctrl_base == NULL) {
+		pr_err("%s: dsi_ctrl_base is NULL, Skip dumpreg()!!\n", __func__);
+		return;
+	}
+#endif
 	for(i=0; i< 91; i++){
 		tmp0x0 = MIPI_INP(dsi_ctrl_base+(i*16)+0x0);
 		tmp0x4 = MIPI_INP(dsi_ctrl_base+(i*16)+0x4);
@@ -1496,6 +1583,12 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 	int domain = MDSS_IOMMU_DOMAIN_UNSECURE;
 	char *bp;
 	unsigned long size, addr;
+	u32 dsi_status1, dsi_status2;
+	u32 dsi_ctl;
+	u32 dsi_intr_ctl1, dsi_intr_ctl2;
+	u32 dsi_irq_mask;
+	u32 dsi_clk_ctl, dsi_clk_status;
+
 //#define DEBUG_CMD
 #ifdef DEBUG_CMD
 	int i;
@@ -1513,11 +1606,15 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 	len = ALIGN(tp->len, 4);
 	size = ALIGN(tp->len, SZ_4K);
 
+#if defined(CONFIG_MACH_JS01LTEDCM) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) \
+        || defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	tp->dmap = dma_map_single(&dsi_dev, tp->data, size, DMA_TO_DEVICE);
 	if (dma_mapping_error(&dsi_dev, tp->dmap)) {
 		pr_err("%s: dmap mapp failed\n", __func__);
 		return -ENOMEM;
 	}
+#endif
 
 	if (is_mdss_iommu_attached()) {
 		int ret = msm_iommu_map_contig_buffer(tp->dmap,
@@ -1550,32 +1647,58 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 			MIPI_OUTP(left_ctrl_pdata->ctrl_base + 0x090, 0x01);
 		}
 
+	dsi_status1 = MIPI_INP((ctrl->ctrl_base) + 0x0008);
+	dsi_ctl = MIPI_INP((ctrl->ctrl_base) + 0x0004);
+	dsi_intr_ctl1 = MIPI_INP((ctrl->ctrl_base) + 0x0110);
+	dsi_irq_mask = ctrl->dsi_irq_mask;
+	dsi_clk_ctl = MIPI_INP((ctrl->ctrl_base) + 0x011c);
+	dsi_clk_status = MIPI_INP((ctrl->ctrl_base) + 0x0120);
+
 	MIPI_OUTP((ctrl->ctrl_base) + 0x090, 0x01); 	/* trigger */
 
 	wmb();
 
-#if 0
-	wait_for_completion(&ctrl->dma_comp);
-#else
 	if (!wait_for_completion_timeout(&ctrl->dma_comp,
 				msecs_to_jiffies(DMA_TX_TIMEOUT))) {
-		pr_err("%s: dma timeout error\n", __func__);
+
+	dsi_status2 = MIPI_INP((ctrl->ctrl_base) + 0x0008);
+	dsi_intr_ctl2 = MIPI_INP((ctrl->ctrl_base) + 0x0110);
+	pr_info("%s: dsi_status1=0x%08x, dsi_status2=0x%08x\n", __func__,
+		dsi_status1, dsi_status2);
+	pr_info("%s: dsi_intr_ctl1=0x%08x, dsi_intr_ctl2=0x%08x\n", __func__,
+		dsi_intr_ctl1, dsi_intr_ctl2);
+	pr_info("%s: dsi_irq_mask1=%08x,dsi_irq_mask2=%08x \n", __func__,
+		dsi_irq_mask, ctrl->dsi_irq_mask);
+	pr_info("%s: dsi_ctl=0x%08x, dsi_clk_ctl=0x%08x, dsi_clk_status=0x%08x\n", __func__,
+		dsi_ctl, dsi_clk_ctl, dsi_clk_status);
+
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
 		dumpreg();
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-			|| defined(CONFIG_MACH_KS01LGT)
-		WARN(1, "dma_timeout~!");
+		mdp5_dump_regs();
+		mdss_dsi_dump_power_clk(&ctrl->panel_data, 0);
+		mdss_mdp_dump_power_clk();
+#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
+		mdss_mdp_debug_bus();
+		xlog_dump();
+#endif
+		panic("mdss_dsi_cmd_dma_tx");
 #else
-		panic("dma_timeout~!");
+		WARN(1, "mdss_dsi_cmd_dma_tx");
 #endif
 	}
-#endif
+
 
 	if (is_mdss_iommu_attached())
 		msm_iommu_unmap_contig_buffer(addr,
 			mdss_get_iommu_domain(domain), 0, size);
-
+#if defined(CONFIG_MACH_JS01LTEDCM) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL) \
+        || defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	dma_unmap_single(&dsi_dev, tp->dmap, size, DMA_TO_DEVICE);
 	tp->dmap = 0;
+#endif
 	return tp->len;
 }
 
@@ -1620,7 +1743,7 @@ void mdss_dsi_wait4video_done(struct mdss_dsi_ctrl_pdata *ctrl)
 		return;
 
 #if 1
-	data = MIPI_INP((ctrl->ctrl_base) + 0x0004);
+	data = MIPI_INP((ctrl->ctrl_base) + 0x0110);
 	data |= DSI_INTR_VIDEO_DONE_MASK;
 	MIPI_OUTP((ctrl->ctrl_base) + 0x0110, data);
 #endif
@@ -1635,7 +1758,7 @@ void mdss_dsi_wait4video_done(struct mdss_dsi_ctrl_pdata *ctrl)
 			msecs_to_jiffies(VSYNC_PERIOD * 4));
 
 #if 1
-	data = MIPI_INP((ctrl->ctrl_base) + 0x0004);
+	data = MIPI_INP((ctrl->ctrl_base) + 0x0110);
 	data &= ~DSI_INTR_VIDEO_DONE_MASK;
 	MIPI_OUTP((ctrl->ctrl_base) + 0x0110, data);
 #endif
@@ -1658,7 +1781,11 @@ void mdss_dsi_cmd_mdp_start(struct mdss_dsi_ctrl_pdata *ctrl)
 	spin_lock_irqsave(&ctrl->mdp_lock, flag);
 	mdss_dsi_enable_irq(ctrl, DSI_MDP_TERM);
 	ctrl->mdp_busy = true;
+	ctrl_backup = ctrl;
 	INIT_COMPLETION(ctrl->mdp_comp);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, ctrl->mdp_busy, 0, 0, 0, current->pid);
+#endif
 	spin_unlock_irqrestore(&ctrl->mdp_lock, flag);
 }
 
@@ -1686,16 +1813,33 @@ void mdss_dsi_cmd_mdp_busy(struct mdss_dsi_ctrl_pdata *ctrl)
 	spin_lock_irqsave(&ctrl->mdp_lock, flags);
 	if (ctrl->mdp_busy == true)
 		need_wait++;
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, ctrl->mdp_busy, 0, 0, 0, current->pid);
+#endif
 	spin_unlock_irqrestore(&ctrl->mdp_lock, flags);
 
 	if (need_wait) {
 		/* wait until DMA finishes the current job */
 		     if (!wait_for_completion_timeout(&ctrl->mdp_comp,\
-	            msecs_to_jiffies(200))) {
-                pr_err("%s: mdss_dsi_cmd_mdp_busy timeout error\n", __func__);
-		mdp5_dump_regs();
-                dumpreg();
-                panic("mdpcomp_timeout~!");
+	            msecs_to_jiffies(150))) {				
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+#if defined(MDP_RECOVERY)
+				dsi_send_events(ctrl, DSI_EV_MDP_BUSY_RELEASE);
+#else
+				dumpreg();
+				mdp5_dump_regs();
+				mdss_dsi_dump_power_clk(&ctrl->panel_data, 0);
+				mdss_mdp_dump_power_clk();
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+				mdss_mdp_debug_bus();
+				xlog_dump();
+#endif
+				panic("mdss_dsi_cmd_mdp_busy timeout");
+#endif
+#else
+				WARN(1, "mdss_dsi_cmd_mdp_busy timeout");
+#endif
         }
 
 	}
@@ -1731,25 +1875,59 @@ void mdss_dsi_cmdlist_rx(struct mdss_dsi_ctrl_pdata *ctrl,
 		req->cb(data);
 }
 
+void mdss_dsi_clk_status(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	u32 status;
+	unsigned char *base;
+
+	base = ctrl->ctrl_base;
+
+	status = MIPI_INP(base + 0x0120);/* DSI_CLK_STATUS */
+
+#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
+		xlog(__func__, status, 0, 0, 0, 0x77777);
+#endif
+	if (status & 0x10000) {	/* Bit 16 */
+		MIPI_OUTP(base + 0x0120, status);
+#ifdef MDP_RECOVERY 
+		dsi_send_events(ctrl, DSI_EV_PLL_UNLOCKED);
+#endif
+		pr_err("%s: status=%x\n", __func__, status);
+	}
+}
+
 void mdss_mdp_clk_ctrl(int enable, int isr);
 void mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 {
 	struct dcs_cmd_req *req;
 	u32 data;
 
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL)
-	mdss_mdp_clk_ctrl(1, false); 
-#endif	
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+	mdss_mdp_clk_ctrl(1, false);
+#endif
 
 	mutex_lock(&ctrl->cmd_mutex);
 
 	req = mdss_dsi_cmdlist_get(ctrl);
+
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, from_mdp, 0, 0, 0, current->pid);
+#endif
 
 	/* make sure dsi_cmd_mdp is idle */
 	mdss_dsi_cmd_mdp_busy(ctrl);
 
 	if (req == NULL)
 		goto need_lock;
+
+	/*
+	 * mdss interrupt is generated in mdp core clock domain
+	 * mdp clock need to be enabled to receive dsi interrupt
+	 * also, axi bus bandwidth need since dsi controller will
+	 * fetch dcs commands from axi bus
+	 */
+	mdss_bus_bandwidth_ctrl(1);
 
 	pr_debug("%s:  from_mdp=%d pid=%d\n", __func__, from_mdp, current->pid);
 	mdss_dsi_clk_ctrl(ctrl, 1);
@@ -1776,6 +1954,7 @@ void mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 		mdss_dsi_cmdlist_tx(ctrl, req);
 
 	mdss_dsi_clk_ctrl(ctrl, 0);
+	mdss_bus_bandwidth_ctrl(0);
 
 need_lock:
 
@@ -1784,7 +1963,8 @@ need_lock:
 
 	mutex_unlock(&ctrl->cmd_mutex);
 
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL)
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
 	mdss_mdp_clk_ctrl(0, false);
 #endif
 }
@@ -1858,80 +2038,224 @@ int mdss_dsi_cmdlist_put(struct mdss_dsi_ctrl_pdata *ctrl,
 	return ret;
 }
 
-void mdss_dsi_ack_err_status(unsigned char *base)
+
+#ifdef MDP_RECOVERY 
+void dsi_send_events(struct mdss_dsi_ctrl_pdata *ctrl, u32 events)
+{
+	struct dsi_event_q *evq;
+
+	if (!dsi_event.inited)
+		return;
+
+	pr_info("%s: ev=%x\n", __func__, events);
+
+	spin_lock(&dsi_event.event_lock);
+	evq = &dsi_event.todo_list[dsi_event.event_pndx++];
+	evq->todo = events;
+	evq->ctrl = ctrl;
+	dsi_event.dsi_ev_sum |= events;
+	dsi_event.event_pndx %= DSI_EVENT_Q_MAX;
+	wake_up(&dsi_event.event_q);
+	spin_unlock(&dsi_event.event_lock);
+}
+
+struct mdss_dsi_ctrl_pdata *xx_ctrl;
+
+void dsi_send_pll_unlock_events(void)
+{
+	dsi_send_events(xx_ctrl, DSI_EV_PLL_UNLOCKED);
+}
+
+static int dsi_event_thread(void *data)
+{
+	struct mdss_dsi_event *ev;
+	struct dsi_event_q *evq;
+	struct mdss_dsi_ctrl_pdata *ctrl;
+	unsigned long flag;
+	struct sched_param param;
+	u32 todo = 0;
+	int ret;
+
+	param.sched_priority = 16;
+	ret = sched_setscheduler_nocheck(current, SCHED_FIFO, &param);
+	if (ret)
+		pr_err("%s: set priority failed\n", __func__);
+
+	ev = (struct mdss_dsi_event *)data;
+	/* event */
+	init_waitqueue_head(&ev->event_q);
+	spin_lock_init(&ev->event_lock);
+
+	while (1) {
+		mdss_recovery_start = 0;
+		wait_event(ev->event_q, (ev->event_pndx != ev->event_gndx));
+		mdss_recovery_start = 1;
+		spin_lock_irqsave(&ev->event_lock, flag);
+		evq = &ev->todo_list[ev->event_gndx++];
+		todo = evq->todo;
+		ctrl = evq->ctrl;
+		evq->todo = 0;
+		ev->event_gndx %= DSI_EVENT_Q_MAX;
+		spin_unlock_irqrestore(&ev->event_lock, flag);
+
+		pr_info("%s: ev=%x\n", __func__, todo);
+
+		if (todo & DSI_EV_PLL_UNLOCKED) {
+			mdss_dsi_recovery[0]++;
+			mdss_dsi_pll_relock(ctrl);
+			dsi_event.dsi_ev_sum &= ~DSI_EV_PLL_UNLOCKED;
+		}
+
+		if (todo & DSI_EV_MDP_FIFO_UNDERFLOW) {
+			mdss_dsi_recovery[1]++;
+			mdss_dsi_sw_reset_restore(ctrl);
+			mdss_mdp_recover_after_kickoff();
+			dsi_event.dsi_ev_sum &= ~DSI_EV_MDP_FIFO_UNDERFLOW;
+		}
+
+		if (todo & DSI_EV_MDP_BUSY_RELEASE) {
+			mdss_dsi_recovery[2]++;
+			spin_lock(&ctrl->mdp_lock);
+			ctrl->mdp_busy = false;
+			mdss_dsi_disable_irq_nosync(ctrl, DSI_MDP_TERM);
+			complete(&ctrl->mdp_comp);
+			spin_unlock(&ctrl->mdp_lock);
+			dsi_event.dsi_ev_sum &= ~DSI_EV_MDP_BUSY_RELEASE;
+		}
+		if(!dsi_event.dsi_ev_sum)
+			mdss_dsi_intr_ctrl(ctrl, DSI_INTR_ERROR_MASK, 1);
+	}
+
+	return 0;
+}
+#endif
+
+void mdss_dsi_ack_err_status(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	u32 status;
+	unsigned char *base;
+
+	base = ctrl->ctrl_base;
 
 	status = MIPI_INP(base + 0x0068);/* DSI_ACK_ERR_STATUS */
 
 	if (status) {
 		MIPI_OUTP(base + 0x0068, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
-void mdss_dsi_timeout_status(unsigned char *base)
+void mdss_dsi_timeout_status(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	u32 status;
+	unsigned char *base;
+
+	base = ctrl->ctrl_base;
 
 	status = MIPI_INP(base + 0x00c0);/* DSI_TIMEOUT_STATUS */
+
 	if (status & 0x0111) {
 		MIPI_OUTP(base + 0x00c0, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
-void mdss_dsi_dln0_phy_err(unsigned char *base)
+void mdss_dsi_dln0_phy_err(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	u32 status;
+	unsigned char *base;
+
+	base = ctrl->ctrl_base;
 
 	status = MIPI_INP(base + 0x00b4);/* DSI_DLN0_PHY_ERR */
 
 	if (status & 0x011111) {
 		MIPI_OUTP(base + 0x00b4, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
-void mdss_dsi_fifo_status(unsigned char *base)
+void mdss_dsi_fifo_status(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	u32 status;
+	unsigned char *base;
+
+	base = ctrl->ctrl_base;
 
 	status = MIPI_INP(base + 0x000c);/* DSI_FIFO_STATUS */
 
-	if (status & 0x44444489) {
+
+	if (status & 0xcccc4489) {
 		MIPI_OUTP(base + 0x000c, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
+		if (status & 0x0080) {
+			mdss_mdp_underrun_dump_info();
+#ifdef MDP_RECOVERY 
+			dsi_send_events(ctrl, DSI_EV_MDP_FIFO_UNDERFLOW);
+#endif
+		}
 	}
 }
 
-void mdss_dsi_status(unsigned char *base)
+void mdss_dsi_status(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	u32 status;
+	unsigned char *base;
+
+	base = ctrl->ctrl_base;
 
 	status = MIPI_INP(base + 0x0008);/* DSI_STATUS */
 
 	if (status & 0x80000000) {
 		MIPI_OUTP(base + 0x0008, status);
-		pr_debug("%s: status=%x\n", __func__, status);
+		pr_err("%s: status=%x\n", __func__, status);
 	}
 }
 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+extern int reading_id;
+#endif
 void mdss_dsi_error(struct mdss_dsi_ctrl_pdata *ctrl)
 {
-	unsigned char *base;
-
-	base = ctrl->ctrl_base;
-
+#ifdef MDP_RECOVERY 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
+	u32 status; 
+	unsigned char *base; 
+	base = ctrl->ctrl_base; 
+	status = MIPI_INP(base + 0x0068);/* DSI_ACK_ERR_STATUS */
+	if (status != 0x1008000)
+#elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+	if (reading_id == 0)
+#endif
+	mdss_dsi_intr_ctrl(ctrl, DSI_INTR_ERROR_MASK, 0); /* DSI_ERR_INT_MASK0 */
+#endif
 
 	/* DSI_ERR_INT_MASK0 */
-	mdss_dsi_ack_err_status(base);	/* mask0, 0x01f */
-	mdss_dsi_timeout_status(base);	/* mask0, 0x0e0 */
-	mdss_dsi_fifo_status(base); 	/* mask0, 0x133d00 */
-	mdss_dsi_status(base);		/* mask0, 0xc0100 */
-	mdss_dsi_dln0_phy_err(base);	/* mask0, 0x3e00000 */
+	mdss_dsi_ack_err_status(ctrl);	/* mask0, 0x01f */
+	mdss_dsi_timeout_status(ctrl);	/* mask0, 0x0e0 */
+	mdss_dsi_fifo_status(ctrl); 	/* mask0, 0x133d00 */
+	mdss_dsi_status(ctrl);		/* mask0, 0xc0100 */
+	mdss_dsi_dln0_phy_err(ctrl);	/* mask0, 0x3e00000 */
+	mdss_dsi_clk_status(ctrl);	/* Mask0, 0x10000000 */
+
+#ifdef MDP_RECOVERY 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
+	if (status != 0x1008000)
+#elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+	if (reading_id == 0)
+#endif
+	dsi_send_events(ctrl, DSI_EV_MDP_BUSY_RELEASE);
+#endif
 }
 
+void dump_and_panic(void) 
+{ 
+	xlog_dump(); 
+	dumpreg(); 
+	mdp5_dump_regs(); 
+
+	panic("~ mdss_dsi_isr:DSI_ERROR for 5 times ~.\n"); 
+} 
 
 irqreturn_t mdss_dsi_isr(int irq, void *ptr)
 {
@@ -1962,13 +2286,14 @@ irqreturn_t mdss_dsi_isr(int irq, void *ptr)
 	pr_debug("%s: isr=%x", __func__, isr);
 
 	if (isr & DSI_INTR_ERROR) {
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+		xlog(__func__, ctrl->mdp_busy, isr, 0, 0, 0x97);
+#endif
 		pr_err("%s: isr=%x %x", __func__, isr, (int)DSI_INTR_ERROR);
-		spin_lock(&ctrl->mdp_lock);
-		ctrl->mdp_busy = false;
-		mdss_dsi_disable_irq_nosync(ctrl, DSI_MDP_TERM);
-		complete(&ctrl->mdp_comp);
 		mdss_dsi_error(ctrl);
-		spin_unlock(&ctrl->mdp_lock);
+
+		if (++ctrl->dsi_err_cnt > 5)
+			dump_and_panic();
 	}
 
 	if ((isr & DSI_INTR_VIDEO_DONE) &&
@@ -1981,6 +2306,9 @@ irqreturn_t mdss_dsi_isr(int irq, void *ptr)
 
 	if (isr & DSI_INTR_CMD_DMA_DONE) {
 		spin_lock(&ctrl->mdp_lock);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, ctrl->mdp_busy, isr, 0, 0, 0x98);
+#endif
 		mdss_dsi_disable_irq_nosync(ctrl, DSI_CMD_TERM);
 		complete(&ctrl->dma_comp);
 		spin_unlock(&ctrl->mdp_lock);
@@ -1988,6 +2316,9 @@ irqreturn_t mdss_dsi_isr(int irq, void *ptr)
 
 	if (isr & DSI_INTR_CMD_MDP_DONE) {
 		spin_lock(&ctrl->mdp_lock);
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	xlog(__func__, ctrl->mdp_busy, isr, 0, 0, 0x99);
+#endif
 		ctrl->mdp_busy = false;
 		mdss_dsi_disable_irq_nosync(ctrl, DSI_MDP_TERM);
 		complete(&ctrl->mdp_comp);

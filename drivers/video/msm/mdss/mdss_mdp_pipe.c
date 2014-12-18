@@ -22,7 +22,10 @@
 #define SMP_MB_SIZE		(mdss_res->smp_mb_size)
 #define SMP_MB_CNT		(mdss_res->smp_mb_cnt)
 #define SMP_ENTRIES_PER_MB	(SMP_MB_SIZE / 16)
+#define SMP_MB_ENTRY_SIZE	16
 #define MAX_BPP 4
+
+extern bool first_update;
 
 static DEFINE_MUTEX(mdss_mdp_sspp_lock);
 static DEFINE_MUTEX(mdss_mdp_smp_lock);
@@ -95,17 +98,31 @@ static void mdss_mdp_smp_mmb_free(unsigned long *smp, bool write)
 
 static void mdss_mdp_smp_set_wm_levels(struct mdss_mdp_pipe *pipe, int mb_cnt)
 {
-	u32 entries, val, wm[3];
+	u32 fetch_size, val, wm[3];
 
-	entries = mb_cnt * SMP_ENTRIES_PER_MB;
-	val = entries >> 2;
+	fetch_size = mb_cnt * SMP_MB_SIZE;
+
+	/*
+	 * when doing hflip, one line is reserved to be consumed down the
+	 * pipeline. This line will always be marked as full even if it doesn't
+	 * have any data. In order to generate proper priority levels ignore
+	 * this region while setting up watermark levels
+	 */
+	if (pipe->flags & MDP_FLIP_LR) {
+		u8 bpp = pipe->src_fmt->is_yuv ? 1 :
+			pipe->src_fmt->bpp;
+		fetch_size -= (pipe->src.w * bpp);
+	}
+
+	/* 1/4 of SMP pool that is being fetched */
+	val = (fetch_size / SMP_MB_ENTRY_SIZE) >> 2;
 
 	wm[0] = val;
 	wm[1] = wm[0] + val;
 	wm[2] = wm[1] + val;
 
-	pr_debug("pnum=%d watermarks %u,%u,%u\n", pipe->num,
-			wm[0], wm[1], wm[2]);
+	pr_debug("pnum=%d fetch_size=%u watermarks %u,%u,%u\n", pipe->num,
+			fetch_size, wm[0], wm[1], wm[2]);
 	mdss_mdp_pipe_write(pipe, MDSS_MDP_REG_SSPP_REQPRIO_FIFO_WM_0, wm[0]);
 	mdss_mdp_pipe_write(pipe, MDSS_MDP_REG_SSPP_REQPRIO_FIFO_WM_1, wm[1]);
 	mdss_mdp_pipe_write(pipe, MDSS_MDP_REG_SSPP_REQPRIO_FIFO_WM_2, wm[2]);
@@ -139,8 +156,11 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	u32 num_blks = 0, reserved = 0;
 	struct mdss_mdp_plane_sizes ps;
 	int i;
-	int rc = 0;
+	int rc = 0, rot_mode = 0;
 	u32 nlines;
+	u16 width;
+
+	width = pipe->src.w >> pipe->horz_deci;
 
 	if (pipe->bwc_mode) {
 		rc = mdss_mdp_get_rau_strides(pipe->src.w, pipe->src.h,
@@ -149,27 +169,54 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 			return rc;
 		pr_debug("BWC SMP strides ystride0=%x ystride1=%x\n",
 			ps.ystride[0], ps.ystride[1]);
-	} else if (mdata->has_decimation && pipe->src_fmt->is_yuv) {
-		ps.num_planes = 2;
-		ps.ystride[0] = pipe->src.w >> pipe->horz_deci;
-		ps.ystride[1] = pipe->src.h >> pipe->vert_deci;
-	} else if (pipe->src_fmt->fetch_planes == MDSS_MDP_PLANE_INTERLEAVED) {
-		ps.ystride[0] = max(pipe->mixer->width, pipe->src.w) * MAX_BPP;
-		ps.num_planes = 1;
 	} else {
 		rc = mdss_mdp_get_plane_sizes(pipe->src_fmt->format,
-			pipe->src.w, pipe->src.h, &ps, 0);
+			width, pipe->src.h, &ps, 0);
 		if (rc)
 			return rc;
+
+		if (pipe->mixer && pipe->mixer->rotator_mode) {
+			rot_mode = 1;
+		} else if (ps.num_planes == 1) {
+			ps.ystride[0] = MAX_BPP *
+				max(pipe->mixer->width, width);
+		} else if (mdata->has_decimation) {
+			/*
+			 * when decimation block is used, all chroma planes
+			 * are fetched on a single SMP plane for chroma pixels
+			 */
+			if (ps.num_planes == 3) {
+				ps.num_planes = 2;
+				ps.ystride[1] += ps.ystride[2];
+			}
+
+			/*
+			 * To avoid quailty loss, MDP does one less decimation
+			 * on chroma components if they are subsampled.
+			 * Account for this to have enough SMPs for latency
+			 */
+			switch (pipe->src_fmt->chroma_sample) {
+			case MDSS_MDP_CHROMA_H2V1:
+			case MDSS_MDP_CHROMA_420:
+				ps.ystride[1] <<= 1;
+				break;
+			}
+		}
 	}
+
+	nlines = pipe->bwc_mode ? 1 : 2;
 
 	mutex_lock(&mdss_mdp_smp_lock);
 	for (i = 0; i < ps.num_planes; i++) {
-		nlines = pipe->bwc_mode ? ps.rau_h[i] : 2;
-		num_blks = DIV_ROUND_UP(nlines * ps.ystride[i], SMP_MB_SIZE);
+		if (rot_mode) {
+			num_blks = 1;
+		} else {
+			num_blks = DIV_ROUND_UP(ps.ystride[i] * nlines,
+					SMP_MB_SIZE);
 
-		if (mdata->mdp_rev == MDSS_MDP_HW_REV_100)
-			num_blks = roundup_pow_of_two(num_blks);
+			if (mdata->mdp_rev == MDSS_MDP_HW_REV_100)
+				num_blks = roundup_pow_of_two(num_blks);
+		}
 
 		pr_debug("reserving %d mmb for pnum=%d plane=%d\n",
 				num_blks, pipe->num, i);
@@ -204,6 +251,13 @@ static int mdss_mdp_smp_alloc(struct mdss_mdp_pipe *pipe)
 	mdss_mdp_smp_set_wm_levels(pipe, cnt);
 	mutex_unlock(&mdss_mdp_smp_lock);
 	return 0;
+}
+
+void mdss_mdp_smp_release(struct mdss_mdp_pipe *pipe)
+{
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
+	mdss_mdp_smp_free(pipe);
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 }
 
 int mdss_mdp_smp_setup(struct mdss_data_type *mdata, u32 cnt, u32 size)
@@ -408,10 +462,11 @@ static int mdss_mdp_image_setup(struct mdss_mdp_pipe *pipe)
 	u32 width, height;
 	u32 decimation;
 
-	pr_debug("pnum=%d wh=%dx%d src={%d,%d,%d,%d} dst={%d,%d,%d,%d}\n",
-		   pipe->num, pipe->img_width, pipe->img_height,
-		   pipe->src.x, pipe->src.y, pipe->src.w, pipe->src.h,
-		   pipe->dst.x, pipe->dst.y, pipe->dst.w, pipe->dst.h);
+	if(first_update)
+		pr_info("..lm..pnum=%d wh=%dx%d src={%d,%d,%d,%d} dst={%d,%d,%d,%d}\n",
+		pipe->num, pipe->img_width, pipe->img_height,
+		pipe->src.x, pipe->src.y, pipe->src.w, pipe->src.h,
+		pipe->dst.x, pipe->dst.y, pipe->dst.w, pipe->dst.h);
 
 	width = pipe->img_width;
 	height = pipe->img_height;
@@ -470,8 +525,9 @@ static int mdss_mdp_format_setup(struct mdss_mdp_pipe *pipe)
 
 	fmt = pipe->src_fmt;
 
-	if (pipe->flags & MDP_SECURE_OVERLAY_SESSION)
-		secure = 0xF;
+	if (!mdss_res->secure_mode &&
+			(pipe->flags & MDP_SECURE_OVERLAY_SESSION))
+        secure = 0xF;
 
 	opmode = pipe->bwc_mode;
 	if (pipe->flags & MDP_FLIP_LR)
@@ -574,7 +630,9 @@ static int mdss_mdp_src_addr_setup(struct mdss_mdp_pipe *pipe,
 	struct mdss_data_type *mdata = mdss_mdp_get_mdata();
 	int ret = 0;
 
-	pr_debug("pnum=%d\n", pipe->num);
+	if (first_update)
+		pr_info("..lm..pnum=%d\n", pipe->num);
+
 
 	data->bwc_enabled = pipe->bwc_mode;
 
@@ -638,9 +696,11 @@ int mdss_mdp_pipe_queue_data(struct mdss_mdp_pipe *pipe,
 		pr_err("pipe mixer not setup properly for queue\n");
 		return -ENODEV;
 	}
+	
+	if (first_update)
+		pr_info("..lm..pnum=%x mixer=%d play_cnt=%u\n", pipe->num,
+		pipe->mixer->num, pipe->play_cnt);
 
-	pr_debug("pnum=%x mixer=%d play_cnt=%u\n", pipe->num,
-		 pipe->mixer->num, pipe->play_cnt);
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
 
@@ -649,6 +709,10 @@ int mdss_mdp_pipe_queue_data(struct mdss_mdp_pipe *pipe,
 		mdss_mdp_pipe_solidfill_setup(pipe);
 		goto update_nobuf;
 	}
+	
+	if (first_update)
+		 pr_info("..lm..params_changed = %d\n", params_changed);
+	
 
 	if (params_changed) {
 		pipe->params_changed = 0;
@@ -694,4 +758,9 @@ done:
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
 
 	return ret;
+}
+
+int mdss_mdp_pipe_is_staged(struct mdss_mdp_pipe *pipe)
+{
+	return (pipe == pipe->mixer->stage_pipe[pipe->mixer_stage]);
 }

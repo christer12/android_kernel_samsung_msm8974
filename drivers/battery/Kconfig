@@ -217,3 +217,11 @@ config SAMSUNG_BATTERY_FACTORY
 	  enable this feature only factory mode
 	  this featuren must disabled user binary
 	  stability test etc..
+
+config SAMSUNG_BATTERY_DISALLOW_DEEP_SLEEP
+	bool "Disallow deep sleep during charging"
+	default n
+	depends on BATTERY_SAMSUNG && ARCH_MSM8974
+	help
+	  Say Y to include support
+	  Disallow deep sleep during charging for stablity.

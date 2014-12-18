@@ -110,7 +110,9 @@ int msm_isp_update_bandwidth(enum msm_isp_hw_client client,
 	mutex_lock(&bandwidth_mgr_mutex);
 	if (!isp_bandwidth_mgr.use_count ||
 		!isp_bandwidth_mgr.bus_client) {
-		pr_err("%s: bandwidth manager inactive\n", __func__);
+		pr_err("%s:error bandwidth manager inactive use_cnt:%d bus_clnt:%d\n",
+			__func__, isp_bandwidth_mgr.use_count,
+			isp_bandwidth_mgr.bus_client);
 		return -EINVAL;
 	}
 
@@ -146,8 +148,11 @@ void msm_isp_deinit_bandwidth_mgr(enum msm_isp_hw_client client)
 		return;
 	}
 
-	if (!isp_bandwidth_mgr.bus_client)
+	if (!isp_bandwidth_mgr.bus_client) {
+		pr_err("%s:%d error: bus client invalid\n", __func__, __LINE__);
+		mutex_unlock(&bandwidth_mgr_mutex);
 		return;
+	}
 
 	msm_bus_scale_client_update_request(
 	   isp_bandwidth_mgr.bus_client, 0);
@@ -536,9 +541,11 @@ static int msm_isp_send_hw_cmd(struct vfe_device *vfe_dev,
 		int i;
 		uint32_t *data_ptr = cfg_data +
 			reg_cfg_cmd->u.rw_info.cmd_data_offset/4;
-		for (i = 0; i < reg_cfg_cmd->u.rw_info.len/4; i++)
+		for (i = 0; i < reg_cfg_cmd->u.rw_info.len/4; i++) {
 			*data_ptr++ = msm_camera_io_r(vfe_dev->vfe_base +
-				reg_cfg_cmd->u.rw_info.reg_offset++);
+				reg_cfg_cmd->u.rw_info.reg_offset);
+			reg_cfg_cmd->u.rw_info.reg_offset += 4;
+		}
 		break;
 	}
 	}
@@ -715,9 +722,8 @@ int msm_isp_get_bit_per_pixel(uint32_t output_format)
 		/*TD: Add more image format*/
 	default:
 		pr_err("%s: Invalid output format\n", __func__);
-		break;
+		return 10;
 	}
-	return -EINVAL;
 }
 
 void msm_isp_update_error_frame_count(struct vfe_device *vfe_dev)
@@ -737,8 +743,9 @@ void msm_isp_process_error_info(struct vfe_device *vfe_dev)
 	static DEFINE_RATELIMIT_STATE(rs_stats,
 		DEFAULT_RATELIMIT_INTERVAL, DEFAULT_RATELIMIT_BURST);
 
-	if (error_info->error_count == 1 ||
-		!(error_info->info_dump_frame_count % 100)) {
+//	if (error_info->error_count == 1 ||
+//		!(error_info->info_dump_frame_count % 100)) {
+	if (1) {
 		vfe_dev->hw_info->vfe_ops.core_ops.
 			process_error_status(vfe_dev);
 		error_info->error_mask0 = 0;

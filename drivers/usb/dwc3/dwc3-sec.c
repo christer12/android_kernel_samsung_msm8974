@@ -22,7 +22,8 @@ struct dwc3_sec {
 static struct dwc3_sec sec_noti;
 
 #ifdef CONFIG_CHARGER_BQ24260
-void bq24260_otg_control(int enable)
+struct delayed_work	bq24260_late_power_work;
+int bq24260_otg_control(int enable)
 {
 	union power_supply_propval value;
 	int i, ret = 0;
@@ -38,7 +39,8 @@ void bq24260_otg_control(int enable)
 	}
 	if (i == 10) {
 		pr_err("%s: fail to get battery ps\n", __func__);
-		return;
+		schedule_delayed_work(&bq24260_late_power_work, msecs_to_jiffies(5000));
+		return -1;
 	}
 
 	if (enable)
@@ -53,12 +55,52 @@ void bq24260_otg_control(int enable)
 		pr_err("%s: fail to set power_suppy ONLINE property(%d)\n",
 			__func__, ret);
 	}
+	return ret;
 }
+
+static void bq24260_late_power(struct work_struct *work)
+{
+	struct dwc3_sec *snoti = &sec_noti;
+	struct dwc3_msm *dwcm;
+	
+	if (!snoti) {
+		pr_err("%s: dwc3_otg (snoti) is null\n", __func__);
+		return;
+	}
+
+	dwcm = snoti->dwcm;
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
+		return;
+	}
+	
+	pr_info("%s, ext_xceiv.id=%d\n", __func__, dwcm->ext_xceiv.id);
+
+	if (dwcm->ext_xceiv.id == DWC3_ID_GROUND)
+		bq24260_otg_control(1);
+}
+
+struct booster_data sec_booster = {
+	.name = "bq24260",
+	.boost = bq24260_otg_control,
+};
 
 static irqreturn_t msm_usb_vbus_msm_irq(int irq, void *data)
 {
+	struct dwc3_sec *snoti = &sec_noti;
+	struct dwc3_msm *dwcm;
 	int enable = gpio_get_value(GPIO_USB_VBUS_MSM);
 	pr_info("%s usb_vbus_msm=%d\n", __func__, enable);
+	dwcm = snoti->dwcm;
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
+		return NOTIFY_BAD;
+	}
+	if (dwcm->ext_xceiv.id == DWC3_ID_GROUND && enable == 0) {
+		pr_info("%s over current\n", __func__);
+		sec_otg_notify(HNOTIFY_OVERCURRENT);
+		return IRQ_HANDLED;
+	}
 	sec_otg_notify(enable ?
 		HNOTIFY_OTG_POWER_ON : HNOTIFY_OTG_POWER_OFF);
 	return IRQ_HANDLED;
@@ -67,6 +109,9 @@ static irqreturn_t msm_usb_vbus_msm_irq(int irq, void *data)
 static int usb_vbus_msm_init(struct dwc3_msm *dwcm, struct usb_phy *phy)
 {
 	int ret;
+
+	sec_otg_register_booster(&sec_booster);
+	INIT_DELAYED_WORK(&bq24260_late_power_work, bq24260_late_power);
 
 	ret = gpio_tlmm_config(GPIO_CFG(GPIO_USB_VBUS_MSM, 0, GPIO_CFG_INPUT,
 		GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
@@ -112,9 +157,14 @@ int sec_handle_event(int enable)
 
 	pr_info("%s: event %d\n", __func__, enable);
 
+	if (!snoti) {
+		pr_err("%s: dwc3_otg (snoti) is null\n", __func__);
+		return NOTIFY_BAD;
+	}
+
 	dwcm = snoti->dwcm;
-	if (!snoti || !dwcm) {
-		pr_err("%s: dwc3_otg is null\n", __func__);
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
 		return NOTIFY_BAD;
 	}
 
@@ -138,9 +188,14 @@ static int sec_otg_notifications(struct notifier_block *nb,
 
 	pr_info("%s: event %lu\n", __func__, event);
 
+	if (!snoti) {
+		pr_err("%s: dwc3_otg (snoti) is null\n", __func__);
+		return NOTIFY_BAD;
+	}
+
 	dwcm = snoti->dwcm;
-	if (!snoti || !dwcm) {
-		pr_err("%s: dwc3_otg is null\n", __func__);
+	if (!dwcm) {
+		pr_err("%s: dwc3_otg (dwcm) is null\n", __func__);
 		return NOTIFY_BAD;
 	}
 

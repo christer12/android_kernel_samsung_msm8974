@@ -13,107 +13,22 @@
  */
 #include "msm_sensor.h"
 #define IMX135_SENSOR_NAME "imx135"
+
+#define IMX135_DEBUG
+
+#undef CDBG
+#ifdef IMX135_DEBUG
+#define CDBG(fmt, args...) pr_err(fmt, ##args)
+#else
+#define CDBG(fmt, args...) pr_debug(fmt, ##args)
+#endif
 DEFINE_MSM_MUTEX(imx135_mut);
 
-struct class *camera_class;
 
 static struct msm_sensor_ctrl_t imx135_s_ctrl;
 
-static struct msm_sensor_power_setting imx135_power_setting[] = {
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_RESET,
-		.config_val = GPIO_OUT_LOW,
-		.delay = 1,
-	},
-	{ //AVDD 2.8V
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_EXT_VANA_POWER,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 1,
-	},	
-	{ // DVDD 1.05V
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VDIG,
-		.config_val = 0,
-		.delay = 0,
-	},
-	{ // AF 2.8V
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VAF,
-		.config_val = 0,
-		.delay = 3, //iTo 
-	},
-	{ // HOST 1.8 V
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VIO,
-		.config_val = 0,
-		.delay = 1,
-	},
-	{ // MCLK 
-		.seq_type = SENSOR_CLK,
-		.seq_val = SENSOR_CAM_MCLK,
-		.config_val = 0,
-		.delay = 2,
-	},
-	{ // Reset
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_RESET,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_I2C_MUX,
-		.seq_val = 0,
-		.config_val = 0,
-		.delay = 5,
-	},
-};
+struct class *camera_class;
 
-static struct msm_sensor_power_setting imx135_power_off_setting[] = {
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_EXT_VANA_POWER,
-		.config_val = GPIO_OUT_HIGH,
-		.delay = 1,
-	},	
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VDIG,
-		.config_val = 0,
-		.delay = 0,
-	},
-    {
-		.seq_type = SENSOR_I2C_MUX,
-		.seq_val = 0,
-		.config_val = 0,
-		.delay = 0,
-    },
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VIO,
-		.config_val = 0,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_GPIO,
-		.seq_val = SENSOR_GPIO_RESET,
-		.config_val = GPIO_OUT_LOW,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_CLK,
-		.seq_val = SENSOR_CAM_MCLK,
-		.config_val = 0,
-		.delay = 1,
-	},
-	{
-		.seq_type = SENSOR_VREG,
-		.seq_val = CAM_VAF,
-		.config_val = 0,
-		.delay = 1,
-	},
-};
 
 static struct v4l2_subdev_info imx135_subdev_info[] = {
 	{
@@ -129,9 +44,14 @@ static const struct i2c_device_id imx135_i2c_id[] = {
 	{ }
 };
 
+static int32_t msm_imx135_i2c_probe(struct i2c_client *client,
+	const struct i2c_device_id *id)
+{
+	return msm_sensor_i2c_probe(client, id, &imx135_s_ctrl);
+}
 static struct i2c_driver imx135_i2c_driver = {
 	.id_table = imx135_i2c_id,
-	.probe  = msm_sensor_i2c_probe,
+	.probe  = msm_imx135_i2c_probe,
 	.driver = {
 		.name = IMX135_SENSOR_NAME,
 	},
@@ -182,7 +102,7 @@ static ssize_t back_camera_firmware_show(struct device *dev,
 	|| defined(CONFIG_MACH_KS01LGT)
 	char cam_fw[] = "O13Q0SAGC01 O13Q0SAGC01\n";/*Camsys_module,13mega_pixel,Qualcomm_isp,Sony_sensor*/
 #else
-	char cam_fw[] = "C13Q0SAGD01 C13Q0SAGD01\n";/*Camsys_module,13mega_pixel,Qualcomm_isp,Sony_sensor*/
+	char cam_fw[] = "D13QSGF01OA D13QSGF01OA\n";/*Camsys_module,13mega_pixel,Qualcomm_isp,Sony_sensor*/
 #endif
 
 	return snprintf(buf, sizeof(cam_fw), "%s", cam_fw);
@@ -253,18 +173,20 @@ static int32_t imx135_platform_probe(struct platform_device *pdev)
 static int __init imx135_init_module(void)
 {
 	int32_t rc = 0;
-	pr_info("%s:%d\n", __func__, __LINE__);
+	CDBG("%s:%d\n", __func__, __LINE__);
 	rc = platform_driver_probe(&imx135_platform_driver,
 		imx135_platform_probe);
-	if (!rc)
+	if (!rc) {
+		pr_info("%s: probe success\n", __func__);
 		return rc;
-	pr_err("%s:%d rc %d\n", __func__, __LINE__, rc);
+	}
+	CDBG("%s:%d rc %d\n", __func__, __LINE__, rc);
 	return i2c_add_driver(&imx135_i2c_driver);
 }
 
 static void __exit imx135_exit_module(void)
 {
-	pr_info("%s:%d\n", __func__, __LINE__);
+	CDBG("%s:%d\n", __func__, __LINE__);
 	if (imx135_s_ctrl.pdev) {
 		msm_sensor_free_sensor_data(&imx135_s_ctrl);
 		platform_driver_unregister(&imx135_platform_driver);
@@ -275,10 +197,6 @@ static void __exit imx135_exit_module(void)
 
 static struct msm_sensor_ctrl_t imx135_s_ctrl = {
 	.sensor_i2c_client = &imx135_sensor_i2c_client,
-	.power_setting_array.power_setting = imx135_power_setting,
-	.power_setting_array.size = ARRAY_SIZE(imx135_power_setting),
-	.power_setting_array.power_off_setting = imx135_power_off_setting,
-	.power_setting_array.off_size = ARRAY_SIZE(imx135_power_off_setting),
 	.msm_sensor_mutex = &imx135_mut,
 	.sensor_v4l2_subdev_info = imx135_subdev_info,
 	.sensor_v4l2_subdev_info_size = ARRAY_SIZE(imx135_subdev_info),

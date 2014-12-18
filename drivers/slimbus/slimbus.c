@@ -1180,6 +1180,7 @@ static int connect_port_ch(struct slim_controller *ctrl, u8 ch, u32 ph,
 	buf[1] = ctrl->chans[ch].chan;
 	if (la == SLIM_LA_MANAGER)
 		ctrl->ports[pn].flow = flow;
+	pr_err("CODEC connect MC:0x %x, port:%x", mc, pn);
 	ret = slim_processtxn(ctrl, SLIM_MSG_DEST_LOGICALADDR, mc, 0,
 				SLIM_MSG_MT_CORE, NULL, buf, 2, 6, NULL, la,
 				NULL);
@@ -1196,6 +1197,7 @@ static int disconnect_port_ch(struct slim_controller *ctrl, u32 ph)
 	u8 pn = (u8)SLIM_HDL_TO_PORT(ph);
 
 	mc = SLIM_MSG_MC_DISCONNECT_PORT;
+	pr_err("CODEC disconnect port:%x", pn);
 	ret = slim_processtxn(ctrl, SLIM_MSG_DEST_LOGICALADDR, mc, 0,
 				SLIM_MSG_MT_CORE, NULL, &pn, 1, 5,
 				NULL, la, NULL);
@@ -2695,16 +2697,14 @@ int slim_reconfigure_now(struct slim_device *sb)
 		ret = slim_processtxn(ctrl, SLIM_MSG_DEST_BROADCAST,
 			SLIM_MSG_MC_NEXT_SUBFRAME_MODE, 0, SLIM_MSG_MT_CORE,
 			NULL, (u8 *)&subframe, 1, 4, NULL, 0, NULL);
-		dev_dbg(&ctrl->dev, "sending subframe:%d,ret:%d\n",
-				(int)wbuf[0], ret);
+		pr_err("sending subframe:%x,ret:%d\n", wbuf[0], ret);
 	}
 	if (!ret && clkgear != ctrl->clkgear) {
 		wbuf[0] = (u8)(clkgear & 0xFF);
 		ret = slim_processtxn(ctrl, SLIM_MSG_DEST_BROADCAST,
 			SLIM_MSG_MC_NEXT_CLOCK_GEAR, 0, SLIM_MSG_MT_CORE,
 			NULL, wbuf, 1, 4, NULL, 0, NULL);
-		dev_dbg(&ctrl->dev, "sending clkgear:%d,ret:%d\n",
-				(int)wbuf[0], ret);
+		pr_err("sending clkgear:%x,ret:%d\n", wbuf[0], ret);
 	}
 	if (ret)
 		goto revert_reconfig;
@@ -2835,6 +2835,7 @@ int slim_reconfigure_now(struct slim_device *sb)
 		sb->cur_msgsl = sb->pending_msgsl;
 		slim_chan_changes(sb, false);
 		mutex_unlock(&ctrl->sched.m_reconf);
+		pr_err("slim reconfig done!");
 		return 0;
 	}
 
@@ -2893,8 +2894,8 @@ int slim_control_ch(struct slim_device *sb, u16 chanh,
 		u8 add_mark_removal  = true;
 
 		slc = &ctrl->chans[chan];
-		dev_dbg(&ctrl->dev, "chan:%d,ctrl:%d,def:%d", chan, chctrl,
-					slc->def);
+		pr_err("chan:%d,ctrl:%d,def:%d, ref:%d", slc->chan,
+				chctrl, slc->def, slc->ref);
 		if (slc->state < SLIM_CH_DEFINED) {
 			ret = -ENOTCONN;
 			break;
@@ -3020,8 +3021,15 @@ int slim_ctrl_clk_pause(struct slim_controller *ctrl, bool wakeup, u8 restart)
 		 */
 		if (ctrl->clk_state == SLIM_CLK_PAUSED && ctrl->wakeup)
 			ret = ctrl->wakeup(ctrl);
+		/*
+		 * If wakeup fails, make sure that next attempt can succeed.
+		 * Since we already consumed pause_comp, complete it so
+		 * that next wakeup isn't blocked forever
+		 */
 		if (!ret)
 			ctrl->clk_state = SLIM_CLK_ACTIVE;
+		else
+			complete(&ctrl->pause_comp);
 		mutex_unlock(&ctrl->m_ctrl);
 		return ret;
 	} else {

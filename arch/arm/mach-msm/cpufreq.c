@@ -61,10 +61,25 @@ struct cpu_freq {
 static DEFINE_PER_CPU(struct cpu_freq, cpu_freq_info);
 
 #ifdef CONFIG_SEC_DVFS
-static unsigned int upper_limit_freq;
+#if defined(CONFIG_MACH_JS01LTEDCM)
+static unsigned int upper_limit_freq = 1574400;
+#else
+static unsigned int upper_limit_freq = 2265600;
+#endif
 static unsigned int lower_limit_freq;
 static unsigned int cpuinfo_max_freq;
 static unsigned int cpuinfo_min_freq;
+
+static int __init setup_jig_debug(char *jig)
+{
+	if (strncmp(jig, "1", 1) == 0) {
+		upper_limit_freq = 1574400;
+		printk("PM: Booting with JIG. upper_limit %d\n", upper_limit_freq);
+	}
+
+	return 0;
+}
+__setup("androidboot.uart_debug=", setup_jig_debug);
 
 unsigned int get_min_lock(void)
 {
@@ -478,6 +493,10 @@ static int __init msm_cpufreq_register(void)
 
 	msm_cpufreq_wq = alloc_workqueue("msm-cpufreq",
 			WQ_MEM_RECLAIM | WQ_HIGHPRI, 1);
+
+	if (!msm_cpufreq_wq)
+		return -EINVAL;
+
 	register_hotcpu_notifier(&msm_cpufreq_cpu_notifier);
 
 	return cpufreq_register_driver(&msm_cpufreq_driver);

@@ -51,6 +51,8 @@ smt113j_spi_thread_t *spi_work_thread = NULL;
  * function
  ******************************************************************************/
 
+extern void driver_config_during_boot_up(void);
+
 /******************************************************************************
  * code area
  ******************************************************************************/
@@ -67,15 +69,15 @@ smt113j_spi_thread_t *spi_work_thread = NULL;
  ******************************************************************************/
 static int __init smt113J_tuner_start (void)
 {
-    DEBUG_PRINT("smt113J_tuner_start: Start");
-
-	/* I2C Driver exit module */
+	/* I2C Driver initialization module */
 	tuner_drv_start();
 
-	/* SPI Driver exit module */
+	/* SPI Driver initialization module */
 	SMT113J_SPI_init();
 	
-    DEBUG_PRINT("smt113J_tuner_start: End");
+    printk("smt113J_tuner_start: End\n");
+
+	driver_config_during_boot_up();
 
     return 0;
 }
@@ -92,15 +94,13 @@ static int __init smt113J_tuner_start (void)
  ******************************************************************************/
 static void __exit smt113J_tuner_end ( void )
 {
-    DEBUG_PRINT("smt113J_tuner_end: Start");
-
 	/* I2C Driver exit module */
 	tuner_drv_end();
 
 	/* SPI Driver exit module */
 	SMT113J_SPI_exit();
 	
-    DEBUG_PRINT("smt113J_tuner_end: End");
+    printk("smt113J_tuner_end: End\n");
 
 	return;
 }

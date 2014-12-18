@@ -71,14 +71,9 @@ module_param_named(max_sleep, POLLING_MAX_SLEEP,
 static int POLLING_INACTIVITY = 40;
 module_param_named(inactivity, POLLING_INACTIVITY,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
-static int bam_adaptive_timer_enabled = 1;
+static int bam_adaptive_timer_enabled = 0;
 module_param_named(adaptive_timer_enabled,
 			bam_adaptive_timer_enabled,
-		   int, S_IRUGO | S_IWUSR | S_IWGRP);
-
-static int adapt_pipe_thresh = 50; /* changed 66-> 50 */
-module_param_named(adapt_pipe_thresh,
-			adapt_pipe_thresh,
 		   int, S_IRUGO | S_IWUSR | S_IWGRP);
 
 #if defined(DEBUG)
@@ -241,6 +236,8 @@ static struct workqueue_struct *bam_mux_tx_workqueue;
 /* A2 power collaspe */
 #define UL_TIMEOUT_DELAY 1000	/* in ms */
 #define ENABLE_DISCONNECT_ACK	0x1
+#define SHUTDOWN_TIMEOUT_MS	500
+#define UL_WAKEUP_TIMEOUT_MS 2000
 static void toggle_apps_ack(void);
 static void reconnect_to_bam(void);
 static void disconnect_to_bam(void);
@@ -281,6 +278,7 @@ static int need_delayed_ul_vote;
 static int power_management_only_mode;
 static int in_ssr;
 static int ssr_skipped_disconnect;
+static struct completion shutdown_completion;
 
 struct outside_notify_func {
 	void (*notify)(void *, int, unsigned long);
@@ -1075,6 +1073,7 @@ static void rx_switch_to_interrupt_mode(void)
 		goto fail;
 	}
 	polling_mode = 0;
+	complete_all(&shutdown_completion);
 	release_wakelock();
 
 	/* handle any rx packets before interrupt was enabled */
@@ -1200,9 +1199,9 @@ static void rx_timer_work_func(struct work_struct *work)
 			} else {
 				if (buffs_used > 0) {
 					rx_timer_interval =
-						(adapt_pipe_thresh * num_buffers *
+						(2 * num_buffers *
 							rx_timer_interval)/
-						(100 * buffs_used);
+						(3 * buffs_used);
 				} else {
 					rx_timer_interval =
 						MAX_POLLING_SLEEP;
@@ -1275,6 +1274,7 @@ static void bam_mux_rx_notify(struct sps_event_notify *notify)
 					" not disabled\n", __func__, ret);
 				break;
 			}
+			INIT_COMPLETION(shutdown_completion);
 			grab_wakelock();
 			polling_mode = 1;
 			/*
@@ -1587,7 +1587,13 @@ static int ssrestart_check(void)
 {
 	int ret = 0;
 
-	DMUX_LOG_KERR("%s: modem timeout: BAM DMUX disabled for SSR\n", 
+	if (in_global_reset) {
+		DMUX_LOG_KERR("%s: modem timeout: already in SSR\n",
+			__func__);
+		return 1;
+	}
+
+	DMUX_LOG_KERR("%s: modem timeout: BAM DMUX disabled for SSR\n",
 				__func__);
 
 	in_global_reset = 1;
@@ -1670,7 +1676,7 @@ static void ul_wakeup(void)
 	if (wait_for_ack) {
 		BAM_DMUX_LOG("%s waiting for previous ack\n", __func__);
 		ret = wait_for_completion_timeout(
-					&ul_wakeup_ack_completion, HZ);
+					&ul_wakeup_ack_completion, msecs_to_jiffies(UL_WAKEUP_TIMEOUT_MS));
 		wait_for_ack = 0;
 		if (unlikely(ret == 0) && ssrestart_check()) {
 			mutex_unlock(&wakeup_lock);
@@ -1681,14 +1687,14 @@ static void ul_wakeup(void)
 	INIT_COMPLETION(ul_wakeup_ack_completion);
 	power_vote(1);
 	BAM_DMUX_LOG("%s waiting for wakeup ack\n", __func__);
-	ret = wait_for_completion_timeout(&ul_wakeup_ack_completion, HZ);
+	ret = wait_for_completion_timeout(&ul_wakeup_ack_completion, msecs_to_jiffies(UL_WAKEUP_TIMEOUT_MS));
 	if (unlikely(ret == 0) && ssrestart_check()) {
 		mutex_unlock(&wakeup_lock);
 		BAM_DMUX_LOG("%s timeout wakeup ack\n", __func__);
 		return;
 	}
 	BAM_DMUX_LOG("%s waiting completion\n", __func__);
-	ret = wait_for_completion_timeout(&bam_connection_completion, HZ);
+	ret = wait_for_completion_timeout(&bam_connection_completion, msecs_to_jiffies(UL_WAKEUP_TIMEOUT_MS));
 	if (unlikely(ret == 0) && ssrestart_check()) {
 		mutex_unlock(&wakeup_lock);
 		BAM_DMUX_LOG("%s timeout power on\n", __func__);
@@ -1756,6 +1762,18 @@ static void disconnect_to_bam(void)
 	struct list_head *node;
 	struct rx_pkt_info *info;
 	unsigned long flags;
+	unsigned long time_remaining;
+
+	if (!in_global_reset) {
+		time_remaining = wait_for_completion_timeout(
+				&shutdown_completion,
+				msecs_to_jiffies(SHUTDOWN_TIMEOUT_MS));
+		if (time_remaining == 0) {
+			DMUX_LOG_KERR("%s: shutdown completion timed out\n",
+					__func__);
+			ssrestart_check();
+		}
+	}
 
 	bam_connection_is_active = 0;
 
@@ -2225,6 +2243,11 @@ static void toggle_apps_ack(void)
 {
 	static unsigned int clear_bit; /* 0 = set the bit, else clear bit */
 
+	if (in_global_reset) {
+		BAM_DMUX_LOG("%s: skipped due to SSR\n", __func__);
+		return;
+	}
+
 	BAM_DMUX_LOG("%s: apps ack %d->%d\n", __func__,
 			clear_bit & 0x1, ~clear_bit & 0x1);
 	smsm_change_state(SMSM_APPS_STATE,
@@ -2380,6 +2403,8 @@ static int bam_dmux_probe(struct platform_device *pdev)
 	init_completion(&ul_wakeup_ack_completion);
 	init_completion(&bam_connection_completion);
 	init_completion(&dfab_unvote_completion);
+	init_completion(&shutdown_completion);
+	complete_all(&shutdown_completion);
 	INIT_DELAYED_WORK(&ul_timeout_work, ul_timeout);
 	INIT_DELAYED_WORK(&queue_rx_work, queue_rx_work_func);
 	wake_lock_init(&bam_wakelock, WAKE_LOCK_SUSPEND, "bam_dmux_wakelock");

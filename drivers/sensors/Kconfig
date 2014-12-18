@@ -37,6 +37,17 @@ config SENSORS_CM3323
 
 	  Say N here if you do not use cm3323.
 
+config SENSORS_CM36653
+	depends on I2C
+	tristate "CM36653 driver"
+	default n
+	help
+	  Say Y here if you use cm36653.
+	  This option enables RGB sensors using
+	  Capella cm36653 device driver.
+
+	  Say N here if you do not use cm36653.
+
 config SENSORS_SX9500
 	depends on I2C
 	tristate "SX9500 driver"
@@ -47,3 +58,6 @@ config SENSORS_SX9500
 	  SamTech cm3323 device driver.
 
 	  Say N here if you do not use cm3323.
+
+source "drivers/sensors/mpu6500/Kconfig"
+source "drivers/sensors/yas532/Kconfig"

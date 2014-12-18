@@ -23,8 +23,8 @@
 #include <linux/regulator/machine.h>
 
 #if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || \
-	defined(CONFIG_MACH_KS01LGT)
-#define WPC_SOFT_REGULATION_FEATURE
+	defined(CONFIG_MACH_KS01LGT) || defined(CONFIG_MACH_JACTIVESKT)
+#define WPC_CHECK_CVPRM_FEATURE
 #endif
 
 /*

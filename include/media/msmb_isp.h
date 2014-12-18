@@ -11,6 +11,7 @@
 #define ISP_NATIVE_BUF_BIT    0x10000
 #define ISP0_BIT              0x20000
 #define ISP1_BIT              0x40000
+#define ISP_META_CHANNEL_BIT  0x80000
 #define ISP_STATS_STREAM_BIT  0x80000000
 
 enum ISP_START_PIXEL_PATTERN {
@@ -310,7 +311,8 @@ enum msm_isp_event_idx {
 	ISP_CAMIF_ERROR     = 6,
 	ISP_SOF             = 7,
 	ISP_EOF             = 8,
-	ISP_EVENT_MAX       = 9
+	ISP_ERROR           = 9,
+	ISP_EVENT_MAX       = 10
 };
 
 #define ISP_EVENT_OFFSET          8
@@ -326,6 +328,7 @@ enum msm_isp_event_idx {
 #define ISP_EVENT_CAMIF_ERROR     (ISP_EVENT_BASE + ISP_CAMIF_ERROR)
 #define ISP_EVENT_SOF             (ISP_EVENT_BASE + ISP_SOF)
 #define ISP_EVENT_EOF             (ISP_EVENT_BASE + ISP_EOF)
+#define ISP_EVENT_ERROR           (ISP_EVENT_BASE + ISP_ERROR)
 #define ISP_EVENT_BUF_DIVERT      (ISP_BUF_EVENT_BASE)
 #define ISP_EVENT_STATS_NOTIFY    (ISP_STATS_EVENT_BASE)
 #define ISP_EVENT_COMP_STATS_NOTIFY (ISP_EVENT_STATS_NOTIFY + MSM_ISP_STATS_MAX)

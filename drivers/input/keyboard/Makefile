@@ -57,3 +57,5 @@ obj-$(CONFIG_KEYBOARD_W90P910)		+= w90p910_keypad.o
 obj-$(CONFIG_KEYBOARD_CYPRESS_TOUCH)	+= cypress_touchkey/
 obj-$(CONFIG_KEYBOARD_CYPRESS_TOUCHKEY)	+= cypress_touchkey_h/
 obj-$(CONFIG_KEYBOARD_MELFAS_TOUCHKEY)	+= melfas_touchkey/
+obj-$(CONFIG_INPUT_FLIP)  += flip.o
+

@@ -138,18 +138,6 @@ static int tuner_module_entry_close( struct inode* Inode,
 static int tuner_probe( struct platform_device *pdev );
 static int tuner_remove( struct platform_device *pdev );
 
-/* Add start 20121219 No.1 */
-static int tmm_i2c_main1_probe(struct i2c_client *client,\
-							const struct i2c_device_id *devid);
-static int tmm_i2c_main2_probe(struct i2c_client *client,\
-							const struct i2c_device_id *devid);
-static int tmm_i2c_sub_probe(struct i2c_client *client,\
-							const struct i2c_device_id *devid);
-static int tmm_i2c_main1_remove(struct i2c_client *client);
-static int tmm_i2c_main2_remove(struct i2c_client *client);
-static int tmm_i2c_sub_remove(struct i2c_client *client);
-/* Add end 20121219 No.1 */
-
 /* entry point */
 static struct file_operations TunerFileOperations = {
 								.owner   = THIS_MODULE,
@@ -180,89 +168,11 @@ static struct platform_driver mmtuner_driver = {
 											      }
 											   };
 
-/* Add start 20121219 No.1 */
-struct i2c_client *i2c_main1_client;
-struct i2c_client *i2c_main2_client;
-struct i2c_client *i2c_sub_client;
-
-static const struct i2c_device_id smtej114_i2c_main1_id[] = {
-	{"smtej113_main1", 0},
-	{}
-};
-
-static const struct i2c_device_id smtej114_i2c_main2_id[] = {
-	{"smtej113_main2", 0},
-	{}
-};
-
-static const struct i2c_device_id smtej114_i2c_sub_id[] = {
-	{"smtej113_sub", 0},
-	{}
-};
-
-MODULE_DEVICE_TABLE(i2c, smtej114_i2c_main1_id);
-MODULE_DEVICE_TABLE(i2c, smtej114_i2c_main2_id);
-MODULE_DEVICE_TABLE(i2c, smtej114_i2c_sub_id);
-
-static const struct of_device_id tmm_i2c_main1_data_match_table[] = {
-	{   .compatible = "isdbtmm_smtej113_main1",
-	},
-	{}
-};
-
-static struct i2c_driver smtej113_i2c_main1_driver = {
-	.probe = tmm_i2c_main1_probe,
-	.remove = tmm_i2c_main1_remove,
-	.driver = {
-		   .name = "smtej113_main1",
-		   .owner = THIS_MODULE,
-		   .of_match_table = tmm_i2c_main1_data_match_table,
-		   },
-	.id_table = smtej114_i2c_main1_id,
-};
-
-static const struct of_device_id tmm_i2c_main2_data_match_table[] = {
-	{   .compatible = "isdbtmm_smtej113_main2",
-	},
-	{}
-};
-
-
-static struct i2c_driver smtej113_i2c_main2_driver = {
-	.probe = tmm_i2c_main2_probe,
-	.remove = tmm_i2c_main2_remove,
-	.driver = {
-		   .name = "smtej113_main2",
-		   .owner = THIS_MODULE,
-		   .of_match_table = tmm_i2c_main2_data_match_table,
-		   },
-	.id_table = smtej114_i2c_main2_id,
-};
-
-static const struct of_device_id tmm_i2c_sub_data_match_table[] = {
-	{   .compatible = "isdbtmm_smtej113_sub",
-	},
-	{}
-};
-
-
-static struct i2c_driver smtej113_i2c_sub_driver = {
-	.probe = tmm_i2c_sub_probe,
-	.remove = tmm_i2c_sub_remove,
-	.driver = {
-		   .name = "smtej113_sub",
-		   .owner = THIS_MODULE,
-		   .of_match_table = tmm_i2c_sub_data_match_table,
-		   },
-	.id_table = smtej114_i2c_sub_id,
-};
-/* Add start 20121219 No.1 */
-
 static struct platform_device *mmtuner_device;
 static struct class 	*device_class;
 /* Add Start 20121218 No_1 */
 static unsigned long 	open_cnt = 0;        /* OPEN counter             */
-static unsigned long   	moni_cnt = 0;		 /* Monitor counter			 */
+static long   	moni_cnt = 0;		 /* Monitor counter			 */
 /* Add End 20121218 No_1 */
 
 #ifndef TUNER_CONFIG_IRQ_PC_LINUX
@@ -593,7 +503,7 @@ static int tuner_probe(struct platform_device *pdev)
 {
 	int ret;
 	
-    INFO_PRINT("mmtuner_probe: Called.");
+    printk("mmtuner_probe: Called.\n");
     /* tuner register */
     if (register_chrdev(TUNER_CONFIG_DRV_MAJOR, TUNER_CONFIG_DRIVER_NAME, 
     											&TunerFileOperations))
@@ -621,27 +531,8 @@ static int tuner_probe(struct platform_device *pdev)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,37)
     mutex_init(&g_tuner_mutex);
 #endif
-
-/* Add Start 20121219 No_1 */
-	ret = i2c_add_driver(&smtej113_i2c_main1_driver);
-	if (ret < 0) {
-		ERROR_PRINT("main1: i2c driver init failed");
-		goto err_main1;
-	}
-
-	ret = i2c_add_driver(&smtej113_i2c_main2_driver);
-	if (ret < 0) {
-		ERROR_PRINT("main2: i2c driver init failed");
-		goto err_main2;
-	}
-
-	ret = i2c_add_driver(&smtej113_i2c_sub_driver);
-	if (ret < 0) {
-		ERROR_PRINT("sub: disc i2c driver init failed");
-		goto err_sub;
-	}
 	
-    INFO_PRINT("tuner_probe: END.");
+    printk("tuner_probe: END.\n");
 
 #if defined(CONFIG_TMM_ANT_DET)
 	wake_lock_init(&isdbtmm_ant_wlock, WAKE_LOCK_SUSPEND, "isdbtmm_ant_wlock");
@@ -660,15 +551,6 @@ static int tuner_probe(struct platform_device *pdev)
 	/* NORMAL END */
 	return 0;
 	
-err_sub:
-	i2c_del_driver(&smtej113_i2c_main2_driver);
-	
-err_main2:
-	i2c_del_driver(&smtej113_i2c_main1_driver);
-	
-err_main1:
-	unregister_chrdev(TUNER_CONFIG_DRV_MAJOR, TUNER_CONFIG_DRIVER_NAME);
-	
 #if defined(CONFIG_TMM_ANT_DET)
 free_ant_det_wq:
 	isdbtmm_ant_det_destroy_wq();
@@ -682,7 +564,6 @@ err_reg_input:
 
 	/* ERROR END */
 	return ret;
-/* Add End 20121219 No_1 */
 }
 
 /******************************************************************************
@@ -698,7 +579,7 @@ err_reg_input:
  ******************************************************************************/
 static int tuner_remove(struct platform_device *pdev)
 {
-    INFO_PRINT("tuner_remove: Called.");
+    printk("tuner_remove: Called.\n");
     TRACE();
 
     /* release of the interrupt */
@@ -706,31 +587,14 @@ static int tuner_remove(struct platform_device *pdev)
 
     /* tuner unregister */
     unregister_chrdev(TUNER_CONFIG_DRV_MAJOR, TUNER_CONFIG_DRIVER_NAME);
-    
-/* Add Start 20121219 No_1 */
-	i2c_del_driver(&smtej113_i2c_main1_driver);
-	
-	i2c_del_driver(&smtej113_i2c_main2_driver);
-	
-	i2c_del_driver(&smtej113_i2c_sub_driver);
-/* Add End 20121219 No_1 */
-    INFO_PRINT("tuner_remove: END.");
+
+    printk("tuner_remove: END.\n");
 
 #if defined(CONFIG_TMM_ANT_DET)
 	isdbtmm_ant_det_unreg_input();
 	isdbtmm_ant_det_destroy_wq();
 	isdbtmm_ant_det_irq_set(false);
 	wake_lock_destroy(&isdbtmm_ant_wlock);
-#endif
-
-#if defined(CONFIG_TMM_CHG_CTRL)
-	wake_lock_destroy(&tmm_chg_ctrl_wlock);
-	if(tmm_chg_wqueue) 
-	{
-		flush_workqueue(tmm_chg_wqueue);
-		destroy_workqueue(tmm_chg_wqueue);
-		tmm_chg_wqueue = NULL;
-	}
 #endif
 
     return 0;
@@ -761,13 +625,13 @@ int tuner_kernel_thread( void * arg )
     unsigned char		buff[3];
     unsigned char		bufs[3];
 
-    INFO_PRINT("tuner_kernel_thread: START.");
+    printk("tuner_kernel_thread: START.\n");
 
     /* initialization of internal variables */
     ret = 0;
     flags = 0;
     ktread_flg = 0;
-	adap = 0;
+	adap = NULL;
     param.sched_priority = TUNER_CONFIG_KTH_PRI;
 
     daemonize( "tuner_kthread" ); 
@@ -791,6 +655,11 @@ int tuner_kernel_thread( void * arg )
         spin_unlock_irqrestore( &g_tuner_lock, flags);
 
         memset( msgs, 0x00, sizeof(struct i2c_msg) * 4 );
+        adap = i2c_get_adapter(TUNER_CONFIG_I2C_BUSNUM);
+        if (adap == NULL) {
+    	    TRACE();
+    	    break;
+        }
 
         /* get interrupt factor  */
         if ( ( ktread_flg & TUNER_KTH_IRQHANDLER ) == TUNER_KTH_IRQHANDLER )
@@ -819,7 +688,7 @@ int tuner_kernel_thread( void * arg )
             msgs[3].len		= 2;
             msgs[3].buf		= bufs+1;
 
-            ret = i2c_transfer_wrap(adap, msgs, 4);
+            ret = i2c_transfer(adap, msgs, 4);
             if (ret < 0) {
             	TRACE();
                	break;
@@ -852,11 +721,13 @@ int tuner_kernel_thread( void * arg )
             msgs[1].flags	= 0;	/* write */
             msgs[1].len		= 2;
             msgs[1].buf		= bufs;
-            ret = i2c_transfer_wrap(adap, msgs, 2);
+            ret = i2c_transfer(adap, msgs, 2);
             if (ret < 0) {
             	TRACE();
+                i2c_put_adapter(adap);
                 break;
             }
+            i2c_put_adapter(adap);
 
         	/* poll wait release */
             g_tuner_wakeup_flag = TUNER_ON;
@@ -908,7 +779,7 @@ static int __init tuner_drv_start(void)
     int ret =0;
     struct device *dev = NULL;
 
-    INFO_PRINT("mmtuner_tuner_drv_start: Called");
+    printk("mmtuner_tuner_drv_start: Called\n");
 
     /* driver register */
     ret = platform_driver_register(&mmtuner_driver);
@@ -982,7 +853,7 @@ static int __init tuner_drv_start(void)
 
     wake_up_process( g_tuner_kthread_id );
 
-    INFO_PRINT("mmtuner_tuner_drv_start: END");
+    printk("mmtuner_tuner_drv_start: END\n");
     return 0;
 }
 
@@ -1004,7 +875,7 @@ static void __exit tuner_drv_end(void)
 #endif
 /* Modify End 20121218 No_3 */
 {
-    INFO_PRINT("mmtuner_tuner_drv_end: Called");
+    printk("mmtuner_tuner_drv_end: Called\n");
 
     /* thread stop flag */
     g_tuner_kthread_flag |= TUNER_KTH_END;
@@ -1029,7 +900,7 @@ static void __exit tuner_drv_end(void)
     /* driver unregister */
     platform_driver_unregister(&mmtuner_driver);
 
-    INFO_PRINT("mmtuner_tuner_drv_end: END");
+    printk("mmtuner_tuner_drv_end: END\n");
 }
 
 /******************************************************************************
@@ -1047,7 +918,7 @@ static void __exit tuner_drv_end(void)
 static int tuner_module_entry_open(struct inode* Inode, struct file* FIle)
 {
 
-    INFO_PRINT("tuner_module_entry_open: Called");
+    printk("tuner_module_entry_open: Called\n");
 
 #ifdef  TUNER_CONFIG_DRV_MULTI      /* allow multiple open */
     open_cnt++;
@@ -1055,13 +926,13 @@ static int tuner_module_entry_open(struct inode* Inode, struct file* FIle)
 	/* already open */
     if( open_cnt > 0 )
     {
-        INFO_PRINT("tuner_module_entry_open: open error");
+        printk("tuner_module_entry_open: open error\n");
         return -1;
     }
 	/* first open */
     else
     {
-        INFO_PRINT("tuner_module_entry_open: open_cnt = 1");
+        printk("tuner_module_entry_open: open_cnt = 1\n");
         open_cnt++;
     }
 #endif /* TUNER_CONFIG_DRV_MULTI */
@@ -1089,11 +960,11 @@ static int tuner_module_entry_close(struct inode* Inode, struct file* FIle)
 
 
 
-    INFO_PRINT("tuner_module_entry_close: Called");
+    printk("tuner_module_entry_close: Called\n");
 
 	if( open_cnt <= 0 )
 	{
-        INFO_PRINT("tuner_module_entry_close: close error");
+        printk("tuner_module_entry_close: close error\n");
 		open_cnt = 0;
 		return -1;
 	}
@@ -1170,8 +1041,6 @@ static ssize_t tuner_module_entry_write(struct file* FIle,
     struct i2c_adapter	*adap;
     struct i2c_msg		msgs[1];
 
-	adap = 0;
-	
     /* argument check */
     if (Count < 3) {
     	TRACE();
@@ -1190,6 +1059,14 @@ static ssize_t tuner_module_entry_write(struct file* FIle,
         return -EINVAL;
     }
 
+    /* get i2c adapter */
+    adap = i2c_get_adapter(TUNER_CONFIG_I2C_BUSNUM);
+    if (adap == NULL) {
+    	TRACE();
+    	vfree(buf);
+    	return -EINVAL;
+    }
+
     /* construct i2c message */
     memset(msgs, 0x00, sizeof(struct i2c_msg) * 1);
 
@@ -1198,9 +1075,10 @@ static ssize_t tuner_module_entry_write(struct file* FIle,
     msgs[0].len		= Count - 1;
     msgs[0].buf		= buf + 1;
 
-    ret = i2c_transfer_wrap(adap, msgs, 1);
+    ret = i2c_transfer(adap, msgs, 1);
     if (ret < 0) {
     	TRACE();
+    	i2c_put_adapter(adap);
     	vfree(buf);
     	return -EINVAL;
     }
@@ -1324,161 +1202,6 @@ static int SMT113J_IOCTL_SET_MONITOR_MODE ( struct file* FIle,
 	return ( ret );
 }
 /* Add End 20121218 No_1 */
-
-/* Add Start 20121219 No_1 */
-/******************************************************************************
- *    function:   tmm_i2c_main1_probe
- *    brief   :   probe control of a driver
- *    date    :   2012.12.19
- *    author  :   K.Kitamura(*)
- *
- *    return  :    0                   normal exit
- *            :   -1                   error exit
- *    input   :   Inode
- *            :   FIle
- *            :   uCommand
- *            :   uArgument
- *    output  :   none
- ******************************************************************************/
-static int tmm_i2c_main1_probe(struct i2c_client *client,
-			    const struct i2c_device_id *devid)
-{
-	INFO_PRINT("tmm_i2c_main1_probe start");
-
-	i2c_main1_client = client;
-	if (!i2c_main1_client) {
-		ERROR_PRINT("tmm_i2c_main1_probe: Error: fail client");
-		return -EINVAL;
-	}
-
-	INFO_PRINT("tmm_i2c_main1_probe end");
-	return 0;
-}
-
-/******************************************************************************
- *    function:   tmm_i2c_main2_probe
- *    brief   :   probe control of a driver
- *    date    :   2012.12.19
- *    author  :   K.Kitamura(*)
- *
- *    return  :    0                   normal exit
- *            :   -1                   error exit
- *    input   :   Inode
- *            :   FIle
- *            :   uCommand
- *            :   uArgument
- *    output  :   none
- ******************************************************************************/
-static int tmm_i2c_main2_probe(struct i2c_client *client,
-			    const struct i2c_device_id *devid)
-{
-	INFO_PRINT("tmm_i2c_main2_probe start");
-
-	i2c_main2_client = client;
-	if (!i2c_main2_client) {
-		ERROR_PRINT("tmm_i2c_main2_probe: Error: fail client");
-		return -EINVAL;
-	}
-
-	INFO_PRINT("tmm_i2c_main2_probe end");
-	return 0;
-}
-
-/******************************************************************************
- *    function:   tmm_i2c_sub_probe
- *    brief   :   probe control of a driver
- *    date    :   2012.12.19
- *    author  :   K.Kitamura(*)
- *
- *    return  :    0                   normal exit
- *            :   -1                   error exit
- *    input   :   Inode
- *            :   FIle
- *            :   uCommand
- *            :   uArgument
- *    output  :   none
- ******************************************************************************/
-static int tmm_i2c_sub_probe(struct i2c_client *client,
-			    const struct i2c_device_id *devid)
-{
-	INFO_PRINT("tmm_i2c_sub_probe start");
-
-	i2c_sub_client = client;
-	if (!i2c_sub_client) {
-		ERROR_PRINT("tmm_i2c_sub_probe: Error: fail client");
-		return -EINVAL;
-	}
-
-	INFO_PRINT("tmm_i2c_sub_probe end");
-	return 0;
-}
-
-/******************************************************************************
- *    function:   tmm_i2c_main1_remove
- *    brief   :   remove control of a driver
- *    date    :   2012.12.19
- *    author  :   K.Kitamura(*)
- *
- *    return  :    0                   normal exit
- *            :   -1                   error exit
- *    input   :   Inode
- *            :   FIle
- *            :   uCommand
- *            :   uArgument
- *    output  :   none
- ******************************************************************************/
-static int tmm_i2c_main1_remove(struct i2c_client *client)
-{
-	INFO_PRINT("tmm_i2c_main1_remove start");
-	/* no operation */
-	INFO_PRINT("tmm_i2c_main1_remove end");
-	return 0;
-}
-
-/******************************************************************************
- *    function:   tmm_i2c_main2_remove
- *    brief   :   remove control of a driver
- *    date    :   2012.12.19
- *    author  :   K.Kitamura(*)
- *
- *    return  :    0                   normal exit
- *            :   -1                   error exit
- *    input   :   Inode
- *            :   FIle
- *            :   uCommand
- *            :   uArgument
- *    output  :   none
- ******************************************************************************/
-static int tmm_i2c_main2_remove(struct i2c_client *client)
-{
-	INFO_PRINT("tmm_i2c_main2_remove start");
-	/* no operation */
-	INFO_PRINT("tmm_i2c_main2_remove end");
-	return 0;
-}
-
-/******************************************************************************
- *    function:   tmm_i2c_sub_remove
- *    brief   :   remove control of a driver
- *    date    :   2012.12.19
- *    author  :   K.Kitamura(*)
- *
- *    return  :    0                   normal exit
- *            :   -1                   error exit
- *    input   :   Inode
- *            :   FIle
- *            :   uCommand
- *            :   uArgument
- *    output  :   none
- ******************************************************************************/
-static int tmm_i2c_sub_remove(struct i2c_client *client)
-{
-	INFO_PRINT("tmm_i2c_sub_remove start");
-	/* no operation */
-	INFO_PRINT("tmm_i2c_sub_remove end");
-	return 0;
-}
-/* Add End 20121219 No_1 */
 
 /******************************************************************************
  *    function:   tuner_module_entry_ioctl
@@ -1858,7 +1581,6 @@ static long tuner_module_entry_ioctl(struct file *file,
 	
     return ret;
 }
-
 /******************************************************************************
  *    function:   tuner_module_entry_poll
  *    brief   :   poll control of a driver

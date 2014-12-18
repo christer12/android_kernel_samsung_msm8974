@@ -71,6 +71,7 @@ struct sec_charger_info {
 
 bool sec_hal_chg_init(struct i2c_client *);
 bool sec_hal_chg_suspend(struct i2c_client *);
+bool sec_hal_chg_shutdown(struct i2c_client *);
 bool sec_hal_chg_resume(struct i2c_client *);
 bool sec_hal_chg_get_property(struct i2c_client *,
 				enum power_supply_property,

@@ -27,7 +27,7 @@
 
 static int try_to_freeze_tasks(bool user_only)
 {
-	struct task_struct *g, *p;
+	struct task_struct *g, *p, *q;
 	unsigned long end_time;
 	unsigned int todo;
 	bool wq_busy = false;
@@ -47,6 +47,7 @@ static int try_to_freeze_tasks(bool user_only)
 		todo = 0;
 		read_lock(&tasklist_lock);
 		do_each_thread(g, p) {
+			cpu_relax();
 			if (p == current || !freeze_task(p))
 				continue;
 
@@ -61,8 +62,10 @@ static int try_to_freeze_tasks(bool user_only)
 			 * transition can't race with task state testing here.
 			 */
 			if (!task_is_stopped_or_traced(p) &&
-			    !freezer_should_skip(p))
+			    !freezer_should_skip(p)) {
 				todo++;
+				q = p;
+			}
 		} while_each_thread(g, p);
 		read_unlock(&tasklist_lock);
 
@@ -99,8 +102,8 @@ static int try_to_freeze_tasks(bool user_only)
 		 */
 		if(wakeup) {
 			printk("\n");
-			printk(KERN_ERR "Freezing of %s aborted\n",
-					user_only ? "user space " : "tasks ");
+			printk(KERN_ERR "Freezing of %s aborted (%s)\n",
+					user_only ? "user space " : "tasks ", q ? q->comm : "NONE");
 		}
 		else {
 			printk("\n");
@@ -172,10 +175,6 @@ int freeze_processes(void)
 int freeze_kernel_threads(void)
 {
 	int error;
-
-	error = sys_sync();
-	if (error)
-		return error;
 
 	printk("Freezing remaining freezable tasks ... ");
 	pm_nosig_freezing = true;

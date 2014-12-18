@@ -24,6 +24,15 @@ if CORESIGHT
 config HAVE_CORESIGHT_SINK
 	bool
 
+config CORESIGHT_FUSE
+	bool "CoreSight Fuse driver"
+	help
+	  This driver provides support for CoreSight Fuse state checks that
+	  other CoreSight drivers can query to determine existence of
+	  Hardware functionality they support. Drivers can then take necessary
+	  actions like failing the probe if the Hardware they manage is
+	  functionally disabled.
+
 config CORESIGHT_CTI
 	bool "CoreSight Cross Trigger Interface driver"
 	help
@@ -104,6 +113,16 @@ config CORESIGHT_STM_DEFAULT_ENABLE
 
 	  If unsure, say 'N' here to avoid potential power and performance
 	  penalty.
+
+config CORESIGHT_HWEVENT
+	bool "CoreSight Hardware Event driver"
+	depends on CORESIGHT_STM
+	select CORESIGHT_CSR
+	help
+	  This driver provides support for monitoring and tracing CoreSight
+	  Hardware Event across STM interface. It configures Coresight
+	  Hardware Event mux control registers to select hardware events
+	  based on user input.
 
 config CORESIGHT_ETM
 	bool "CoreSight Embedded Trace Macrocell driver"

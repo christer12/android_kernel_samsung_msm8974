@@ -1741,6 +1741,8 @@ static int __init mdss_dsi_panel_init(void)
 	|| defined(CONFIG_MACH_KS01LGT)
 	if (board_rev >= 2)
 		return 0;
+#elif defined(CONFIG_MACH_JACTIVESKT)
+	return 0;
 #else
 	return 0;
 #endif

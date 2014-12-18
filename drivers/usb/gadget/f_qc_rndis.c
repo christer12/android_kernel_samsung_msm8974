@@ -426,6 +426,7 @@ static int rndis_qc_bam_connect(struct f_rndis_qc *dev)
 	struct usb_gadget *gadget = cdev->gadget;
 
 	dev->bam_port.cdev = cdev;
+	dev->bam_port.func = &dev->port.func;
 	dev->bam_port.in = dev->port.in_ep;
 	dev->bam_port.out = dev->port.out_ep;
 
@@ -725,7 +726,7 @@ static int rndis_qc_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		rndis->port.cdc_filter = 0;
 
 		DBG(cdev, "RNDIS RX/TX early activation ...\n");
-		net = gether_qc_connect_name(&rndis->port, "rndis0");
+		net = gether_qc_connect_name(&rndis->port, "rndis0", false);
 		if (IS_ERR(net))
 			return PTR_ERR(net);
 

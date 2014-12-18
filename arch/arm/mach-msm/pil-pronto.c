@@ -30,6 +30,7 @@
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
 #include <mach/ramdump.h>
+#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"
@@ -329,12 +330,14 @@ static irqreturn_t wcnss_wdog_bite_irq_hdlr(int irq, void *dev_id)
 
 	drv->crash = true;
 
+	disable_irq_nosync(drv->irq);
+
 	if (drv->restart_inprogress) {
 		pr_err("Ignoring wcnss bite irq, restart in progress\n");
 		return IRQ_HANDLED;
 	}
+	wcnss_pronto_log_debug_regs();
 
-	disable_irq_nosync(drv->irq);
 	drv->restart_inprogress = true;
 	restart_wcnss(drv);
 
@@ -346,7 +349,7 @@ static void wcnss_post_bootup(struct work_struct *work)
 	struct platform_device *pdev = wcnss_get_platform_device();
 	struct wcnss_wlan_config *pwlanconfig = wcnss_get_wlan_config();
 
-	wcnss_wlan_power(&pdev->dev, pwlanconfig, WCNSS_WLAN_SWITCH_OFF);
+	wcnss_wlan_power(&pdev->dev, pwlanconfig, WCNSS_WLAN_SWITCH_OFF, NULL);
 }
 
 static int wcnss_shutdown(const struct subsys_desc *subsys)
@@ -369,7 +372,7 @@ static int wcnss_powerup(const struct subsys_desc *subsys)
 
 	if (pdev && pwlanconfig)
 		ret = wcnss_wlan_power(&pdev->dev, pwlanconfig,
-					WCNSS_WLAN_SWITCH_ON);
+					WCNSS_WLAN_SWITCH_ON, NULL);
 	if (!ret) {
 		msleep(1000);
 		ret = pil_boot(&drv->desc);

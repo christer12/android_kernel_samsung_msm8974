@@ -129,12 +129,14 @@ void __init msm8226_init(void)
 		pr_err("%s: socinfo_init() failed\n", __func__);
 
 	msm8226_init_gpiomux();
-	of_platform_populate(NULL, of_default_bus_match_table, adata, NULL);
+	board_dt_populate(adata);
 	msm8226_add_drivers();
 }
 
 static const char *msm8226_dt_match[] __initconst = {
 	"qcom,msm8226",
+	"qcom,msm8926",
+	"qcom,apq8026",
 	NULL
 };
 

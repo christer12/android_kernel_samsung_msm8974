@@ -22,19 +22,35 @@
 #include "pm.h"
 #include "rpm-notifier.h"
 
-
 enum {
 	MSM_LPM_LVL_DBG_SUSPEND_LIMITS = BIT(0),
 	MSM_LPM_LVL_DBG_IDLE_LIMITS = BIT(1),
+	MSM_LPM_DISABLE_VMIN_IDLE = BIT(2),
+	MSM_LPM_LVL_DBG_LPM_LOG = BIT(8),
 };
 
 #define MAX_STR_LEN 30
 
-static int msm_lpm_lvl_dbg_msk;
+static int msm_lpm_lvl_dbg_msk = (MSM_LPM_LVL_DBG_SUSPEND_LIMITS | MSM_LPM_DISABLE_VMIN_IDLE |
+								MSM_LPM_LVL_DBG_LPM_LOG);
 
 module_param_named(
 	debug_mask, msm_lpm_lvl_dbg_msk, int, S_IRUGO | S_IWUSR | S_IWGRP
 );
+
+#ifdef CONFIG_SEC_PM
+static int msm_lpm_lvl_dis_msk = 0;
+
+module_param_named(
+	disable_mask, msm_lpm_lvl_dis_msk, int, S_IRUGO | S_IWUSR | S_IWGRP
+);
+
+static bool debug_log = false;
+#define DBG_MSG(x, fmt, args...)	do { if (x) pr_err(fmt, ## args); } while(0)
+#else
+#define debug_log false
+#define DBG_MSG(fmt, args...)		do { } while(0)
+#endif
 
 static struct msm_rpmrs_level *msm_lpm_levels;
 static int msm_lpm_level_count;
@@ -257,10 +273,28 @@ static void *msm_lpm_lowest_limits(bool from_idle,
 
 	msm_lpm_level_update();
 
+#ifdef CONFIG_SEC_PM
+	if (MSM_LPM_DISABLE_VMIN_IDLE & msm_lpm_lvl_dbg_msk && from_idle) {
+		uint32_t j = 0;
+		for (j = 0; j < msm_lpm_level_count; j++) {
+			if (msm_lpm_lvl_dis_msk & BIT(j))
+				msm_lpm_levels[j].available = false;
+		}
+	}
+#endif
+
 	if (sleep_mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE) {
 		irqs_detect = msm_mpm_irqs_detectable(from_idle);
 		gpio_detect = msm_mpm_gpio_irqs_detectable(from_idle);
 	}
+
+#ifdef CONFIG_SEC_PM
+	if (sleep_mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE && !from_idle &&
+		(msm_lpm_lvl_dbg_msk & MSM_LPM_LVL_DBG_LPM_LOG))
+		debug_log = true;
+	else
+		debug_log = false;
+#endif
 
 	for (i = 0; i < msm_lpm_level_count; i++) {
 		struct msm_rpmrs_level *level = &msm_lpm_levels[i];
@@ -268,17 +302,30 @@ static void *msm_lpm_lowest_limits(bool from_idle,
 		modify_event_timer = false;
 
 		if (!level->available)
+		{
+			DBG_MSG(debug_log, "level %d skip : available\n", i);
 			continue;
+		}
 
 		if (sleep_mode != level->sleep_mode)
+		{
+			DBG_MSG(debug_log, "level %d skip : mode\n", i);
 			continue;
+		}
 
 		if (time_param->latency_us < level->latency_us)
+		{
+			DBG_MSG(debug_log, "level %d skip : latency\n", i);
 			continue;
+		}
 
 		if (time_param->next_event_us &&
 			time_param->next_event_us < level->latency_us)
+		{
+			DBG_MSG(debug_log, "level %d skip : next_event\n", i);
 			continue;
+		}
+
 
 		if (time_param->next_event_us) {
 			if ((time_param->next_event_us < time_param->sleep_us)
@@ -291,17 +338,26 @@ static void *msm_lpm_lowest_limits(bool from_idle,
 		}
 
 		if (next_wakeup_us <= level->time_overhead_us)
+		{
+			DBG_MSG(debug_log, "level %d skip : next_wakeup\n", i);
 			continue;
+		}
 
 		if ((sleep_mode == MSM_PM_SLEEP_MODE_POWER_COLLAPSE) &&
 			!msm_lpm_irqs_detectable(&level->rs_limits,
 				irqs_detect, gpio_detect))
-				continue;
+		{
+			DBG_MSG(debug_log, "level %d skip : irq, irqs %d, gpio %d\n", i, irqs_detect, gpio_detect);
+			continue;
+		}
 
 		if ((MSM_PM_SLEEP_MODE_POWER_COLLAPSE_STANDALONE == sleep_mode)
 			|| (MSM_PM_SLEEP_MODE_POWER_COLLAPSE == sleep_mode))
 			if (!cpu && msm_rpm_waiting_for_ack())
-					break;
+		{
+			DBG_MSG(debug_log, "level %d break : cpu%d rpm\n", i, cpu);
+			break;
+		}
 
 		if (next_wakeup_us <= 1) {
 			pwr = level->energy_overhead;
@@ -342,6 +398,13 @@ static void *msm_lpm_lowest_limits(bool from_idle,
 		per_cpu(msm_lpm_sleep_time, cpu) =
 			time_param->modified_time_us ?
 			time_param->modified_time_us : time_param->sleep_us;
+
+#ifdef CONFIG_SEC_PM
+	if (best_level)
+		DBG_MSG(debug_log, "best_level %d\n", best_level_iter);
+	else if (!from_idle)
+		pr_err ("%s: no best_level\n", KBUILD_MODNAME);
+#endif
 
 	return best_level ? &best_level->rs_limits : NULL;
 }

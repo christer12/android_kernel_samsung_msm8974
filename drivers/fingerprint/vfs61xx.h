@@ -68,19 +68,23 @@
  * Definitions of structures which are used by IOCTL commands
  */
 
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 /* Pass to VFSSPI_IOCTL_SET_USER_DATA
  * and VFSSPI_IOCTL_GET_USER_DATA commands */
 struct vfsspi_iocUserData {
 	void *buffer;
 	unsigned int len;
 };
+#endif
 
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 /* Pass to VFSSPI_IOCTL_RW_SPI_MESSAGE command */
 struct vfsspi_iocTransfer {
 	unsigned char *rxBuffer;	/* pointer to retrieved data */
 	unsigned char *txBuffer;	/* pointer to transmitted data */
 	unsigned int len;	/* transmitted/retrieved data size */
 };
+#endif
 
 /* Pass to VFSSPI_IOCTL_REGISTER_DRDY_SIGNAL command */
 struct vfsspi_iocRegSignal {
@@ -90,6 +94,13 @@ struct vfsspi_iocRegSignal {
 	int signalID;		/* Signal number */
 };
 
+#ifdef CONFIG_SENSORS_FINGERPRINT_SYSFS
+extern int fingerprint_register(struct device *dev, void *drvdata,
+	struct device_attribute *attributes[], char *name);
+extern void fingerprint_unregister(struct device *dev,
+	struct device_attribute *attributes[]);
+#endif
+
 /* Magic number of IOCTL command */
 #define VFSSPI_IOCTL_MAGIC    'k'
 
@@ -97,36 +108,45 @@ struct vfsspi_iocRegSignal {
  * IOCTL commands definitions
  */
 
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 /* Transmit data to the device
 and retrieve data from it simultaneously */
 #define VFSSPI_IOCTL_RW_SPI_MESSAGE	\
 	_IOWR(VFSSPI_IOCTL_MAGIC, 1, unsigned int)
+#endif
 /* Hard reset the device */
 #define VFSSPI_IOCTL_DEVICE_RESET	\
 	_IO(VFSSPI_IOCTL_MAGIC,   2)
 /* Set the baud rate of SPI master clock */
 #define VFSSPI_IOCTL_SET_CLK	\
 	_IOW(VFSSPI_IOCTL_MAGIC,  3, unsigned int)
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 /* Get level state of DRDY GPIO */
 #define VFSSPI_IOCTL_CHECK_DRDY	\
 	_IO(VFSSPI_IOCTL_MAGIC,   4)
+#endif
 /* Register DRDY signal. It is used by SPI driver
  * for indicating host that DRDY signal is asserted. */
 #define VFSSPI_IOCTL_REGISTER_DRDY_SIGNAL	\
 	_IOW(VFSSPI_IOCTL_MAGIC,  5, unsigned int)
 /* Store the user data into the SPI driver. Currently user data is a
  * device info data, which is obtained from announce packet. */
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 #define VFSSPI_IOCTL_SET_USER_DATA	\
 	_IOW(VFSSPI_IOCTL_MAGIC,  6, unsigned int)
+#endif
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 /* Retrieve user data from the SPI driver*/
 #define VFSSPI_IOCTL_GET_USER_DATA	\
 	_IOWR(VFSSPI_IOCTL_MAGIC, 7, unsigned int)
+#endif
 /* Enable/disable DRDY interrupt handling in the SPI driver */
 #define VFSSPI_IOCTL_SET_DRDY_INT	\
 	_IOW(VFSSPI_IOCTL_MAGIC,  8, unsigned int)
 /* Put device in Low power mode */
 #define VFSSPI_IOCTL_DEVICE_SUSPEND	\
 	_IO(VFSSPI_IOCTL_MAGIC,	9)
+#ifndef CONFIG_SENSORS_FPRINT_SECURE
 /* Indicate the fingerprint buffer size for read */
 #define VFSSPI_IOCTL_STREAM_READ_START	\
 	_IOW(VFSSPI_IOCTL_MAGIC, 10, unsigned int)
@@ -136,5 +156,25 @@ and retrieve data from it simultaneously */
 /* Retrieve supported SPI baud rate table */
 #define VFSSPI_IOCTL_GET_FREQ_TABLE	\
 	_IOWR(VFSSPI_IOCTL_MAGIC, 12, unsigned int)
-
+#endif
+/* Turn on the power to the sensor */
+#define VFSSPI_IOCTL_POWER_ON	\
+	_IO(VFSSPI_IOCTL_MAGIC,   13)
+/* Turn off the power to the sensor */
+#define VFSSPI_IOCTL_POWER_OFF	\
+	_IO(VFSSPI_IOCTL_MAGIC,   14)
+#ifdef CONFIG_SENSORS_FPRINT_SECURE
+/* To disable spi core clock */
+#define VFSSPI_IOCTL_DISABLE_SPI_CLOCK	\
+	_IO(VFSSPI_IOCTL_MAGIC, 15)
+/* To set SPI configurations like gpio, clks */
+#define VFSSPI_IOCTL_SET_SPI_CONFIGURATION	\
+	_IO(VFSSPI_IOCTL_MAGIC, 16)
+/* To reset SPI configurations */
+#define VFSSPI_IOCTL_RESET_SPI_CONFIGURATION	\
+	_IO(VFSSPI_IOCTL_MAGIC, 17)
+#endif
+/* get sensor orienation from the SPI driver*/
+#define VFSSPI_IOCTL_GET_SENSOR_ORIENT	\
+	_IOWR(VFSSPI_IOCTL_MAGIC, 18, unsigned int)
 #endif /* VFS61XX_H_ */

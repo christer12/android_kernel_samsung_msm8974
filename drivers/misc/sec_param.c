@@ -132,6 +132,17 @@ bool sec_get_param(enum sec_param_index index, void *value)
 		printk(KERN_INFO "param_data.update_cp_bin :[%d]!!", param_data->update_cp_bin);
 		break;
 #endif
+#ifdef CONFIG_RTC_AUTO_PWRON_PARAM
+	case param_index_boot_alarm_set:
+		memcpy(value, &(param_data->boot_alarm_set), sizeof(unsigned int));
+		break;
+	case param_index_boot_alarm_value_l:
+		memcpy(value, &(param_data->boot_alarm_value_l), sizeof(unsigned int));
+		break;
+	case param_index_boot_alarm_value_h:
+		memcpy(value, &(param_data->boot_alarm_value_h), sizeof(unsigned int));
+		break;
+#endif	
 	default:
 		return false;
 	}
@@ -182,6 +193,17 @@ bool sec_set_param(enum sec_param_index index, void *value)
 				value, sizeof(unsigned int));
 		break;
 #endif
+#ifdef CONFIG_RTC_AUTO_PWRON_PARAM
+	case param_index_boot_alarm_set:
+		memcpy(&(param_data->boot_alarm_set), value, sizeof(unsigned int));
+		break;
+	case param_index_boot_alarm_value_l:
+		memcpy(&(param_data->boot_alarm_value_l), value, sizeof(unsigned int));
+		break;
+	case param_index_boot_alarm_value_h:
+		memcpy(&(param_data->boot_alarm_value_h), value, sizeof(unsigned int));
+		break;
+#endif	
 	default:
 		return false;
 	}
@@ -258,6 +280,7 @@ int sec_param_sysfs_init(void)
 		pr_err("Failed to create device file!(%s)!\n",
 				dev_attr_movinand_checksum_done.attr.name);
 		ret = -1;
+		goto failed_create_dev_file1;
 	}
 
 	if (device_create_file(sec_param_dev,
@@ -265,12 +288,19 @@ int sec_param_sysfs_init(void)
 		pr_err("Failed to create device file!(%s)!\n",
 				dev_attr_movinand_checksum_pass.attr.name);
 		ret = -1;
+		goto failed_create_dev_file2;
 	}
-failed_create_class:
-	return ret;
+
+failed_create_dev_file2:
+	device_remove_file(sec_param_dev, &dev_attr_movinand_checksum_done);
+
+failed_create_dev_file1:
+	device_destroy(sec_param_class,0);
 
 failed_create_dev:
 	class_destroy(sec_param_class);
+
+failed_create_class:
 	return ret;
 }
 module_init(sec_param_sysfs_init);

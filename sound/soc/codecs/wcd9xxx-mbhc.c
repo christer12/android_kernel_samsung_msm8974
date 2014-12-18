@@ -76,7 +76,6 @@
 
 #define MCLK_RATE_12288KHZ 12288000
 #define MCLK_RATE_9600KHZ 9600000
-#define WCD9XXX_RCO_CLK_RATE MCLK_RATE_12288KHZ
 
 #define DEFAULT_DCE_STA_WAIT 55
 #define DEFAULT_DCE_WAIT 60000
@@ -1672,9 +1671,8 @@ static void wcd9xxx_mbhc_decide_swch_plug(struct wcd9xxx_mbhc *mbhc)
 		wcd9xxx_schedule_hs_detect_plug(mbhc,
 						&mbhc->correct_plug_swch);
 	} else if (plug_type == PLUG_TYPE_HIGH_HPH) {
-		wcd9xxx_report_plug(mbhc, 1, SND_JACK_LINEOUT);
 		wcd9xxx_schedule_hs_detect_plug(mbhc,
-					&mbhc->correct_plug_swch);
+						&mbhc->correct_plug_swch);
 	} else {
 		pr_debug("%s: Valid plug found, determine plug type %d\n",
 			 __func__, plug_type);
@@ -1860,7 +1858,7 @@ static void wcd9xxx_hs_remove_irq_noswch(struct wcd9xxx_mbhc *mbhc)
 	}
 
 	usleep_range(generic->t_shutdown_plug_rem,
-			generic->t_shutdown_plug_rem);
+		     generic->t_shutdown_plug_rem);
 
 	timeout = jiffies + msecs_to_jiffies(FAKE_REMOVAL_MIN_PERIOD_MS);
 	do {
@@ -2259,7 +2257,8 @@ static void wcd9xxx_correct_swch_plug(struct work_struct *work)
 						    SND_JACK_HEADPHONE);
 			}
 		} else if (plug_type == PLUG_TYPE_HIGH_HPH) {
-			pr_debug("High HPH detected, continue polling\n");
+			pr_debug("%s: High HPH detected, continue polling\n",
+				  __func__);
 		} else {
 			if (plug_type == PLUG_TYPE_GND_MIC_SWAP) {
 				pt_gnd_mic_swap_cnt++;
@@ -2299,11 +2298,10 @@ static void wcd9xxx_correct_swch_plug(struct work_struct *work)
 	}
 
 	if (plug_type == PLUG_TYPE_HIGH_HPH) {
-		pr_debug("polling is done, still HPH, so enabling MIC trigger");
-		wcd9xxx_enable_hs_detect(mbhc, 1, MBHC_USE_MB_TRIGGER,
-						false);
+		pr_debug("%s: polling is done, still HPH, so enabling MIC trigger\n",
+			 __func__);
+		wcd9xxx_find_plug_and_report(mbhc, plug_type);
 	}
-
 	/* Turn off override */
 	if (!correction)
 		wcd9xxx_turn_onoff_override(codec, false);
@@ -3032,6 +3030,7 @@ static void wcd9xxx_mbhc_cal(struct wcd9xxx_mbhc *mbhc)
 	wcd9xxx_turn_onoff_rel_detection(codec, true);
 
 	pr_debug("%s: leave\n", __func__);
+	return;
 
 gen_err:
 	pr_err("%s: Error returned, ret: %d\n", __func__, ret);
@@ -3251,7 +3250,7 @@ ssize_t codec_mbhc_debug_read(struct file *file, char __user *buf,
 	const s16 v_br_h =
 	    wcd9xxx_get_current_v(mbhc, WCD9XXX_CURRENT_V_BR_H);
 
-	n = scnprintf(buffer, size - n, "dce_z(MCLK)= %x(%dmv)\n",
+	n = scnprintf(buffer, size - n, "dce_z = %x(%dmv)\n",
 		      p->dce_z, wcd9xxx_codec_sta_dce_v(mbhc, 1, p->dce_z));
 	n += scnprintf(buffer + n, size - n, "dce_mb = %x(%dmv)\n",
 		       p->dce_mb, wcd9xxx_codec_sta_dce_v(mbhc, 1, p->dce_mb));
@@ -3586,7 +3585,7 @@ static int wcd9xxx_event_notify(struct notifier_block *self, unsigned long val,
 		snd_soc_update_bits(codec, WCD9XXX_A_TX_COM_BIAS, 1 << 4,
 				    0 << 4);
 		/* Re-calibrate clock rate dependent values */
-		wcd9xxx_update_mbhc_clk_rate(mbhc, WCD9XXX_RCO_CLK_RATE);
+		wcd9xxx_update_mbhc_clk_rate(mbhc, mbhc->rco_clk_rate);
 		/* If clock source changes, stop and restart polling */
 		if (wcd9xxx_mbhc_polling(mbhc)) {
 			wcd9xxx_calibrate_hs_polling(mbhc);
@@ -3683,7 +3682,8 @@ static DEVICE_ATTR(state, 0664 , earjack_state_onoff_show,
 int wcd9xxx_mbhc_init(struct wcd9xxx_mbhc *mbhc, struct wcd9xxx_resmgr *resmgr,
 		      struct snd_soc_codec *codec,
 		      int (*micbias_enable_cb) (struct snd_soc_codec*,  bool),
-		      int version)
+		      int version,
+		      int rco_clk_rate)
 {
 	int ret;
 	void *core;
@@ -3710,6 +3710,7 @@ int wcd9xxx_mbhc_init(struct wcd9xxx_mbhc *mbhc, struct wcd9xxx_resmgr *resmgr,
 	mbhc->resmgr->mbhc = mbhc;
 	mbhc->micbias_enable_cb = micbias_enable_cb;
 	mbhc->mbhc_version = version;
+	mbhc->rco_clk_rate = rco_clk_rate;
 
 	if (mbhc->headset_jack.jack == NULL) {
 		ret = snd_soc_jack_new(codec, "Headset Jack", WCD9XXX_JACK_MASK,
@@ -3831,6 +3832,9 @@ int wcd9xxx_mbhc_init(struct wcd9xxx_mbhc *mbhc, struct wcd9xxx_resmgr *resmgr,
 
 	wake_lock_init(&det_wake_lock, WAKE_LOCK_SUSPEND, "mbhc_wake_lock");
 
+	wcd9xxx_regmgr_cond_register(resmgr, 1 << WCD9XXX_COND_HPH_MIC |
+					     1 << WCD9XXX_COND_HPH);
+
 	pr_debug("%s: leave ret %d\n", __func__, ret);
 	return ret;
 
@@ -3856,6 +3860,9 @@ EXPORT_SYMBOL_GPL(wcd9xxx_mbhc_init);
 void wcd9xxx_mbhc_deinit(struct wcd9xxx_mbhc *mbhc)
 {
 	void *cdata = mbhc->codec->control_data;
+
+	wcd9xxx_regmgr_cond_deregister(mbhc->resmgr, 1 << WCD9XXX_COND_HPH_MIC |
+						     1 << WCD9XXX_COND_HPH);
 
 	wcd9xxx_free_irq(cdata, WCD9XXX_IRQ_MBHC_RELEASE, mbhc);
 	wcd9xxx_free_irq(cdata, WCD9XXX_IRQ_MBHC_POTENTIAL, mbhc);

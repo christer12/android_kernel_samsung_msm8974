@@ -99,11 +99,24 @@ static int mdss_mdp_rotator_busy_wait(struct mdss_mdp_rotator_session *rot)
 		pr_debug("waiting for rot=%d to complete\n", rot->pipe->num);
 		mdss_mdp_display_wait4comp(ctl);
 		rot->busy = false;
-
+		mdss_mdp_smp_release(rot->pipe);
 	}
 	mutex_unlock(&rot->lock);
 
 	return 0;
+}
+
+void mdss_mdp_rotator_wait4idle(void)
+{
+	struct mdss_mdp_rotator_session *rot;
+	int i;
+	mutex_lock(&rotator_lock);
+	for (i = 0; i < MAX_ROTATOR_SESSIONS; i++) {
+		rot = &rotator_session[i];
+		if (rot->ref_cnt)
+			mdss_mdp_rotator_busy_wait(rot);
+	}
+	mutex_unlock(&rotator_lock);
 }
 
 static int mdss_mdp_rotator_kickoff(struct mdss_mdp_ctl *ctl,

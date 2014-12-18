@@ -175,14 +175,14 @@ static u8 bq24260_get_input_current_limit_data(
 		else if (input_current <= 500)
 			data = 0x02;
 		else if (input_current <= 900)
-			data = 0x03;
+			data = 0x03;/*v2: 1000mA*/
 		else if (input_current <= 1500)
-			data = 0x04;
+			data = 0x04;/*v2: 1300mA*/
 		else if (input_current <= 2000)
-			data = 0x05;/*1950mA*/
+			data = 0x05;/*1950mA, v2: 1800mA*/
 		else if (input_current <= 2500)
-			data = 0x06;
-		else/*1950mA*/
+			data = 0x06;/*v2: 2200mA*/
+		else/*1950mA, v2: 1800mA*/
 			data = 0x07;
 	else {
 		if (input_current <= 100)
@@ -273,14 +273,24 @@ static void bq24260_charger_function_conrol(
 			data &= 0x7b;
 			break;
 		}
+
 		/* Input current limit */
-		dev_dbg(&client->dev, "%s : input current (%dmA)\n",
-			__func__, charger->pdata->charging_current
-			[charger->cable_type].input_current_limit);
-		data &= 0x0F;
-		data |= bq24260_get_input_current_limit_data(
-			charger->pdata->charging_current
-			[charger->cable_type].input_current_limit);
+		if (charger->pdata->cable_source_type &
+			SEC_BATTERY_CABLE_SOURCE_EXTENDED) {
+			dev_dbg(&client->dev, "%s : chg max (%dmA)\n",
+				__func__, charger->charging_current_max);
+			data &= 0x0F;
+			data |= bq24260_get_input_current_limit_data(
+				charger->charging_current_max);
+		} else {
+			dev_dbg(&client->dev, "%s : input current (%dmA)\n",
+				__func__, charger->pdata->charging_current
+				[charger->cable_type].input_current_limit);
+			data &= 0x0F;
+			data |= bq24260_get_input_current_limit_data(
+				charger->pdata->charging_current
+				[charger->cable_type].input_current_limit);
+		}
 		bq24260_set_command(client,
 			BQ24260_CONTROL, data);
 
@@ -314,7 +324,8 @@ static void bq24260_charger_function_conrol(
 		 * Normal charge current
 		 */
 		bq24260_i2c_read(client, BQ24260_SPECIAL, &data);
-		data &= 0xdf;
+		data &= 0xd8;
+		data |= 0x4;
 		bq24260_set_command(client,
 			BQ24260_SPECIAL, data);
 	}
@@ -325,8 +336,14 @@ static void bq24260_charger_otg_conrol(
 {
 	struct sec_charger_info *charger = i2c_get_clientdata(client);
 	u8 data;
-	if (charger->cable_type ==
-		POWER_SUPPLY_TYPE_BATTERY) {
+
+	bq24260_i2c_read(client, BQ24260_SAFETY, &data);
+	data &= ~(0x1 << 4);
+	bq24260_set_command(client,	BQ24260_SAFETY, data);
+	data = 0x00;
+
+	if (charger->cable_type !=
+		POWER_SUPPLY_TYPE_OTG) {
 		dev_info(&client->dev, "%s : turn off OTG\n", __func__);
 		/* turn off OTG */
 		bq24260_i2c_read(client, BQ24260_STATUS, &data);
@@ -402,6 +419,13 @@ bool sec_hal_chg_resume(struct i2c_client *client)
 	return true;
 }
 
+bool sec_hal_chg_shutdown(struct i2c_client *client)
+{
+	u8 data = 1;
+
+	bq24260_i2c_write(client, BQ24260_CONTROL, &data);
+	return true;
+}
 bool sec_hal_chg_get_property(struct i2c_client *client,
 			      enum power_supply_property psp,
 			      union power_supply_propval *val)
@@ -472,14 +496,10 @@ bool sec_hal_chg_set_property(struct i2c_client *client,
 			gpio_free(charger->pdata->chg_gpio_en);
 		}
 
-		if (charger->charging_current < 0)
-			bq24260_charger_otg_conrol(client);
-		else if (charger->charging_current > 0)
+		if (charger->charging_current >= 0)
 			bq24260_charger_function_conrol(client);
-		else {
-			bq24260_charger_function_conrol(client);
-			bq24260_charger_otg_conrol(client);
-		}
+
+		bq24260_charger_otg_conrol(client);
 		bq24260_test_read(client);
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_MAX: /* input current limit set */

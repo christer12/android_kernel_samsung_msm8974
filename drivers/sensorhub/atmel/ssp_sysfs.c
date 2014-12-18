@@ -463,6 +463,28 @@ static ssize_t set_temp_humi_delay(struct device *dev,
 	return size;
 }
 
+static ssize_t show_sig_motion_delay(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	struct ssp_data *data  = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%lld\n",
+		data->adDelayBuf[SIG_MOTION_SENSOR]);
+}
+
+static ssize_t set_sig_motion_delay(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int64_t dNewDelay;
+	struct ssp_data *data  = dev_get_drvdata(dev);
+
+	if (kstrtoll(buf, 10, &dNewDelay) < 0)
+		return -1;
+
+	change_sensor_delay(data, SIG_MOTION_SENSOR, dNewDelay);
+	return size;
+}
+
 static DEVICE_ATTR(mcu_rev, S_IRUGO, mcu_revision_show, NULL);
 static DEVICE_ATTR(mcu_name, S_IRUGO, mcu_model_name_show, NULL);
 static DEVICE_ATTR(mcu_update, S_IRUGO, mcu_update_kernel_bin_show, NULL);
@@ -504,7 +526,9 @@ static struct device_attribute dev_attr_prox_poll_delay
 static struct device_attribute dev_attr_temp_humi_poll_delay
 	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
 	show_temp_humi_delay, set_temp_humi_delay);
-
+static struct device_attribute dev_attr_sig_motion_poll_delay
+	= __ATTR(poll_delay, S_IRUGO | S_IWUSR | S_IWGRP,
+	show_sig_motion_delay, set_sig_motion_delay);
 static struct device_attribute *mcu_attrs[] = {
 	&dev_attr_enable,
 	&dev_attr_mcu_rev,
@@ -563,6 +587,10 @@ int initialize_sysfs(struct ssp_data *data)
 		&dev_attr_mag_poll_delay))
 		goto err_mag_input_dev;
 
+	if (device_create_file(&data->sig_motion_input_dev->dev,
+		&dev_attr_sig_motion_poll_delay))
+		goto err_sig_motion_input_dev;
+
 	initialize_accel_factorytest(data);
 	initialize_gyro_factorytest(data);
 	initialize_prox_factorytest(data);
@@ -577,6 +605,10 @@ int initialize_sysfs(struct ssp_data *data)
 	initialize_temphumidity_factorytest(data);
 #endif
 	return SUCCESS;
+
+err_sig_motion_input_dev:
+	device_remove_file(&data->mag_input_dev->dev,
+		&dev_attr_mag_poll_delay);
 err_mag_input_dev:
 	device_remove_file(&data->temp_humi_input_dev->dev,
 		&dev_attr_temp_humi_poll_delay);
@@ -620,6 +652,8 @@ void remove_sysfs(struct ssp_data *data)
 		&dev_attr_temp_humi_poll_delay);
 	device_remove_file(&data->mag_input_dev->dev,
 		&dev_attr_mag_poll_delay);
+	device_remove_file(&data->sig_motion_input_dev->dev,
+		&dev_attr_sig_motion_poll_delay);
 	remove_accel_factorytest(data);
 	remove_gyro_factorytest(data);
 	remove_prox_factorytest(data);

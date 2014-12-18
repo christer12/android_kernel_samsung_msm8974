@@ -431,6 +431,11 @@ struct hfi_max_num_b_frames {
 	u32 max_num_b_frames;
 };
 
+struct hfi_conceal_color {
+	u32 conceal_color;
+};
+
+
 struct hfi_intra_period {
 	u32 pframes;
 	u32 bframes;
@@ -476,6 +481,9 @@ struct hfi_nal_stream_format_supported {
 	u32 nal_stream_format_supported;
 };
 
+struct hfi_nal_stream_format_select {
+	u32 nal_stream_format_select;
+};
 #define HFI_PICTURE_TYPE_I					0x01
 #define HFI_PICTURE_TYPE_P					0x02
 #define HFI_PICTURE_TYPE_B					0x04

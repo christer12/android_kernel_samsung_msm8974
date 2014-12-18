@@ -23,6 +23,13 @@
 
 #include <linux/irq.h>
 #include <asm/system.h>
+#include <linux/iopoll.h>
+#include <linux/delay.h>
+#include <linux/dma-mapping.h>
+
+#include "mdss_fb.h"
+#include "mdss_mdp.h"
+#include "mdss_dsi.h"
 
 #define fb_width(fb)	((fb)->var.xres)
 #define fb_height(fb)	((fb)->var.yres)
@@ -30,6 +37,11 @@
 
 #ifdef CONFIG_SAMSUNG_LPM_MODE
 extern int poweroff_charging;
+#endif
+
+#if defined(ENABLE_BOOTLOGO)
+static struct workqueue_struct  *wq_bootlogo;
+static struct delayed_work w_bootlogo;
 #endif
 
 static void memset16(void *_ptr, unsigned short val, unsigned count)
@@ -154,12 +166,103 @@ err_logo_close_file:
 }
 EXPORT_SYMBOL(load_565rle_image);
 
+static int samsung_copy_bootloader_screen(void *virt)
+{
+
+	struct fb_info *info = registered_fb[0];
+
+	unsigned long bl_fb_addr = 0;
+	unsigned long *bl_fb_addr_va;
+	unsigned long  pipe_addr, pipe_src_size;
+	u32 height, width, rgb_size, bpp;char *bit_src,*bit_dst;
+	size_t size;int i,j;
+	pr_info("%s:+\n",__func__);
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
+
+	pipe_addr = MDSS_MDP_REG_SSPP_OFFSET(3) +
+		MDSS_MDP_REG_SSPP_SRC0_ADDR;
+
+	pipe_src_size =
+		MDSS_MDP_REG_SSPP_OFFSET(3) + MDSS_MDP_REG_SSPP_SRC_SIZE;
+
+	bpp        = 3;
+	
+	rgb_size   = MDSS_MDP_REG_READ(pipe_src_size);
+	bl_fb_addr = MDSS_MDP_REG_READ(pipe_addr);
+	
+	height = (rgb_size >> 16) & 0xffff;
+	width  = rgb_size & 0xffff;
+	size = PAGE_ALIGN(height * width * bpp);
+
+	if( bl_fb_addr == 0x0)
+		return -1;
+
+#if defined(CONFIG_FB_MSM_EDP_SAMSUNG)
+		bl_fb_addr_va = (unsigned long *)ioremap(bl_fb_addr, size*2);
+#else
+		bl_fb_addr_va = (unsigned long *)ioremap(bl_fb_addr, size);
+#endif
+
+	pr_info("%s:%d addr:%p->%p, splash_height=%d splash_width=%d Buffer size=%d\n",
+			__func__, __LINE__, (void *)bl_fb_addr,(void *)bl_fb_addr_va,
+			 height, width, size);
+
+
+
+	bit_src = (char *) bl_fb_addr_va;
+	bit_dst = (char *)info->screen_base;
+
+	for( i = 0,j=0; j < size*2; i+=4,j+=3) {
+		bit_dst[i] = bit_src[j];
+		bit_dst[i+1] = bit_src[j+1];
+		bit_dst[i+2] = bit_src[j+2];
+	}
+	
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
+
+	return 0;
+}
+
+static int  samsung_mdss_allocate_framebuffer(struct fb_info *info){
+
+
+	void *virt = NULL;size_t size;
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	static struct ion_handle *ihdl;
+	struct ion_client *iclient = mdss_get_ionclient();
+	static ion_phys_addr_t phys;
+	int ret = 0;
+
+	ihdl = ion_alloc(iclient, 0x1000000, SZ_1M,
+			ION_HEAP(ION_QSECOM_HEAP_ID), 0);
+	if (IS_ERR_OR_NULL(ihdl)) {
+		pr_err("unable to alloc fbmem from ion (%p)\n", ihdl);
+		return -ENOMEM;
+	}
+
+	virt = ion_map_kernel(iclient, ihdl);
+	ion_phys(iclient, ihdl, &phys, &size);
+	info->screen_base = virt;
+	info->fix.smem_start = phys;
+	info->fix.smem_len = size;
+
+	msm_iommu_map_contig_buffer(phys, mfd->mdp.fb_mem_get_iommu_domain(), 0, size, SZ_4K, 0,
+					    &mfd->iova);
+
+	//Copy  screen
+	if(contsplash_lkstat == 1)
+		ret =  samsung_copy_bootloader_screen(virt);
+
+	return ret;
+}
 
 int load_samsung_boot_logo(void)
 {
-	struct fb_info *info;
+	struct fb_info *info = registered_fb[0];
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
+	struct mdss_panel_data *pdata = dev_get_platdata(&mfd->pdev->dev);
+	int ret;
 
-	info = registered_fb[0];
 	if (!info) {
 		printk(KERN_WARNING "%s: Can not access framebuffer\n",
 			__func__);
@@ -171,9 +274,12 @@ int load_samsung_boot_logo(void)
 	if(poweroff_charging)
 		return 0;
 #endif
-
+	pr_info("%s:+\n",__func__);
+	ret = samsung_mdss_allocate_framebuffer(info);
+	
 	info->fbops->fb_open(registered_fb[0], 0);
-	if (load_565rle_image("initlogo.rle")) {
+	
+	if (ret && load_565rle_image("initlogo.rle")) {
 		char *bits = info->screen_base;
 		int i = 0;
 		unsigned int max = fb_height(info) * fb_width(info);
@@ -195,6 +301,55 @@ int load_samsung_boot_logo(void)
 		}
 	}
 	fb_pan_display(info, &info->var);
+	pdata->set_backlight(pdata, 114);
+	
 	return 0;
 }
 EXPORT_SYMBOL(load_samsung_boot_logo);
+
+#if defined(ENABLE_BOOTLOGO)
+static void bootlogo_work(struct work_struct *work)
+{
+	struct msm_fb_data_type *mfd = NULL ;
+	static int bootlogo_displayed = 0;
+
+	if(!registered_fb[0]) {
+			queue_delayed_work(wq_bootlogo, &w_bootlogo, msecs_to_jiffies(200));
+			return;
+	}	
+	mfd = (struct msm_fb_data_type *)registered_fb[0]->par;
+	if(bootlogo_displayed) {
+		//Need to release framebuffer once someone from userspace opens fb.
+		pr_info("%s: mfd->ref_cnt: %d\n",__func__, mfd->ref_cnt);
+		if(mfd->ref_cnt >1) {
+			registered_fb[0]->fbops->fb_release(registered_fb[0], 0);
+			pr_info("Boot logo releasing fb0\n");
+			memset(registered_fb[0]->screen_base,0x0,registered_fb[0]->fix.smem_len); 
+		}else {
+			queue_delayed_work(wq_bootlogo, &w_bootlogo, msecs_to_jiffies(1000));
+		}
+		return;
+	}   
+	load_samsung_boot_logo();
+	bootlogo_displayed = 1;
+	queue_delayed_work(wq_bootlogo, &w_bootlogo, msecs_to_jiffies(5000));
+}
+
+static int __init boot_logo_init(void) {
+
+	
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+	// LPM mode : no boot logo
+	if(poweroff_charging)
+		return 0;
+#endif
+	pr_info("%s:+\n",__func__);
+	wq_bootlogo =	create_singlethread_workqueue("bootlogo");
+	INIT_DELAYED_WORK(&w_bootlogo, bootlogo_work);
+				
+	queue_delayed_work(wq_bootlogo,
+					&w_bootlogo, msecs_to_jiffies(2000));
+	return 0;
+}
+module_init(boot_logo_init)
+#endif

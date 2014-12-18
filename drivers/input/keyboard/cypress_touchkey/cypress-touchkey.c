@@ -228,9 +228,14 @@ static void cypress_init_dvfs(struct cypress_touchkey_info *info)
 static int cypress_touchkey_i2c_read(struct i2c_client *client,
 		u8 reg, u8 *val, unsigned int len)
 {
-
+	struct cypress_touchkey_info *info = dev_get_drvdata(&client->dev);
 	int err = 0;
 	int retry = 3;
+
+	if (!info->enabled) {
+		dev_info(&client->dev, "%s: touchkey is not enabled\n", __func__);
+		return 0;
+	}
 
 	while (retry--) {
 		err = i2c_smbus_read_i2c_block_data(client,
@@ -248,8 +253,14 @@ static int cypress_touchkey_i2c_read(struct i2c_client *client,
 static int cypress_touchkey_i2c_write(struct i2c_client *client,
 		u8 *val, unsigned int len)
 {
+	struct cypress_touchkey_info *info = dev_get_drvdata(&client->dev);
 	int err = 0;
 	int retry = 3;
+
+	if (!info->enabled) {
+		dev_info(&client->dev, "%s: touchkey is not enabled\n", __func__);
+		return 0;
+	}
 
 	while (retry--) {
 		err = i2c_smbus_write_i2c_block_data(client,
@@ -1466,7 +1477,7 @@ static struct attribute_group touchkey_attr_group = {
 	.attrs = touchkey_attributes,
 };
 
-#if !defined(CONFIG_SEC_H_PROJECT)	/*HLTE temp update block(0426)*/
+#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_JS_PROJECT)	/*HLTE temp update block(0426)*/
 static void cypress_config_gpio_i2c(struct cypress_touchkey_platform_data *pdata, int onoff)
 {
 	if (onoff) {
@@ -1588,7 +1599,7 @@ static int __devinit cypress_touchkey_probe(struct i2c_client *client,
 	int ic_fw_ver;
 	int error;
 	u8 data[6] = { 0, };
-#if !defined(CONFIG_SEC_H_PROJECT)	/*HLTE temp update block(0426)*/
+#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_JS_PROJECT)	/*HLTE temp update block(0426)*/
 	int retry = NUM_OF_RETRY_UPDATE;
 #endif
 	if (!i2c_check_functionality(adapter, I2C_FUNC_I2C))
@@ -1747,7 +1758,7 @@ static int __devinit cypress_touchkey_probe(struct i2c_client *client,
 	dev_info(&info->client->dev, "%s: IC ID Version: 0x%02x\n",
 			__func__, info->fw_id);
 
-#if defined(CONFIG_SEC_H_PROJECT)	/*HLTE temp update block(0426)*/
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_JS_PROJECT)	/*HLTE temp update block(0426)*/
 	dev_info(&client->dev, "[TouchKey] FW update does not need!\n");
 #else
 	if ((info->fw_id & CYPRESS_65_IC_MASK) && (ic_fw_ver >= BASE_FW_VERSION) && (ic_fw_ver < BIN_FW_VERSION)) {

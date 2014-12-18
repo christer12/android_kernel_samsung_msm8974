@@ -356,8 +356,9 @@ int get_min_freq(void);
 #define MAX_FREQ_LIMIT		get_max_freq() /* 1512000 */
 #define MIN_FREQ_LIMIT		get_min_freq() /* 384000 */
 
-#define MIN_TOUCH_LIMIT		1190400
-#define MIN_TOUCH_LIMIT_SECOND	883200
+#define MIN_TOUCH_LIMIT		1728000
+#define MIN_TOUCH_LIMIT_SECOND	1190400
+
 #define MIN_LTETP_LIMIT		1190400
 #define MIN_LTETP_LOCK		0xFF
 #define MIN_LTETP_UNLOCK	(MIN_LTETP_LOCK-1)

@@ -19,6 +19,8 @@
 		qcom,dsi-ctrl-phandle = <&mdss_dsi0>;
 		qcom,rst-gpio = <&pm8941_gpios 19 0>;
 		qcom,boost-gpio = <&pm8941_gpios 16 0>;
+		qcom,lcd_en = <&pm8941_gpios 17 0>;
+		qcom,vddi_en = <&pm8941_gpios 32 0>;
 		qcom,mdss-pan-res = <720 1280>;
 		qcom,mdss-pan-bpp = <24>;
 		qcom,mdss-pan-dest = "display_1";
@@ -36,7 +38,7 @@
 		qcom,mdss-pan-dsi-vc = <0>;
 		qcom,mdss-pan-dsi-rgb-swap = <0>;
 		qcom,mdss-force-clk-lane-hs = <1>;
-		samsung,mdss-early-lcd-on = <1>;
+		samsung,mdss-early-lcd-on = <0>;
 		qcom,mdss-pan-dsi-data-lanes = <1 1 1 1>;
 		qcom,mdss-pan-dsi-dlane-swap = <0>;
 		qcom,mdss-pan-dsi-t-clk = <0x1c 0x04>;
@@ -59,7 +61,6 @@
 		00 c0 00 00 00 00 00 01 bb]; /* Clk ln config */ 
 
 		qcom,panel-on-cmds = [	
-					29 01 00 00 00 00 03 f0 5a 5a /* Tesk key ON */
 					29 01 00 00 00 00 04 ff 05 00 00 /* WRCMD2 */
 					29 01 00 00 00 00 04 fb 01 00 00 /* WRMTP */
 					29 01 00 00 00 00 04 92 ff 00 00 /* ESD_X3_0 */

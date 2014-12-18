@@ -69,25 +69,14 @@ struct smtc_reg_data {
 	unsigned char val;
 };
 
-static const struct smtc_reg_data mode_reg[] = {
-	{
-		.reg = SX9500_CPS_CTRL0_REG,
-		.val = 0x20,
-	},
-	{
-		.reg = SX9500_CPS_CTRL0_REG,
-		.val = 0x21,
-	},
-};
-
 static const struct smtc_reg_data setup_reg[] = {
 	{
 		.reg = SX9500_IRQ_ENABLE_REG,
-		.val = 0x70,
+		.val = 0xF0,
 	},
 	{
 		.reg = SX9500_CPS_CTRL1_REG,
-		.val = 0x03,
+		.val = 0x43,
 	},
 	{
 		.reg = SX9500_CPS_CTRL2_REG,
@@ -95,7 +84,7 @@ static const struct smtc_reg_data setup_reg[] = {
 	},
 	{
 		.reg = SX9500_CPS_CTRL3_REG,
-		.val = 0x01, /* 0x01 not use LPF */
+		.val = 0x01,
 	},
 	{
 		.reg = SX9500_CPS_CTRL4_REG,
@@ -107,7 +96,7 @@ static const struct smtc_reg_data setup_reg[] = {
 	},
 	{
 		.reg = SX9500_CPS_CTRL6_REG,
-		.val = 0x0F,
+		.val = 0x11,
 	},
 	{
 		.reg = SX9500_CPS_CTRL7_REG,

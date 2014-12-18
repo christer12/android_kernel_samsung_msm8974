@@ -44,6 +44,9 @@
 
 #include "smd_private.h"
 
+static int enable_debug;
+module_param(enable_debug, int, S_IRUGO | S_IWUSR);
+
 /**
  * enum p_subsys_state - state of a subsystem (private)
  * @SUBSYS_NORMAL: subsystem is operating normally
@@ -137,6 +140,7 @@ struct restart_log {
  * @dentry: debugfs directory for this device
  * @do_ramdump_on_put: ramdump on subsystem_put() if true
  * @err_ready: completion variable to record error ready from subsystem
+ * @crashed: indicates if subsystem has crashed
  */
 struct subsys_device {
 	struct subsys_desc *desc;
@@ -160,6 +164,7 @@ struct subsys_device {
 	struct miscdevice misc_dev;
 	char miscdevice_name[32];
 	struct completion err_ready;
+	bool crashed;
 };
 
 static struct subsys_device *to_subsys(struct device *d)
@@ -425,13 +430,15 @@ static int wait_for_err_ready(struct subsys_device *subsys)
 {
 	int ret;
 
-	if (!subsys->desc->err_ready_irq)
+	if (!subsys->desc->err_ready_irq || enable_debug == 1)
 		return 0;
 
 	ret = wait_for_completion_timeout(&subsys->err_ready,
 					  msecs_to_jiffies(10000));
-	if (!ret)
+	if (!ret) {
+		pr_err("[%s]: Error ready timed out\n", subsys->desc->name);
 		return -ETIMEDOUT;
+	}
 
 	return 0;
 }
@@ -500,6 +507,9 @@ static int subsys_start(struct subsys_device *subsys)
 	ret = subsys->desc->start(subsys->desc);
 	if (ret)
 		return ret;
+
+	if (subsys->desc->is_not_loadable)
+		return 0;
 
 	ret = wait_for_err_ready(subsys);
 	if (ret)
@@ -763,7 +773,14 @@ int subsystem_restart_dev(struct subsys_device *dev)
 #else
 	if (!sec_debug_is_enabled())
 #endif
-		dev->restart_level = RESET_SUBSYS_COUPLED; //Why is it delete the RESET_SUBSYS_INDEPENDENT on MSM8974 ?
+	{
+#if 1 //def CONFIG_SEC_LOCALE_KOR
+		if (!strcmp("adsp", name))
+			dev->restart_level = RESET_SOC;  /*ADSP cannot work properly after ADSP SSR. So restart SOC. */
+		else
+#endif
+			dev->restart_level = RESET_SUBSYS_COUPLED; //Why is it delete the RESET_SUBSYS_INDEPENDENT on MSM8974 ?
+	}
 	else
 		dev->restart_level = RESET_SOC;
 #endif
@@ -863,6 +880,15 @@ int subsystem_crashed(const char *name)
 }
 EXPORT_SYMBOL(subsystem_crashed);
 
+void subsys_set_crash_status(struct subsys_device *dev, bool crashed)
+{
+	dev->crashed = true;
+}
+
+bool subsys_get_crash_status(struct subsys_device *dev)
+{
+	return dev->crashed;
+}
 #ifdef CONFIG_DEBUG_FS
 static ssize_t subsys_debugfs_read(struct file *filp, char __user *ubuf,
 		size_t cnt, loff_t *ppos)
@@ -993,6 +1019,10 @@ static irqreturn_t subsys_err_ready_intr_handler(int irq, void *subsys)
 	struct subsys_device *subsys_dev = subsys;
 	pr_info("Error ready interrupt occured for %s\n",
 		 subsys_dev->desc->name);
+
+	if (subsys_dev->desc->is_not_loadable)
+		return IRQ_HANDLED;
+
 	complete(&subsys_dev->err_ready);
 	return IRQ_HANDLED;
 }
@@ -1137,7 +1167,6 @@ static int ssr_panic_handler(struct notifier_block *this,
 
 static struct notifier_block panic_nb = {
 	.notifier_call  = ssr_panic_handler,
-	.priority = 10, /* SS changed */
 };
 
 static int __init ssr_init_soc_restart_orders(void)

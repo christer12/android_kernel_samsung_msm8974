@@ -705,6 +705,11 @@ static int fwu_do_reflash(void)
 {
 	int retval;
 
+#ifdef CONFIG_MACH_JS01LTEDCM
+	retval = set_freq_limit(DVFS_TOUCH_ID,MIN_TOUCH_LIMIT);
+	if (retval < 0)
+		return retval;
+#endif
 	retval = fwu_enter_flash_prog();
 	if (retval < 0)
 		return retval;
@@ -759,6 +764,9 @@ static int fwu_do_reflash(void)
 static int fwu_start_reflash(void)
 {
 	int retval = 0, retry = 3;
+#ifdef CONFIG_MACH_JS01LTEDCM
+	int ret = 0;
+#endif
 	unsigned char device_status;
 	struct image_header header;
 	const unsigned char *fw_image;
@@ -815,6 +823,13 @@ static int fwu_start_reflash(void)
 				__func__, device_status & (1 << 6), retry);
 
 	}
+#ifdef CONFIG_MACH_JS01LTEDCM
+	ret = set_freq_limit(DVFS_TOUCH_ID, -1);
+	if (ret < 0)
+		dev_err(&fwu->rmi4_data->i2c_client->dev,
+			"%s: in fw update, failed booster stop.\n",
+			__func__);
+#endif
 
 	dev_dbg(&fwu->rmi4_data->i2c_client->dev, "%s: End of reflash process\n",
 		 __func__);
@@ -1336,6 +1351,9 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 			SYNAPTICS_RMI4_PRODUCT_ID_SIZE);
 	fwu->product_id[SYNAPTICS_RMI4_PRODUCT_ID_SIZE] = 0;
 
+#if defined(CONFIG_MACH_JACTIVESKT)
+	/* Fortius Use only B Type. So read and use ic_revision_of_ic from IC */
+#else
 	/* Check the IC revision from product ID value
 	 * we can check the ic revision with f34_ctrl_3 but to read production
 	 * ID is more safity. because it is non-user writerble area.
@@ -1349,7 +1367,7 @@ static int synaptics_rmi4_fwu_init(struct synaptics_rmi4_data *rmi4_data)
 		} else
 		rmi4_data->ic_revision_of_ic = 0xA1;
 	}
-
+#endif
 	dev_info(&rmi4_data->i2c_client->dev, "%s: [IC] [F01 product info, ID(revision)] [0x%04X 0x%04X, %s(0X%X)]\n",
 			__func__, fwu->productinfo1,
 			fwu->productinfo2, fwu->product_id,

@@ -232,4 +232,9 @@ static inline int __init msm_lpmrs_module_init(void)
 }
 #endif /* CONFIG_MSM_RPM_SMD */
 
+#ifdef CONFIG_SAMSUNG_BATTERY_DISALLOW_DEEP_SLEEP
+void msm_lpm_enable_pxo_low_power(void);
+void msm_lpm_disable_pxo_low_power(void);
+#endif
+
 #endif

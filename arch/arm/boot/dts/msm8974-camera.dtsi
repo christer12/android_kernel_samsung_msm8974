@@ -11,13 +11,15 @@
  * GNU General Public License for more details.
  */
 
-/include/ "skeleton.dtsi"
-
-/ {
+&soc {
 	qcom,msm-cam@fd8C0000 {
 		compatible = "qcom,msm-cam";
 		reg = <0xfd8C0000 0x10000>;
 		reg-names = "msm-cam";
+	};
+
+	qcom,cam_dummy {
+		compatible = "qcom,cam_dummy";
 	};
 
 	qcom,csiphy@fda0ac00 {
@@ -96,12 +98,13 @@
 
 	qcom,ispif@fda0A000 {
 		cell-index = <0>;
-		compatible = "qcom,ispif";
+		compatible = "qcom,ispif-v3.0", "qcom,ispif";
 		reg = <0xfda0A000 0x500>,
                       <0xfda00020 0x10>;
 		reg-names = "ispif", "csi_clk_mux";
 		interrupts = <0 55 0>;
 		interrupt-names = "ispif";
+		qcom,num-isps = <0x2>;
 	};
 
 	qcom,vfe@fda10000 {
@@ -180,6 +183,7 @@
 		compatible = "qcom,camera-led-flash";
 		qcom,flash-type = <1>;
 		qcom,flash-source = <&pm8941_flash0 &pm8941_flash1>;
+		qcom,torch-source = <&pm8941_torch>;
 	};
 
 	cci: qcom,cci@fda0C000 {

@@ -642,6 +642,7 @@ struct adm_cmd_connect_afe_port_v5 {
 #define RSVD_2 9			/* index = 9 */
 #define RSVD_3 10			/* index = 10 */
 #define DIGI_MIC_TX 11			/* index = 11 */
+#define GLOBAL_CFG 12
 #define VOICE_RECORD_RX 0x8003		/* index = 12 */
 #define VOICE_RECORD_TX 0x8004		/* index = 13 */
 #define VOICE_PLAYBACK_TX 0x8005	/* index = 14 */
@@ -2237,7 +2238,7 @@ struct afe_port_cmdrsp_get_param_v2 {
 */
 #define ADSP_MEMORY_MAP_PHYSICAL_MEMORY 0
 
-
+#define NULL_COPP_TOPOLOGY				0x00010312
 #define DEFAULT_COPP_TOPOLOGY				0x00010be3
 #define DEFAULT_POPP_TOPOLOGY				0x00010be4
 #define VPM_TX_SM_ECNS_COPP_TOPOLOGY			0x00010F71
@@ -6776,6 +6777,10 @@ struct sa_params {
 	int16_t CHRoomSize; 
 	int16_t Clalevel;
 	int16_t volume;
+	int16_t Sqrow;
+	int16_t Sqcol;
+	int16_t TabInfo;
+	int16_t NewUI;
 } __packed;
 
 struct vsp_params {
@@ -7023,4 +7028,10 @@ struct afe_svc_cmd_set_clip_bank_selection {
 	struct afe_port_param_data_v2 pdata;
 	struct afe_param_id_clip_bank_sel bank_sel;
 } __packed;
+
+/* Ultrasound supported formats */
+#define US_POINT_EPOS_FORMAT 0x00012310
+#define US_RAW_FORMAT        0x0001127C
+#define US_PROX_FORMAT       0x0001272B
+
 #endif /*_APR_AUDIO_V2_H_ */

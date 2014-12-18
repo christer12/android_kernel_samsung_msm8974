@@ -171,7 +171,10 @@ static int sec_restrict_fork(void)
 	if (!parent_cred)
 		goto out;
 	if (!CHECK_ROOT_UID(parent_tsk))
-		ret = 1;
+	{
+		if(!sec_check_execpath(current->mm, "/system/bin/logwrapper"))
+			ret = 1;
+	}
 	put_cred(parent_cred);
 out:
 	if (parent_mm)

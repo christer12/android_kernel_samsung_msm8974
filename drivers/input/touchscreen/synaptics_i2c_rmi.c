@@ -134,8 +134,13 @@
 #define TSP_NEEDTO_REBOOT	(-ECONNREFUSED)
 #define MAX_TSP_REBOOT		3
 
+#if defined(CONFIG_SEC_MELIUSCA_PROJECT)
+#define SYNAPTICS_MAX_X_SIZE	719
+#define SYNAPTICS_MAX_Y_SIZE	1279
+#else
 #define SYNAPTICS_MAX_X_SIZE	1079
 #define SYNAPTICS_MAX_Y_SIZE	1919
+#endif
 #define SYNAPTICS_MAX_WIDTH	SYNAPTICS_MAX_Y_SIZE
 
 #define NUM_RX	28
@@ -607,6 +612,7 @@ static struct device_attribute attrs[] = {
 			synaptics_rmi4_0dbutton_store),
 };
 
+#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 static struct synaptics_rmi4_platform_data rmi4_platformdata = {
 //	.irq_type = IRQF_TRIGGER_FALLING,
 	/*Direct IRQ for secure input*/
@@ -623,7 +629,35 @@ static struct synaptics_rmi4_platform_data rmi4_platformdata = {
 	.fac_firmware_name = NULL,
 	.num_of_rx = NUM_RX,
 	.num_of_tx = NUM_TX,
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	.hsync_onoff = mdss_dsi_panel_hsync_onoff,
+#endif
 };
+#else
+static unsigned char tm1940_f1a_button_codes[] = {KEY_MENU, KEY_BACK};
+
+static struct synaptics_rmi_f1a_button_map tm1940_f1a_button_map = {
+	.nbuttons = ARRAY_SIZE(tm1940_f1a_button_codes),
+	.map = tm1940_f1a_button_codes,
+};
+static struct synaptics_rmi4_platform_data rmi4_platformdata = {
+//	.irq_type = IRQF_TRIGGER_FALLING,
+	/*Direct IRQ for secure input*/
+//	.irq_type = IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+//	.gpio = GPIO_TOUCH_IRQ,
+	.sensor_max_x = SYNAPTICS_MAX_X_SIZE,
+	.sensor_max_y = SYNAPTICS_MAX_Y_SIZE,
+	.max_touch_width = 28,
+	/*.gpio_config = synaptics_gpio_setup,*/
+	.f1a_button_map = &tm1940_f1a_button_map,
+//	.register_cb = synaptics_tsp_register_callback,
+	.tsppwr_1p8_en = 480,
+	.firmware_name = NULL,
+	.fac_firmware_name = NULL,
+	.num_of_rx = NUM_RX,
+	.num_of_tx = NUM_TX,
+};
+#endif
 
 static int touch_sleep_time;
 extern int system_rev;
@@ -1521,7 +1555,7 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 					return touch_count;
 				}
 				#endif
-#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+#if defined(CONFIG_USE_INPUTLOCATION_FOR_ENG)
 				dev_info(&rmi4_data->i2c_client->dev, "[%d][P] 0x%02x, x = %d, y = %d, wx = %d, wy = %d\n",
 					finger, finger_status, x, y, wx, wy);
 #else
@@ -1550,7 +1584,9 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 		}
 
 		if (rmi4_data->finger[finger].state && !finger_status) {
-#if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
+#ifdef CONFIG_GLOVE_TOUCH
+
+#if defined(CONFIG_USE_INPUTLOCATION_FOR_ENG)
 			/* TODO : Remove version information when H/W dose not changed */
 			dev_info(&rmi4_data->i2c_client->dev, "[%d][R] 0x%02x M[%d], Ver[%02X%02X%02X%02X]\n",
 				finger, finger_status, rmi4_data->finger[finger].mcount,
@@ -1562,6 +1598,23 @@ static int synaptics_rmi4_f12_abs_report(struct synaptics_rmi4_data *rmi4_data,
 				rmi4_data->ic_revision_of_ic, rmi4_data->panel_revision,
 				rmi4_data->fw_version_of_ic, rmi4_data->glove_mode_enables);
 #endif
+
+#else //CONFIG_GLOVE_TOUCH
+
+#if defined(CONFIG_USE_INPUTLOCATION_FOR_ENG)
+			/* TODO : Remove version information when H/W dose not changed */
+			dev_info(&rmi4_data->i2c_client->dev, "[%d][R] 0x%02x M[%d], Ver[%02X%02X%02X]\n",
+				finger, finger_status, rmi4_data->finger[finger].mcount,
+				rmi4_data->ic_revision_of_ic, rmi4_data->panel_revision,
+				rmi4_data->fw_version_of_ic);
+#else
+			dev_info(&rmi4_data->i2c_client->dev, "[%d][R] 0x%02x M[%d], Ver[%02X%02X%02X]\n",
+				finger, finger_status, rmi4_data->finger[finger].mcount,
+				rmi4_data->ic_revision_of_ic, rmi4_data->panel_revision,
+				rmi4_data->fw_version_of_ic);
+#endif
+
+#endif//CONFIG_GLOVE_TOUCH
 			rmi4_data->finger[finger].mcount = 0;
 		}
 
@@ -1713,9 +1766,17 @@ static int synaptics_rmi4_f51_edge_swipe(struct synaptics_rmi4_data *rmi4_data,
 		return -ENODEV;
 
 	if (data->edge_swipe_dg >= 90 && data->edge_swipe_dg <= 180)
+#if defined(CONFIG_MACH_JACTIVESKT)
+		f51->surface_data.angle = data->edge_swipe_dg - 90;
+#else
 		f51->surface_data.angle = data->edge_swipe_dg - 180;
+#endif
 	else if (data->edge_swipe_dg < 90)
+#if defined(CONFIG_MACH_JACTIVESKT)
+		f51->surface_data.angle = 90 - data->edge_swipe_dg;
+#else
 		f51->surface_data.angle = data->edge_swipe_dg;
+#endif
 	else
 		dev_err(&rmi4_data->i2c_client->dev, "Skip wrong edge swipe angle [%d]\n",
 				data->edge_swipe_dg);
@@ -3292,6 +3353,10 @@ static int synaptics_rmi4_set_input_device
 	set_bit(EV_SYN, rmi4_data->input_dev->evbit);
 	set_bit(EV_KEY, rmi4_data->input_dev->evbit);
 	set_bit(EV_ABS, rmi4_data->input_dev->evbit);
+#if defined(CONFIG_SEC_MELIUSCA_PROJECT)
+	set_bit(EV_LED, rmi4_data->input_dev->evbit);
+	set_bit(LED_MISC, rmi4_data->input_dev->ledbit);
+#endif
 	set_bit(BTN_TOUCH, rmi4_data->input_dev->keybit);
 	set_bit(BTN_TOOL_FINGER, rmi4_data->input_dev->keybit);
 #ifdef INPUT_PROP_DIRECT
@@ -3554,12 +3619,20 @@ static int synaptics_rmi4_reset_device(struct synaptics_rmi4_data *rmi4_data)
 
 		msleep(SYNAPTICS_HW_RESET_TIME);
 	} else {
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+		rmi4_data->board->hsync_onoff(false);
+#endif
+
 		synaptics_power_ctrl(rmi4_data,false);
-		
+
 		msleep(30);
 		synaptics_power_ctrl(rmi4_data,true);
 
 		msleep(SYNAPTICS_HW_RESET_TIME);
+
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+		rmi4_data->board->hsync_onoff(true);
+#endif
 
 		retval = synaptics_rmi4_f54_set_control(rmi4_data);
 		if (retval < 0)
@@ -3604,10 +3677,18 @@ static void synaptics_rmi4_reboot_work(struct work_struct *work)
 	dev_err(&rmi4_data->i2c_client->dev,
 			": Tsp Reboot(%d) by pattern tracking\n",ghosttouchcount);
 
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(false);
+#endif
+
 	synaptics_power_ctrl(rmi4_data,false);
 	msleep(50);
 	synaptics_power_ctrl(rmi4_data,true);
 	msleep(SYNAPTICS_HW_RESET_TIME);
+
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(true);
+#endif
 
 	retval = synaptics_rmi4_f54_set_control(rmi4_data);
 	if (retval < 0)
@@ -3847,7 +3928,7 @@ int synaptics_rmi4_new_function(enum exp_fn fn_type,
 void synaptics_power_ctrl(struct synaptics_rmi4_data *rmi4_data, bool enable)
 {
 	int ret = 0;
-#if defined(CONFIG_SEC_H_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_JS_PROJECT)
 	static struct regulator *reg_l10;
 
 	if (!reg_l10) {
@@ -3864,6 +3945,14 @@ void synaptics_power_ctrl(struct synaptics_rmi4_data *rmi4_data, bool enable)
 			return;
 		}
 	}
+
+#if defined(CONFIG_SEC_JS_PROJECT)
+	ret = gpio_direction_output(rmi4_data->pwrdata->vdd_io_1p8, enable);
+	if (ret) {
+		pr_err("[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
+			 __func__, rmi4_data->pwrdata->vdd_io_1p8);
+	}
+#endif
 
 	if (enable) {
 		if (regulator_is_enabled(reg_l10))
@@ -3890,12 +3979,16 @@ void synaptics_power_ctrl(struct synaptics_rmi4_data *rmi4_data, bool enable)
 	}
 #endif
 	pr_err("[synaptics] %s   enable(%d)\n", __func__,enable);
+
+#if !defined(CONFIG_SEC_JS_PROJECT)
 	ret = gpio_direction_output(rmi4_data->pwrdata->vdd_io_1p8, enable);
 	if (ret) {
 		pr_err("[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
 			 __func__, rmi4_data->pwrdata->vdd_io_1p8);
 	}
-#if !defined(CONFIG_SEC_H_PROJECT)
+#endif
+
+#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_JS_PROJECT)
 	msleep(30);
 #endif
 	return;
@@ -3982,7 +4075,9 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 	struct synaptics_rmi4_device_info *rmi;
 	struct synaptics_rmi4_power_data *pdata;
 	int error;
+#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	int touch_fpcb_version;
+#endif
 	struct synaptics_rmi4_platform_data *platform_data;
 
 	platform_data = &rmi4_platformdata;
@@ -4056,6 +4151,7 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 			__func__,bootmode);
 #endif
 
+#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	/* define panel version : M4 / M4+ */
 	printk(KERN_ERR "%s   system_rev = %d, octa version =0x%x",__func__,system_rev,lcd_tsp_panel_version);
 	touch_fpcb_version = (lcd_tsp_panel_version & 0xF000) >> 12;
@@ -4070,7 +4166,11 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 	 * 7,	FPCB 7.x,	FW_IMAGE_NAME_B0_4_3,	FAC_FWIMAGE_NAME_B0
 	 * 8,	FPCB 5.x,	FW_IMAGE_NAME_B0_5_1,	FAC_FWIMAGE_NAME_B0_5_1
 	 */
-
+#if defined(CONFIG_MACH_JACTIVESKT)
+	rmi4_data->panel_revision = OCTA_PANEL_REVISION_40;
+	rmi4_data->board->firmware_name = FW_IMAGE_NAME_B0_HSYNC04;
+	rmi4_data->board->fac_firmware_name = FW_IMAGE_NAME_B0_HSYNC04_FAC;
+#else
 	if(touch_fpcb_version == OCTA_PANEL_REVISION_51){
 		rmi4_data->panel_revision = OCTA_PANEL_REVISION_51;
 		rmi4_data->board->firmware_name = FW_IMAGE_NAME_B0_5_1;
@@ -4081,11 +4181,26 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 		rmi4_data->board->firmware_name = FW_IMAGE_NAME_B0_4_3;
 		rmi4_data->board->fac_firmware_name = FAC_FWIMAGE_NAME_B0;
 	}
+#endif
+
+#else
+    	rmi4_data->panel_revision = 0x00;
+    	rmi4_data->board->firmware_name = FW_IMAGE_NAME_B0_NEP_14;
+    	rmi4_data->board->fac_firmware_name = FW_IMAGE_NAME_B0_NEP_1F;
+#endif
+
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(false);
+#endif
 
 	touch_sleep_time = SYNAPTICS_HW_RESET_TIME;
 
 	synaptics_power_ctrl(rmi4_data,true);
 	msleep(touch_sleep_time);
+
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(true);
+#endif
 
 	mutex_init(&(rmi4_data->rmi4_io_ctrl_mutex));
 	mutex_init(&(rmi4_data->rmi4_reset_mutex));
@@ -4105,8 +4220,16 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, rmi4_data);
 
 err_tsp_reboot:
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(false);
+#endif
+
 	synaptics_power_ctrl(rmi4_data,true);
 	msleep(SYNAPTICS_POWER_MARGIN_TIME);
+
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(true);
+#endif
 
 #ifdef TSP_BOOSTER
 	synaptics_init_dvfs(rmi4_data);
@@ -4201,7 +4324,9 @@ err_tsp_reboot:
 	rmi4_data->tsp_probe = true;
 	complete_all(&rmi4_data->init_done);
 
+#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	synaptics_rmi4_stop_device(rmi4_data);
+#endif
 	return retval;
 
 err_sysfs:
@@ -4401,11 +4526,19 @@ static int synaptics_rmi4_start_device(struct synaptics_rmi4_data *rmi4_data)
 		goto out;
 	}
 
-		synaptics_power_ctrl(rmi4_data,true);		
-		rmi4_data->touch_stopped = false;
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(false);
+#endif
+
+	synaptics_power_ctrl(rmi4_data,true);
+	rmi4_data->touch_stopped = false;
 
 	mdss_dsi_panel_touchsensing(true);
 	msleep(SYNAPTICS_HW_RESET_TIME);
+
+#if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_PREVENT_HSYNC_LEAKAGE)
+	rmi4_data->board->hsync_onoff(true);
+#endif
 
 	retval = synaptics_rmi4_reinit_device(rmi4_data);
 	if (retval < 0) {
@@ -4443,9 +4576,13 @@ static int synaptics_rmi4_input_open(struct input_dev *dev)
 	struct synaptics_rmi4_data *rmi4_data = input_get_drvdata(dev);
 	int retval;
 
+#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	retval = wait_for_completion_interruptible_timeout(&rmi4_data->init_done,
-			msecs_to_jiffies(90 * MSEC_PER_SEC));
-
+			msecs_to_jiffies(60 * MSEC_PER_SEC));
+#else
+	retval = wait_for_completion_interruptible_timeout(&rmi4_data->init_done,
+			msecs_to_jiffies(10 * MSEC_PER_SEC));
+#endif
 	if (retval < 0) {
 		dev_err(&rmi4_data->i2c_client->dev,
 			"error while waiting for device to init (%d)\n", retval);

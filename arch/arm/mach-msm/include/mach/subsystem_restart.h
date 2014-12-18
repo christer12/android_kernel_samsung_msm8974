@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2012, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -41,6 +41,8 @@ struct module;
  * @powerup: Start a subsystem
  * @crash_shutdown: Shutdown a subsystem when the system crashes (can't sleep)
  * @ramdump: Collect a ramdump of the subsystem
+ * @is_not_loadable: Indicate if subsystem firmware is not loadable via pil
+ * framework
  */
 struct subsys_desc {
 	const char *name;
@@ -56,6 +58,7 @@ struct subsys_desc {
 	void (*crash_shutdown)(const struct subsys_desc *desc);
 	int (*ramdump)(int, const struct subsys_desc *desc);
 	unsigned int err_ready_irq;
+	int is_not_loadable;
 };
 
 #if defined(CONFIG_MSM_SUBSYSTEM_RESTART)
@@ -72,6 +75,8 @@ extern struct subsys_device *subsys_register(struct subsys_desc *desc);
 extern void subsys_unregister(struct subsys_device *dev);
 
 extern void subsys_default_online(struct subsys_device *dev);
+extern void subsys_set_crash_status(struct subsys_device *dev, bool crashed);
+extern bool subsys_get_crash_status(struct subsys_device *dev);
 
 #else
 
@@ -111,6 +116,12 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 static inline void subsys_unregister(struct subsys_device *dev) { }
 
 static inline void subsys_default_online(struct subsys_device *dev) { }
+static inline
+void subsys_set_crash_status(struct subsys_device *dev, bool crashed) { }
+static inline bool subsys_get_crash_status(struct subsys_device *dev)
+{
+	return false;
+}
 
 #endif /* CONFIG_MSM_SUBSYSTEM_RESTART */
 

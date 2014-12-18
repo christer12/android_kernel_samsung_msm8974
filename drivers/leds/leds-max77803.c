@@ -44,6 +44,9 @@ struct max77803_led_data {
 	spinlock_t value_lock;
 	int brightness;
 	int test_brightness;
+#ifdef CONFIG_LEDS_SEPERATE_MOVIE_FLASH
+	int movie_brightness;
+#endif 
 };
 
 static u8 led_en_mask[MAX77803_LED_MAX] = {
@@ -99,6 +102,49 @@ static int max77803_set_bits(struct i2c_client *client, const u8 reg,
 
 	return ret;
 }
+
+#ifdef CONFIG_LEDS_SEPERATE_MOVIE_FLASH
+static ssize_t max77803_show_movie_brightness(struct device *dev,
+				     struct device_attribute *devattr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct max77803_led_data *led_data = container_of(led_cdev, struct max77803_led_data, led);
+
+	return sprintf(buf, "%d\n", led_data->movie_brightness);
+}
+
+static ssize_t max77803_store_movie_brightness(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	struct max77803_led_data *led_data = container_of(led_cdev, struct max77803_led_data, led);
+	unsigned long movie_brightness = simple_strtoul(buf, NULL, 0);
+	int set_brightness, ret;
+	u8 shift = led_current_shift[led_data->data->id];
+
+	if (movie_brightness > 0) {
+		led_data->movie_brightness = (int)movie_brightness;
+		set_brightness = led_data->movie_brightness;
+	} else {
+		led_data->movie_brightness = 0;
+		set_brightness = led_data->brightness;
+	}
+
+	pr_debug("[LED] %s:movie_brightness = %d\n", __func__, led_data->movie_brightness);
+
+	ret = max77803_set_bits(led_data->i2c, reg_led_current[led_data->data->id],
+			led_current_mask[led_data->data->id],
+			set_brightness << shift);
+	if (unlikely(ret))
+		pr_err("%s: can't set led level %d\n", __func__, ret);
+
+	return size;
+}
+
+static DEVICE_ATTR(movie_brightness, S_IWUSR|S_IWGRP|S_IRUGO,
+	max77803_show_movie_brightness, max77803_store_movie_brightness);
+
+#endif
 
 /*
 static void print_all_reg_value(struct i2c_client *client)
@@ -281,7 +327,7 @@ static int max77803_led_setup(struct max77803_led_data *led_data)
 				  MAX77803_BOOST_FLASH_MODE_FLED1);
 	ret |= max77803_write_reg(led_data->i2c, MAX77803_LED_REG_VOUT_FLASH,
 				  MAX77803_BOOST_VOUT_FLASH_FROM_VOLT(3300));
-	ret |= max77803_write_reg(led_data->i2c, MAX77803_CHG_REG_CHG_CNFG_11, 0x00);
+	ret |= max77803_write_reg(led_data->i2c, MAX77803_CHG_REG_CHG_CNFG_11, 0x2B);
 	ret |= max77803_write_reg(led_data->i2c,
 				MAX77803_LED_REG_MAX_FLASH1, 0xBC);
 	ret |= max77803_write_reg(led_data->i2c,
@@ -431,6 +477,12 @@ static int max77803_led_probe(struct platform_device *pdev)
 		pr_err("failed to create device file, %s\n",
 		       dev_attr_rear_flash.attr.name);
 	    }
+#ifdef CONFIG_LEDS_SEPERATE_MOVIE_FLASH
+	    if (device_create_file(flash_dev, &dev_attr_movie_brightness) < 0) {
+		    pr_err("failed to create device file, %s\n",
+			   dev_attr_movie_brightness.attr.name);
+	    }
+#endif
 	} else
 	    pr_err("Failed to create device(flash) because of nothing camera class!\n");
 
@@ -463,6 +515,9 @@ static int __devexit max77803_led_remove(struct platform_device *pdev)
 	kfree(led_datas);
 
 	device_remove_file(flash_dev, &dev_attr_rear_flash);
+#ifdef CONFIG_LEDS_SEPERATE_MOVIE_FLASH
+	device_remove_file(flash_dev, &dev_attr_movie_brightness);
+#endif	
 	device_destroy(camera_class, 0);
 	class_destroy(camera_class);
 

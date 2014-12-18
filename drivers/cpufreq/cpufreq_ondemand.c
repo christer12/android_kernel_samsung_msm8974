@@ -4,6 +4,7 @@
  *  Copyright (C)  2001 Russell King
  *            (C)  2003 Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>.
  *                      Jun Nakajima <jun.nakajima@intel.com>
+ *            (c)  2013 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -21,6 +22,7 @@
 #include <linux/hrtimer.h>
 #include <linux/tick.h>
 #include <linux/ktime.h>
+#include <linux/kthread.h>
 #include <linux/sched.h>
 #include <linux/input.h>
 #include <linux/workqueue.h>
@@ -42,17 +44,27 @@
 #define MAX_FREQUENCY_UP_THRESHOLD		(100)
 #define MIN_FREQUENCY_DOWN_DIFFERENTIAL		(1)
 
+#define STEP_UP
+#ifdef STEP_UP
+#define DEF_FREQ_STEP					(25)
+#define DEF_STEP_UP_EARLY_HISPEED				(1190400)
+#define DEF_STEP_UP_INTERIM_HISPEED				(1728000)
+#define DEF_SAMPLING_EARLY_HISPEED_FACTOR		(2)
+#define DEF_SAMPLING_INTERIM_HISPEED_FACTOR		(3)
+#endif
+
 /* PATCH : SMART_UP */
 #define MIN(X, Y) ((X) < (Y) ? (X) : (Y))
 
-#define SMART_UP_PLUS (1)
+#define SMART_UP_PLUS (0)
 #define SMART_UP_SLOW_UP_AT_HIGH_FREQ (1)
 #define SUP_MAX_STEP (3)
 #define SUP_CORE_NUM (4)
-#define SUP_SLOW_UP_DUR (2)
+#define SUP_SLOW_UP_DUR (5)
+#define SUP_SLOW_UP_DUR_DEFAULT (2)
 
 #define SUP_HIGH_SLOW_UP_DUR (5)
-
+#define SUP_FREQ_LEVEL (14)
 #if defined(SMART_UP_PLUS)
 static unsigned int SUP_THRESHOLD_STEPS[SUP_MAX_STEP] = {75, 85, 90};
 static unsigned int SUP_FREQ_STEPS[SUP_MAX_STEP] = {4, 3, 2};
@@ -68,9 +80,9 @@ freq_table_idx pre_freq_idx[SUP_CORE_NUM] = {};
 
 #if defined(SMART_UP_SLOW_UP_AT_HIGH_FREQ)
 
-static unsigned int SUP_SLOW_UP_FREQUENCY = 1574400;
-static unsigned int SUP_HIGH_SLOW_UP_FREQUENCY = 1728000;
-static unsigned int SUP_SLOW_UP_LOAD = 90;
+#define SUP_SLOW_UP_FREQUENCY 		(1574400)
+#define SUP_HIGH_SLOW_UP_FREQUENCY 	(1728000)
+#define SUP_SLOW_UP_LOAD 		(90)
 
 typedef struct {
 	unsigned int hist_max_load[SUP_SLOW_UP_DUR];
@@ -143,12 +155,20 @@ struct cpu_dbs_info_s {
 	unsigned int max_load;
 	int cpu;
 	unsigned int sample_type:1;
+#ifdef STEP_UP
+	unsigned int freq_stay_count;
+#endif
 	/*
 	 * percpu mutex that serializes governor limit change with
 	 * do_dbs_timer invocation. We do not want do_dbs_timer to run
 	 * when user is changing the governor or limits.
 	 */
 	struct mutex timer_mutex;
+
+	struct task_struct *sync_thread;
+	wait_queue_head_t sync_wq;
+	atomic_t src_sync_cpu;
+	atomic_t sync_enabled;
 };
 static DEFINE_PER_CPU(struct cpu_dbs_info_s, od_cpu_dbs_info);
 
@@ -158,7 +178,7 @@ static inline void dbs_timer_exit(struct cpu_dbs_info_s *dbs_info);
 static unsigned int dbs_enable;	/* number of CPUs using this policy */
 
 /*
- * dbs_mutex protects dbs_enable in governor start/stop.
+ * dbs_mutex protects dbs_enable and dbs_info during start/stop.
  */
 static DEFINE_MUTEX(dbs_mutex);
 
@@ -184,6 +204,22 @@ static struct dbs_tuners {
 	unsigned int sampling_down_factor;
 	int          powersave_bias;
 	unsigned int io_is_busy;
+	//20130711 smart_up
+	unsigned int smart_up;
+	unsigned int smart_slow_up_load;
+	unsigned int smart_slow_up_freq;
+	unsigned int smart_slow_up_dur;
+	unsigned int smart_high_slow_up_freq;
+	unsigned int smart_high_slow_up_dur;
+	unsigned int smart_each_off;
+	// end smart_up
+#ifdef STEP_UP
+	unsigned int freq_step;
+	unsigned int step_up_early_hispeed;
+	unsigned int step_up_interim_hispeed;
+	unsigned int sampling_early_factor;
+	unsigned int sampling_interim_factor;
+#endif
 } dbs_tuners_ins = {
 	.up_threshold_multi_core = DEF_FREQUENCY_UP_THRESHOLD,
 	.up_threshold = DEF_FREQUENCY_UP_THRESHOLD,
@@ -195,6 +231,22 @@ static struct dbs_tuners {
 	.powersave_bias = 0,
 	.sync_freq = 0,
 	.optimal_freq = 0,
+	//20130711 smart_up 
+	.smart_up = SMART_UP_PLUS,
+	.smart_slow_up_load = SUP_SLOW_UP_LOAD,
+	.smart_slow_up_freq = SUP_SLOW_UP_FREQUENCY,
+	.smart_slow_up_dur = SUP_SLOW_UP_DUR_DEFAULT,
+	.smart_high_slow_up_freq = SUP_HIGH_SLOW_UP_FREQUENCY,
+	.smart_high_slow_up_dur = SUP_HIGH_SLOW_UP_DUR,
+	.smart_each_off = 0,	
+	// end smart_up
+#ifdef STEP_UP
+	.freq_step = DEF_FREQ_STEP,
+	.step_up_early_hispeed = DEF_STEP_UP_EARLY_HISPEED,
+	.step_up_interim_hispeed = DEF_STEP_UP_INTERIM_HISPEED,
+	.sampling_early_factor = DEF_SAMPLING_EARLY_HISPEED_FACTOR,
+	.sampling_interim_factor = DEF_SAMPLING_INTERIM_HISPEED_FACTOR,
+#endif
 };
 
 static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
@@ -359,6 +411,22 @@ show_one(ignore_nice_load, ignore_nice);
 show_one(optimal_freq, optimal_freq);
 show_one(up_threshold_any_cpu_load, up_threshold_any_cpu_load);
 show_one(sync_freq, sync_freq);
+//20130711 smart_up 
+show_one(smart_up, smart_up);
+show_one(smart_slow_up_load, smart_slow_up_load);
+show_one(smart_slow_up_freq, smart_slow_up_freq);
+show_one(smart_slow_up_dur, smart_slow_up_dur);
+show_one(smart_high_slow_up_freq, smart_high_slow_up_freq);
+show_one(smart_high_slow_up_dur, smart_high_slow_up_dur);
+show_one(smart_each_off, smart_each_off);
+// end smart_up
+#ifdef STEP_UP
+show_one(freq_step, freq_step);
+show_one(step_up_early_hispeed, step_up_early_hispeed);
+show_one(step_up_interim_hispeed, step_up_interim_hispeed);
+show_one(sampling_early_factor, sampling_early_factor);
+show_one(sampling_interim_factor, sampling_interim_factor);
+#endif
 
 static ssize_t show_powersave_bias
 (struct kobject *kobj, struct attribute *attr, char *buf)
@@ -386,14 +454,16 @@ static void update_sampling_rate(unsigned int new_rate)
 	dbs_tuners_ins.sampling_rate = new_rate
 				     = max(new_rate, min_sampling_rate);
 
+	mutex_lock(&dbs_mutex);
 	for_each_online_cpu(cpu) {
 		struct cpufreq_policy *policy;
 		struct cpu_dbs_info_s *dbs_info;
 		unsigned long next_sampling, appointed_at;
 
 		policy = cpufreq_cpu_get(cpu);
-		if (!policy)
+		if (!policy) {
 			continue;
+		}
 		dbs_info = &per_cpu(od_cpu_dbs_info, policy->cpu);
 		cpufreq_cpu_put(policy);
 
@@ -420,6 +490,7 @@ static void update_sampling_rate(unsigned int new_rate)
 		}
 		mutex_unlock(&dbs_info->timer_mutex);
 	}
+	mutex_unlock(&dbs_mutex);
 }
 
 static ssize_t store_sampling_rate(struct kobject *a, struct attribute *b,
@@ -623,6 +694,10 @@ static ssize_t store_powersave_bias(struct kobject *a, struct attribute *b,
 				POWERSAVE_BIAS_MINLEVEL));
 
 	dbs_tuners_ins.powersave_bias = input;
+
+	mutex_lock(&dbs_mutex);
+	get_online_cpus();
+
 	if (!bypass) {
 		if (reenable_timer) {
 			/* reinstate dbs timer */
@@ -646,6 +721,9 @@ static ssize_t store_powersave_bias(struct kobject *a, struct attribute *b,
 				if (dbs_info->cur_policy) {
 					/* restart dbs timer */
 					dbs_timer_init(dbs_info);
+					/* Enable frequency synchronization
+					 * of CPUs */
+					atomic_set(&dbs_info->sync_enabled, 1);
 				}
 skip_this_cpu:
 				unlock_policy_rwsem_write(cpu);
@@ -675,23 +753,264 @@ skip_this_cpu:
 
 			if (dbs_info->cur_policy) {
 				/* cpu using ondemand, cancel dbs timer */
-				mutex_lock(&dbs_info->timer_mutex);
 				dbs_timer_exit(dbs_info);
+				/* Disable frequency synchronization of
+				 * CPUs to avoid re-queueing of work from
+				 * sync_thread */
+				atomic_set(&dbs_info->sync_enabled, 0);
 
+				mutex_lock(&dbs_info->timer_mutex);
 				ondemand_powersave_bias_setspeed(
 					dbs_info->cur_policy,
 					NULL,
 					input);
-
 				mutex_unlock(&dbs_info->timer_mutex);
+
 			}
 skip_this_cpu_bypass:
 			unlock_policy_rwsem_write(cpu);
 		}
 	}
 
+	put_online_cpus();
+	mutex_unlock(&dbs_mutex);
+
 	return count;
 }
+
+//20130711 smart_up
+static ssize_t store_smart_up(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input > 1 ){
+		input = 1;
+	}else if (input < 0 ){
+		input = 0;
+	}
+	
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_up = input;
+	return count;
+}
+
+static ssize_t store_smart_slow_up_load(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input > 100 ){
+		input = 100;
+	}else if (input < 0){
+		input = 0;
+	}
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_slow_up_load = input;
+	return count;
+}
+static ssize_t store_smart_slow_up_freq(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input < 0)
+		input = 0;
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_slow_up_freq = input;
+	return count;
+}
+static ssize_t store_smart_slow_up_dur(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input > SUP_SLOW_UP_DUR ){
+		input = SUP_SLOW_UP_DUR;
+	}else if (input < 1 ){
+		input = 1;
+	}
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_slow_up_dur = input;
+	return count;
+}
+static ssize_t store_smart_high_slow_up_freq(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input < 0)
+		input = 0;
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_high_slow_up_freq = input;
+	return count;
+}
+static ssize_t store_smart_high_slow_up_dur(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input > SUP_HIGH_SLOW_UP_DUR ){
+		input = SUP_HIGH_SLOW_UP_DUR;
+	}else if (input < 1 ){
+		input = 1;
+	}
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_high_slow_up_dur = input;
+	return count;
+}
+static ssize_t store_smart_each_off(struct kobject *a, struct attribute *b,
+				   const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	unsigned int i;
+
+	ret = sscanf(buf, "%u", &input);
+	if (ret != 1)
+		return -EINVAL;
+	if (input >  SUP_CORE_NUM){
+		input = SUP_CORE_NUM;
+	}else if ( input < 0){
+		input = 0;
+	}
+	// buffer reset
+	for_each_online_cpu(i){
+		reset_hist(&hist_load[i]);
+		reset_hist_high(&hist_load_high[i]);
+	}
+	dbs_tuners_ins.smart_each_off = input;
+
+	return count;
+}
+//end  smart_up
+
+#ifdef STEP_UP
+static ssize_t store_freq_step(struct kobject *a,
+			struct attribute *b, const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > 100 ||
+			input < 0) {
+		return -EINVAL;
+	}
+	dbs_tuners_ins.freq_step = input;
+	return count;
+}
+
+static ssize_t store_step_up_early_hispeed(struct kobject *a,
+			struct attribute *b, const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > 2265600 ||
+			input < 0) {
+		return -EINVAL;
+	}
+	dbs_tuners_ins.step_up_early_hispeed = input;
+	return count;
+}
+
+static ssize_t store_step_up_interim_hispeed(struct kobject *a,
+			struct attribute *b, const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input > 2265600 ||
+			input < 0) {
+		return -EINVAL;
+	}
+	dbs_tuners_ins.step_up_interim_hispeed = input;
+	return count;
+}
+
+static ssize_t store_sampling_early_factor(struct kobject *a,
+			struct attribute *b, const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input < 1)
+		return -EINVAL;
+	dbs_tuners_ins.sampling_early_factor = input;
+	return count;
+}
+
+static ssize_t store_sampling_interim_factor(struct kobject *a,
+			struct attribute *b, const char *buf, size_t count)
+{
+	unsigned int input;
+	int ret;
+	ret = sscanf(buf, "%u", &input);
+
+	if (ret != 1 || input < 1)
+		return -EINVAL;
+	dbs_tuners_ins.sampling_interim_factor = input;
+	return count;
+}
+#endif
 
 define_one_global_rw(sampling_rate);
 define_one_global_rw(io_is_busy);
@@ -704,6 +1023,22 @@ define_one_global_rw(up_threshold_multi_core);
 define_one_global_rw(optimal_freq);
 define_one_global_rw(up_threshold_any_cpu_load);
 define_one_global_rw(sync_freq);
+//20130711 smart_up
+define_one_global_rw(smart_up);
+define_one_global_rw(smart_slow_up_load);
+define_one_global_rw(smart_slow_up_freq);
+define_one_global_rw(smart_slow_up_dur);
+define_one_global_rw(smart_high_slow_up_freq);
+define_one_global_rw(smart_high_slow_up_dur);
+define_one_global_rw(smart_each_off);
+// end smart_up
+#ifdef STEP_UP
+define_one_global_rw(freq_step);
+define_one_global_rw(step_up_early_hispeed);
+define_one_global_rw(step_up_interim_hispeed);
+define_one_global_rw(sampling_early_factor);
+define_one_global_rw(sampling_interim_factor);
+#endif
 
 static struct attribute *dbs_attributes[] = {
 	&sampling_rate_min.attr,
@@ -718,6 +1053,22 @@ static struct attribute *dbs_attributes[] = {
 	&optimal_freq.attr,
 	&up_threshold_any_cpu_load.attr,
 	&sync_freq.attr,
+	//20130711 smart_up
+	&smart_up.attr,
+	&smart_slow_up_load.attr,
+	&smart_slow_up_freq.attr,
+	&smart_slow_up_dur.attr,
+	&smart_high_slow_up_freq.attr,
+	&smart_high_slow_up_dur.attr,
+	&smart_each_off.attr,
+	// end smart_up
+#ifdef STEP_UP
+	&freq_step.attr,
+	&step_up_early_hispeed.attr,
+	&step_up_interim_hispeed.attr,
+	&sampling_early_factor.attr,
+	&sampling_interim_factor.attr,
+#endif
 	NULL
 };
 
@@ -880,7 +1231,8 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	cpufreq_notify_utilization(policy, load_at_max_freq);
 
 /* PATCH : SMART_UP */
-#if defined(SMART_UP_PLUS)
+	if (dbs_tuners_ins.smart_up && ( core_j + 1 ) > dbs_tuners_ins.smart_each_off ){
+
 	if (max_load_freq > SUP_THRESHOLD_STEPS[0] * policy->cur) {
 		int smart_up_inc =
 			(policy->max - policy->cur) / SUP_FREQ_STEPS[0];
@@ -897,6 +1249,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 							* policy->cur) {
 				smart_up_inc = (policy->max - policy->cur)
 						/ SUP_FREQ_STEPS[i];
+			
 				break;
 			}
 		}
@@ -909,7 +1262,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			!=  policy->cur) )
 		{
 			int i = 0;
-			for( i =0; i <= 14; i ++)
+			for( i =0; i < SUP_FREQ_LEVEL; i ++)
 			{
 				if (this_dbs_info->freq_table[i].frequency == policy->cur)
 				{
@@ -923,21 +1276,23 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			}
 			
 		}
+		if( check_idx < SUP_FREQ_LEVEL-1 ){ 
 		temp_up_inc =  
 			this_dbs_info->freq_table[check_idx + 1].frequency 
 			- check_freq;
+		}
 			
 		if (smart_up_inc < temp_up_inc )
 			smart_up_inc = temp_up_inc;
 
 		freq_next = MIN((policy->cur + smart_up_inc), policy->max);
 
-#if defined(SMART_UP_SLOW_UP_AT_HIGH_FREQ)
-		if (policy->cur >= SUP_HIGH_SLOW_UP_FREQUENCY){
+			
+			if (policy->cur >= dbs_tuners_ins.smart_high_slow_up_freq){
 			int idx = hist_load_high[core_j].hist_load_cnt;
 			int avg_hist_load = 0;
 			
-			if (idx >= SUP_HIGH_SLOW_UP_DUR)
+				if (idx >= dbs_tuners_ins.smart_high_slow_up_dur)
 				idx = 0;
 				
 			hist_load_high[core_j].hist_max_load[idx] = max_load;
@@ -945,17 +1300,17 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 			/* note : check history_load and get_sum_hist_load */
 			if (hist_load_high[core_j].
-				hist_max_load[SUP_HIGH_SLOW_UP_DUR - 1] > 0) {
+					hist_max_load[dbs_tuners_ins.smart_high_slow_up_dur - 1] > 0) {
 				int sum_hist_load_freq = 0;
 				int i = 0;
-				for (i = 0; i < SUP_HIGH_SLOW_UP_FREQUENCY; i++)
+					for (i = 0; i < dbs_tuners_ins.smart_high_slow_up_dur; i++)
 					sum_hist_load_freq +=
 					hist_load_high[core_j].hist_max_load[i];
 
 				avg_hist_load = sum_hist_load_freq
-						/ SUP_HIGH_SLOW_UP_FREQUENCY ;
+							/dbs_tuners_ins.smart_high_slow_up_dur;
 						
-				if (avg_hist_load > SUP_SLOW_UP_LOAD){
+					if (avg_hist_load > dbs_tuners_ins.smart_slow_up_load){
 					reset_hist_high(&hist_load_high[core_j]);
 					freq_next = MIN((policy->cur + temp_up_inc), policy->max);
 				} else
@@ -964,12 +1319,11 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 				freq_next = policy->cur;
 			}
 			
-		
-		} else if (policy->cur >= SUP_SLOW_UP_FREQUENCY) {
+			} else if (policy->cur >= dbs_tuners_ins.smart_slow_up_freq ) {
 			int idx = hist_load[core_j].hist_load_cnt;
 			int avg_hist_load = 0;
 
-			if (idx >= SUP_SLOW_UP_DUR)
+				if (idx >= dbs_tuners_ins.smart_slow_up_dur)
 				idx = 0;
 
 			hist_load[core_j].hist_max_load[idx] = max_load;
@@ -977,17 +1331,17 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 			/* note : check history_load and get_sum_hist_load */
 			if (hist_load[core_j].
-				hist_max_load[SUP_SLOW_UP_DUR - 1] > 0) {
+					hist_max_load[dbs_tuners_ins.smart_slow_up_dur - 1] > 0) {
 				int sum_hist_load_freq = 0;
 				int i = 0;
-				for (i = 0; i < SUP_SLOW_UP_DUR; i++)
+					for (i = 0; i < dbs_tuners_ins.smart_slow_up_dur; i++)
 					sum_hist_load_freq +=
 					hist_load[core_j].hist_max_load[i];
 
 				avg_hist_load = sum_hist_load_freq
-						/ SUP_SLOW_UP_DUR ;
+							/ dbs_tuners_ins.smart_slow_up_dur ;
 
-				if (avg_hist_load > SUP_SLOW_UP_LOAD){
+					if (avg_hist_load > dbs_tuners_ins.smart_slow_up_load){
 					reset_hist(&hist_load[core_j]);
 					freq_next = MIN((policy->cur + temp_up_inc), policy->max);
 				} else
@@ -998,7 +1352,6 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		} else {
 			reset_hist(&hist_load[core_j]);
 		}
-#endif
 		if (freq_next == policy->max)
 			this_dbs_info->rate_mult =
 				dbs_tuners_ins.sampling_down_factor;
@@ -1007,20 +1360,63 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 		return;
 	}
-#else
-	
+	}else{
 	/* Check for frequency increase */
 	if (max_load_freq > dbs_tuners_ins.up_threshold * policy->cur) {
-		/* If switching to max speed, apply sampling_down_factor */
-		if (policy->cur < policy->max)
-			this_dbs_info->rate_mult =
-				dbs_tuners_ins.sampling_down_factor;
+#ifdef STEP_UP
+			int target;
+			int inc;
+
+			if (policy->cur < dbs_tuners_ins.step_up_early_hispeed) {
+				target = dbs_tuners_ins.step_up_early_hispeed;
+			}else if (policy->cur < dbs_tuners_ins.step_up_interim_hispeed) {
+				if(policy->cur == dbs_tuners_ins.step_up_early_hispeed) {
+					if(this_dbs_info->freq_stay_count <
+						dbs_tuners_ins.sampling_early_factor) {
+						this_dbs_info->freq_stay_count++;
+						return;
+					}
+				}
+				this_dbs_info->freq_stay_count = 1;
+				inc = (policy->max * dbs_tuners_ins.freq_step) / 100;
+				target = min(dbs_tuners_ins.step_up_interim_hispeed,
+					policy->cur + inc);
+			}else {
+				if(policy->cur == dbs_tuners_ins.step_up_interim_hispeed) {
+					if(this_dbs_info->freq_stay_count <
+						dbs_tuners_ins.sampling_interim_factor) {
+						this_dbs_info->freq_stay_count++;
+						return;
+					}
+				}
+				this_dbs_info->freq_stay_count = 1;
+				target = policy->max;
+
+				//int inc = (policy->max * dbs_tuners_ins.freq_step) / 100;
+				//target = min(policy->max, policy->cur + inc);
+			}
+
+			pr_debug("%s: cpu=%d, cur=%d, target=%d\n",
+				__func__, policy->cpu, policy->cur, target);
+
+			/* If switching to max speed, apply sampling_down_factor */
+			if (target == policy->max)
+				this_dbs_info->rate_mult =
+					dbs_tuners_ins.sampling_down_factor;
+
+			dbs_freq_increase(policy, target);
+#else
+			/* If switching to max speed, apply sampling_down_factor */
+			if (policy->cur < policy->max)
+				this_dbs_info->rate_mult =
+					dbs_tuners_ins.sampling_down_factor;
+
 		dbs_freq_increase(policy, policy->max);
+#endif
 		return;
 	}
-#endif
+	}
 
-#if 0
 	if (num_online_cpus() > 1) {
 
 		if (max_load_other_cpu >
@@ -1039,7 +1435,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 			return;
 		}
 	}
-#endif 
+
 	/* Check for frequency decrease */
 	/* if we cannot reduce the frequency anymore, break out early */
 	if (policy->cur == policy->min)
@@ -1058,21 +1454,26 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 				(dbs_tuners_ins.up_threshold -
 				 dbs_tuners_ins.down_differential);
 
+		pr_debug("%s: cpu=%d, cur=%d, target=%d (down)\n",
+			__func__, policy->cpu, policy->cur, freq_next);
+
 /* PATCH : SMART_UP */
-#if defined(SMART_UP_PLUS) && defined(SMART_UP_SLOW_UP_AT_HIGH_FREQ)
-		if (freq_next >= SUP_HIGH_SLOW_UP_FREQUENCY){
+		if (dbs_tuners_ins.smart_up && ( core_j + 1 ) > dbs_tuners_ins.smart_each_off ){
+
+			if (freq_next >= dbs_tuners_ins.smart_high_slow_up_freq){
 			int idx = hist_load_high[core_j].hist_load_cnt;
 
-			if (idx >= SUP_HIGH_SLOW_UP_FREQUENCY)
+				if (idx >= dbs_tuners_ins.smart_high_slow_up_dur )
 				idx = 0;
 
 			hist_load_high[core_j].hist_max_load[idx] = max_load;
 			hist_load_high[core_j].hist_load_cnt = idx + 1;
 
-		}else if (freq_next >= SUP_SLOW_UP_FREQUENCY) {
+		
+			}else if (freq_next >= dbs_tuners_ins.smart_slow_up_freq) {
 			int idx = hist_load[core_j].hist_load_cnt;
 
-			if (idx >= SUP_SLOW_UP_DUR)
+				if (idx >= dbs_tuners_ins.smart_slow_up_dur)
 				idx = 0;
 
 			hist_load[core_j].hist_max_load[idx] = max_load;
@@ -1080,20 +1481,26 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 
 			reset_hist_high(&hist_load_high[core_j]);
 
-		} else {
+		
+			} else if (policy->cur >= dbs_tuners_ins.smart_slow_up_freq) {
 			reset_hist(&hist_load[core_j]);
 			reset_hist_high(&hist_load_high[core_j]);
-		}
-#endif
 
+				
+			}
+		}
+//#endif
 
 		/* No longer fully busy, reset rate_mult */
 		this_dbs_info->rate_mult = 1;
+#ifdef STEP_UP
+		this_dbs_info->freq_stay_count = 1;
+#endif
+
 
 		if (freq_next < policy->min)
 			freq_next = policy->min;
 
-#if 0
 		if (num_online_cpus() > 1) {
 			if (max_load_other_cpu >
 			(dbs_tuners_ins.up_threshold_multi_core -
@@ -1108,7 +1515,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 				freq_next = dbs_tuners_ins.optimal_freq;
 
 		}
-#endif
+
 		if (!dbs_tuners_ins.powersave_bias) {
 			__cpufreq_driver_target(policy, freq_next,
 					CPUFREQ_RELATION_L);
@@ -1243,6 +1650,112 @@ bail_acq_sema_failed:
 	put_online_cpus();
 	return;
 }
+
+
+static int dbs_migration_notify(struct notifier_block *nb,
+				unsigned long target_cpu, void *arg)
+{
+	struct cpu_dbs_info_s *target_dbs_info =
+		&per_cpu(od_cpu_dbs_info, target_cpu);
+
+	atomic_set(&target_dbs_info->src_sync_cpu, (int)arg);
+	wake_up(&target_dbs_info->sync_wq);
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block dbs_migration_nb = {
+	.notifier_call = dbs_migration_notify,
+};
+
+static int sync_pending(struct cpu_dbs_info_s *this_dbs_info)
+{
+	return atomic_read(&this_dbs_info->src_sync_cpu) >= 0;
+}
+
+static int dbs_sync_thread(void *data)
+{
+	int src_cpu, cpu = (int)data;
+	unsigned int src_freq, src_max_load;
+	struct cpu_dbs_info_s *this_dbs_info, *src_dbs_info;
+	struct cpufreq_policy *policy;
+	int delay;
+
+	this_dbs_info = &per_cpu(od_cpu_dbs_info, cpu);
+
+	while (1) {
+		wait_event(this_dbs_info->sync_wq,
+			   sync_pending(this_dbs_info) ||
+			   kthread_should_stop());
+
+		if (kthread_should_stop())
+			break;
+
+		get_online_cpus();
+
+		src_cpu = atomic_read(&this_dbs_info->src_sync_cpu);
+		src_dbs_info = &per_cpu(od_cpu_dbs_info, src_cpu);
+		if (src_dbs_info != NULL &&
+		    src_dbs_info->cur_policy != NULL) {
+			src_freq = src_dbs_info->cur_policy->cur;
+			src_max_load = src_dbs_info->max_load;
+		} else {
+			src_freq = dbs_tuners_ins.sync_freq;
+			src_max_load = 0;
+		}
+
+		if (lock_policy_rwsem_write(cpu) < 0)
+			goto bail_acq_sema_failed;
+
+		if (!atomic_read(&this_dbs_info->sync_enabled)) {
+			atomic_set(&this_dbs_info->src_sync_cpu, -1);
+			put_online_cpus();
+			unlock_policy_rwsem_write(cpu);
+			continue;
+		}
+
+		policy = this_dbs_info->cur_policy;
+		if (!policy) {
+			/* CPU not using ondemand governor */
+			goto bail_incorrect_governor;
+		}
+		delay = usecs_to_jiffies(dbs_tuners_ins.sampling_rate);
+
+
+		if (policy->cur < src_freq) {
+			/* cancel the next ondemand sample */
+			cancel_delayed_work_sync(&this_dbs_info->work);
+
+			/*
+			 * Arch specific cpufreq driver may fail.
+			 * Don't update governor frequency upon failure.
+			 */
+			if (__cpufreq_driver_target(policy, src_freq,
+						    CPUFREQ_RELATION_L) >= 0) {
+				policy->cur = src_freq;
+				if (src_max_load > this_dbs_info->max_load) {
+					this_dbs_info->max_load = src_max_load;
+					this_dbs_info->prev_load = src_max_load;
+				}
+			}
+
+			/* reschedule the next ondemand sample */
+			mutex_lock(&this_dbs_info->timer_mutex);
+			queue_delayed_work_on(cpu, dbs_wq,
+					      &this_dbs_info->work, delay);
+			mutex_unlock(&this_dbs_info->timer_mutex);
+		}
+
+bail_incorrect_governor:
+		unlock_policy_rwsem_write(cpu);
+bail_acq_sema_failed:
+		put_online_cpus();
+		atomic_set(&this_dbs_info->src_sync_cpu, -1);
+	}
+
+	return 0;
+}
+
 #if !defined(CONFIG_SEC_DVFS)
 static void dbs_input_event(struct input_handle *handle, unsigned int type,
 		unsigned int code, int value)
@@ -1338,9 +1851,16 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 			if (dbs_tuners_ins.ignore_nice)
 				j_dbs_info->prev_cpu_nice =
 						kcpustat_cpu(j).cpustat[CPUTIME_NICE];
+			set_cpus_allowed(j_dbs_info->sync_thread,
+					 *cpumask_of(j));
+			if (!dbs_tuners_ins.powersave_bias)
+				atomic_set(&j_dbs_info->sync_enabled, 1);
 		}
 		this_dbs_info->cpu = cpu;
 		this_dbs_info->rate_mult = 1;
+#ifdef STEP_UP
+		this_dbs_info->freq_stay_count = 1;
+#endif
 		ondemand_powersave_bias_init_cpu(cpu);
 		/*
 		 * Start the timerschedule work, when this governor
@@ -1373,6 +1893,9 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 
 			if (dbs_tuners_ins.sync_freq == 0)
 				dbs_tuners_ins.sync_freq = policy->min;
+
+			atomic_notifier_chain_register(&migration_notifier_head,
+					&dbs_migration_nb);
 		}
 #if !defined(CONFIG_SEC_DVFS)
 		if (!cpu)
@@ -1389,10 +1912,17 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		break;
 
 	case CPUFREQ_GOV_STOP:
+		mutex_lock(&dbs_mutex);
 		dbs_timer_exit(this_dbs_info);
 
-		mutex_lock(&dbs_mutex);
 		dbs_enable--;
+
+		for_each_cpu(j, policy->cpus) {
+			struct cpu_dbs_info_s *j_dbs_info;
+			j_dbs_info = &per_cpu(od_cpu_dbs_info, j);
+			atomic_set(&j_dbs_info->sync_enabled, 0);
+		}
+
 		/* If device is being removed, policy is no longer
 		 * valid. */
 		this_dbs_info->cur_policy = NULL;
@@ -1400,9 +1930,14 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
 		if (!cpu)
 			input_unregister_handler(&dbs_input_handler);
 #endif
-		if (!dbs_enable)
+		if (!dbs_enable){
 			sysfs_remove_group(cpufreq_global_kobject,
 					   &dbs_attr_group);
+			atomic_notifier_chain_unregister(
+				&migration_notifier_head,
+				&dbs_migration_nb);
+		}
+
 		mutex_unlock(&dbs_mutex);
 
 		break;
@@ -1469,6 +2004,13 @@ static int __init cpufreq_gov_dbs_init(void)
 		mutex_init(&this_dbs_info->timer_mutex);
 		INIT_WORK(&dbs_work->work, dbs_refresh_callback);
 		dbs_work->cpu = i;
+
+		atomic_set(&this_dbs_info->src_sync_cpu, -1);
+		init_waitqueue_head(&this_dbs_info->sync_wq);
+
+		this_dbs_info->sync_thread = kthread_run(dbs_sync_thread,
+							 (void *)i,
+							 "dbs_sync/%d", i);
 	}
 
 	return cpufreq_register_governor(&cpufreq_gov_ondemand);
@@ -1483,6 +2025,7 @@ static void __exit cpufreq_gov_dbs_exit(void)
 		struct cpu_dbs_info_s *this_dbs_info =
 			&per_cpu(od_cpu_dbs_info, i);
 		mutex_destroy(&this_dbs_info->timer_mutex);
+		kthread_stop(this_dbs_info->sync_thread);
 	}
 	destroy_workqueue(dbs_wq);
 }

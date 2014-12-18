@@ -160,12 +160,13 @@ int change_conf(struct usb_function *f,
 	int change_intf = 0;
 	struct usb_descriptor_header **descriptors;
 
-	USB_DBG("f->%s process multi\n", f->name);
-
 	if (!f || !config || !next) {
 		USB_DBG_ESS("one of f, config, next is not valid\n");
 		return -EFAULT;
 	}
+
+	USB_DBG("f->%s process multi\n", f->name);
+
 	if (speed == USB_SPEED_HIGH)
 		descriptors = f->hs_descriptors;
 	else
@@ -250,11 +251,22 @@ void set_interface_count(struct usb_configuration *config,
  */
 void set_string_mode(u16 w_length)
 {
-	if (w_length == 2) {
+	if (w_length == 4) {
 		USB_DBG("mac request\n");
 		stringMode = MAC_REQUEST;
 	} else if (w_length == 0) {
 		USB_DBG("initialize string mode\n");
 		stringMode = OTHER_REQUEST;
 	}
+	printk(KERN_INFO "usb: %s %d \n", __func__, w_length);
+}
+
+/* Description  : Get Host OS type
+ * Return value : type - u16
+ *		- 0 : MAC PC
+ *		- 1 : Windows and Linux PC
+ */
+u16 get_host_os_type(void)
+{
+	return stringMode;
 }

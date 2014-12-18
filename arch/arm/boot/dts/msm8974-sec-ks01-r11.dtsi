@@ -12,11 +12,30 @@
 
 /include/ "dsi_panel_samsung_octa_1080p_video.dtsi"
 /include/ "msm8974-leds.dtsi"
-/include/ "msm8974-camera-sensor-cdp-mtp.dtsi"
+/include/ "msm8974-camera-sensor-ks01lte.dtsi"
 /include/ "msm8974-max77803-ks01-r11.dtsi"
 /include/ "msm8974-sii8240_mhl-ks01-r06.dtsi"
+/include/ "msm8974-tdmb-ks01-r03.dtsi"
 
-/ {
+&soc {
+	qcom,ion {
+		qcom,ion-heap@16 { /* Camera*/
+			qcom,memory-reservation-size = <0x0>;
+		};
+
+		qcom,ion-heap@20 { /* Camera*/
+			qcom,memory-reservation-size = <0x0>;
+		};
+
+		qcom,ion-heap@24 { /* SF HEAP */
+			qcom,memory-reservation-size = <0x0>;
+		};
+
+		qcom,ion-heap@28 { /* AUDIO HEAP */
+			qcom,memory-reservation-size = <0x314000>;
+		};
+	};
+
 	serial@f991e000 {
 		status = "ok";
 	};
@@ -169,7 +188,7 @@
 			label = "home_key";
 			gpios = <&pm8941_gpios 3 0x1>;
 			linux,input-type = <1>;
-			linux,code = <102>;
+			linux,code = <172>;
 			gpio-key,wakeup;
 			debounce-interval = <15>;
 		};
@@ -229,46 +248,6 @@
 		};
 	};
 
-	aliases {
-		spi2 = &spi_2;
-	};
-	spi_2: spi@f9925000 {
-		compatible = "qcom,spi-qup-v2";
-		reg = <0xf9925000 0x1000>, <0xf9904000 0x19000>;
-		reg-names = "spi_physical", "spi_bam_physical";
-		interrupts = <0 97 0>, <0 238 0>;
-		interrupt-names = "spi_irq", "spi_bam_irq";
-		qcom,use-bam;
-		qcom,bam-consumer-pipe-index = <16>;
-		qcom,bam-producer-pipe-index = <17>;
-		spi-max-frequency = <19200000>;
-		#address-cells = <1>;
-		#size-cells = <0>;
-		gpios = <&msmgpio 11 0>, /* CLK  */
-			<&msmgpio 9 0>, /* MISO */
-			<&msmgpio 8 0>; /* MOSI */
-		cs-gpios = <&msmgpio 10 0>;
-		tdmb-spi@0 {
-			compatible = "tdmb_spi_comp";
-			reg = <0>;
-			spi-max-frequency = <9600000>;
-		};
-	};
-
-	tdmb_irq{
-		compatible = "tdmb_irq";
-		interrupt-parent = <&msmgpio>;
-		interrupts = <73 0>;
-		tdmb,irq-gpio = <&msmgpio 73 0x00>;
-	};
-
-	tdmb_ant_det{
-		compatible = "tdmb_ant_det_irq";
-		interrupt-parent = <&msmgpio>;
-		interrupts = <18 0>;
-		tdmb,irq-gpio = <&msmgpio 18 0x00>;
-	};
-
 	bluetooth_hostwake{
 		compatible = "bluetooth_hostwake";
 		interrupt-parent = <&msmgpio>;
@@ -300,6 +279,7 @@
 		qcom,model = "msm8974-taiko-cdp-snd-card";
 		qcom,hdmi-audio-rx;
 		qcom,us-euro-gpios = <&pm8941_gpios 20 0>;
+		qcom,cdc-micbias2-headset-only;
 	};
 
 	usb2_otg_sw: regulator-tpd4s214 {
@@ -350,7 +330,7 @@
 				<85 512 40000 160000>,
 				<85 512 40000 320000>,
 				<85 512 40000 480000>,
-				<85 512 40000 640000>;
+				<85 512 40000 800000>;
 	};*/
 };
 
@@ -688,7 +668,7 @@
 		qcom,output-type = <0>;
 		qcom,pull = <5>;
 		qcom,vin-sel = <2>;
-		qcom,out-strength = <3>;
+		qcom,out-strength = <1>;
 		qcom,src-sel = <2>;
 		qcom,master-en = <1>;
 	};

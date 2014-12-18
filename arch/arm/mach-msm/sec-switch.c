@@ -64,23 +64,41 @@
 #include <linux/jack.h>
 #endif
 
+#endif
+
 #if defined(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI) ||\
 	defined(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI_H)
 #include <linux/i2c/synaptics_rmi.h>
 #endif
 
-#if defined(CONFIG_KEYBOARD_CYPRESS_TOUCH) |defined(CONFIG_KEYBOARD_CYPRESS_TOUCHKEY)
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT224S_KS02)
+#include <linux/i2c/mxt224s_ks02.h>
+#endif
+
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)
+#include <linux/i2c/mxts.h>
+#endif
+
+#if defined(CONFIG_KEYBOARD_CYPRESS_TOUCH)
 #include <linux/i2c/cypress_touchkey.h>
 #endif
 
+#if defined(CONFIG_KEYBOARD_CYPRESS_TOUCHKEY)
+#include <linux/i2c/touchkey_i2c.h>
+#endif
+
+#ifdef CONFIG_MFD_MAX77803
 #include <linux/sec_class.h>
+#if defined (CONFIG_VIDEO_MHL_V2) || defined (CONFIG_VIDEO_MHL_SII8246)
 static int MHL_Connected;
+#endif
 static struct switch_dev switch_dock = {
 	.name = "dock",
 };
 
 struct device *switch_dev;
 EXPORT_SYMBOL(switch_dev);
+#endif
 
 #ifdef SYNAPTICS_RMI_INFORM_CHARGER
 struct synaptics_rmi_callbacks *charger_callbacks;
@@ -93,6 +111,37 @@ void synaptics_tsp_register_callback(struct synaptics_rmi_callbacks *cb)
 {
 	charger_callbacks = cb;
 	pr_info("%s: [synaptics] charger callback!\n", __func__);
+}
+#endif
+
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT224S_KS02)
+struct tsp_callbacks *charger_callbacks;
+void mxt_tsp_charger_infom(int cable_type)
+{
+	if (charger_callbacks && charger_callbacks->inform_charger)
+		charger_callbacks->inform_charger(charger_callbacks, cable_type);
+}
+void mxt_tsp_register_callback(struct tsp_callbacks *cb)
+{
+	charger_callbacks = cb;
+	pr_info("%s: [synaptics] charger callback!\n", __func__);
+}
+#endif
+
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)
+struct mxt_callbacks *mxt_charger_callbacks;
+void mxt_tsp_charger_infom(bool cable_type)
+{
+	if (mxt_charger_callbacks && mxt_charger_callbacks->inform_charger)
+		mxt_charger_callbacks->inform_charger(mxt_charger_callbacks, cable_type);
+
+	pr_info("%s: %s\n", __func__, cable_type ? "connected" : "disconnected");
+
+}
+void mxt_tsp_register_callback(struct mxt_callbacks *cb)
+{
+	mxt_charger_callbacks = cb;
+	pr_info("%s: [mxt] charger callback!\n", __func__);
 }
 #endif
 
@@ -109,6 +158,7 @@ void touchkey_register_callback(void *cb)
 }
 #endif
 
+#ifdef CONFIG_MFD_MAX77803
 /* charger cable state */
 bool is_cable_attached;
 bool is_jig_attached;
@@ -201,8 +251,6 @@ static ssize_t switch_store_usb_lock(struct device *dev,
 				const char *buf, size_t count)
 {
 	int lock;
-
-#ifdef CONFIG_USB_DWC3_MSM
 	struct power_supply *psy;
 
 	psy = power_supply_get_by_name("dwc-usb");
@@ -210,7 +258,6 @@ static ssize_t switch_store_usb_lock(struct device *dev,
 		pr_info("%s: couldn't get usb power supply\n", __func__);
 		return -EINVAL;
 	}
-#endif
 
 	if (!strncmp(buf, "0", 1))
 		lock = 0;
@@ -226,11 +273,8 @@ static ssize_t switch_store_usb_lock(struct device *dev,
 	if (lock != is_usb_locked) {
 		is_usb_locked = lock;
 
-		if (lock) {
-#ifdef CONFIG_USB_DWC3_MSM
+		if (lock)
 			power_supply_set_present(psy, USB_CABLE_DETACHED);
-#endif
-		}
 	}
 
 	return count;
@@ -240,17 +284,28 @@ static DEVICE_ATTR(enable, 0664,
 		   switch_show_usb_lock, switch_store_usb_lock);
 #endif
 
+#ifdef CONFIG_USB_HOST_NOTIFY
+struct booster_data sec_booster = {
+	.name = "max77803",
+	.boost = muic_otg_control,
+};
+#endif
+
 static int __init midas_sec_switch_init(void)
 {
 	int ret;
 	switch_dev = device_create(sec_class, NULL, 0, NULL, "switch");
 
-	if (IS_ERR(switch_dev))
+	if (IS_ERR(switch_dev)) {
 		pr_err("Failed to create device(switch)!\n");
+		goto err;
+	}
 
 	ret = device_create_file(switch_dev, &dev_attr_disable_vbus);
-	if (ret)
+	if (ret) {
 		pr_err("Failed to create device file(disable_vbus)!\n");
+		goto err;
+	}
 
 #ifdef CONFIG_SEC_LOCALE_KOR
 	usb_lock = device_create(sec_class, switch_dev,
@@ -263,7 +318,14 @@ static int __init midas_sec_switch_init(void)
 		pr_err("Failed to create device file(.usblock/enable)!\n");
 #endif
 
+#ifdef CONFIG_USB_HOST_NOTIFY
+	sec_otg_register_booster(&sec_booster);
+#endif
+
 	return 0;
+
+err:
+	return -1;
 };
 
 int current_cable_type = POWER_SUPPLY_TYPE_BATTERY;
@@ -279,6 +341,10 @@ int max77803_muic_charger_cb(enum cable_type_muic cable_type)
 
 #ifdef SYNAPTICS_RMI_INFORM_CHARGER
 	synaptics_tsp_charger_infom(cable_type);
+#endif
+
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT224S_KS02)
+	mxt_tsp_charger_infom(cable_type);
 #endif
 
 #ifdef TK_INFORM_CHARGER
@@ -358,12 +424,17 @@ int max77803_muic_charger_cb(enum cable_type_muic cable_type)
 	case CABLE_TYPE_TA_MUIC:
 		current_cable_type = POWER_SUPPLY_TYPE_MAINS;
 		break;
+	case CABLE_TYPE_CDP_MUIC:
+		current_cable_type = POWER_SUPPLY_TYPE_USB_CDP;
+		break;
 	case CABLE_TYPE_AUDIODOCK_MUIC:
+		current_cable_type = POWER_SUPPLY_TYPE_MISC;
+		break;
 	case CABLE_TYPE_CARDOCK_MUIC:
 	case CABLE_TYPE_DESKDOCK_MUIC:
 	case CABLE_TYPE_SMARTDOCK_MUIC:
 	case CABLE_TYPE_SMARTDOCK_TA_MUIC:
-		current_cable_type = POWER_SUPPLY_TYPE_MISC;
+		current_cable_type = POWER_SUPPLY_TYPE_MAINS;
 		break;
 	case CABLE_TYPE_OTG_MUIC:
 		goto skip;
@@ -407,14 +478,33 @@ void max77803_set_jig_state(int jig_state)
 	is_jig_attached = jig_state;
 }
 
-extern void sec_otg_set_vbus_state(int);
-#ifdef CONFIG_USB_DWC3_MSM
 int max77803_muic_set_safeout(int path);
+
+extern void set_ncm_ready(bool);
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+extern unsigned int system_rev;
+#define GPIO_REDRIVER_EN 129
+extern u8 usb30en;
+void set_redriver_power(int on)
+{
+	if (system_rev >= 5) {
+		pr_info("usb: support usb 3.0 (rev: %d)\n", system_rev);
+		if (on)
+			gpio_set_value(GPIO_REDRIVER_EN,1);
+		else
+			gpio_set_value(GPIO_REDRIVER_EN,0);
+
+		pr_info("usb: value of redrvEn: %d\n",
+			gpio_get_value(GPIO_REDRIVER_EN));
+
+	} else
+		pr_info("usb: Can't support usb 3.0 (rev: %d)\n", system_rev);
+}
 #endif
+
 /* usb cable call back function */
 void max77803_muic_usb_cb(u8 usb_mode)
 {
-#ifdef CONFIG_USB_DWC3_MSM
 	struct power_supply *psy;
 
 	psy = power_supply_get_by_name("dwc-usb");
@@ -422,7 +512,6 @@ void max77803_muic_usb_cb(u8 usb_mode)
 		pr_info("%s: couldn't get usb power supply\n", __func__);
 		return;
 	}
-#endif
 
     pr_info("%s: MUIC attached: %d\n", __func__, usb_mode);
 
@@ -435,15 +524,20 @@ void max77803_muic_usb_cb(u8 usb_mode)
 
 	if (usb_mode == USB_CABLE_DETACHED
 		|| usb_mode == USB_CABLE_ATTACHED) {
-		pr_info("msm_otg_set_vbus_state(%d)", usb_mode);
-#ifndef CONFIG_USB_DWC3_MSM
-		sec_otg_set_vbus_state(usb_mode);
-#else
 		if (usb_mode == USB_CABLE_ATTACHED)
 			max77803_muic_set_safeout(AP_USB_MODE);
-
-		power_supply_set_present(psy, usb_mode);
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+			set_redriver_power(usb_mode);
 #endif
+		pr_info("usb: dwc3 power supply set(%d)", usb_mode);
+		power_supply_set_present(psy, usb_mode);
+		if (usb_mode == USB_CABLE_DETACHED) {
+			set_ncm_ready(0);
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+			usb30en = 0;
+			set_redriver_power(usb_mode);
+#endif
+		}
 #ifdef CONFIG_USB_HOST_NOTIFY
 	} else if (usb_mode == USB_OTGHOST_DETACHED
 		|| usb_mode == USB_OTGHOST_ATTACHED) {
@@ -468,8 +562,7 @@ void max77803_muic_usb_cb(u8 usb_mode)
 #endif
 	}
 }
-
-#ifdef CONFIG_VIDEO_MHL_V2
+#if defined (CONFIG_VIDEO_MHL_V2) || defined (CONFIG_VIDEO_MHL_SII8246)
 static BLOCKING_NOTIFIER_HEAD(acc_mhl_notifier);
 int acc_register_notifier(struct notifier_block *nb)
 {
@@ -498,7 +591,7 @@ void max77803_muic_mhl_cb(int attached)
 	if (attached == MAX77803_MUIC_ATTACHED) {
 		/*MHL_On(1);*/ /* GPIO_LEVEL_HIGH */
 		pr_info("MHL Attached !!\n");
-#ifdef CONFIG_VIDEO_MHL_V2
+#if defined (CONFIG_VIDEO_MHL_V2) || defined (CONFIG_VIDEO_MHL_SII8246)
 		if (!MHL_Connected) {
 			acc_notify(1);
 			MHL_Connected = 1;
@@ -509,7 +602,7 @@ void max77803_muic_mhl_cb(int attached)
 	} else {
 		/*MHL_On(0);*/ /* GPIO_LEVEL_LOW */
 		pr_info("MHL Detached !!\n");
-#ifdef CONFIG_VIDEO_MHL_V2
+#if defined (CONFIG_VIDEO_MHL_V2) || defined (CONFIG_VIDEO_MHL_SII8246)
 		acc_notify(0);
 		MHL_Connected = 0;
 #endif
@@ -542,13 +635,24 @@ void max77803_muic_init_cb(void)
 
 	if (ret < 0)
 		pr_err("Failed to register dock switch. %d\n", ret);
+
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+	/* set gpio to enable redriver for USB3.0 */
+	gpio_tlmm_config(GPIO_CFG(GPIO_REDRIVER_EN, 0, GPIO_CFG_OUTPUT,
+					GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
+	gpio_set_value(GPIO_REDRIVER_EN,0);
+#endif
+
 }
 
 #ifdef CONFIG_USB_HOST_NOTIFY
 int max77803_muic_host_notify_cb(int enable)
 {
-	return sec_otg_notify(enable ?
-			HNOTIFY_OTG_POWER_ON : HNOTIFY_OTG_POWER_OFF);
+	int ret = 0;
+	sec_otg_notify(enable ? HNOTIFY_OTG_POWER_ON : HNOTIFY_OTG_POWER_OFF);
+	ret = sec_get_notification(HNOTIFY_MODE);
+	pr_info("%s: host_notify mode : %d\n", __func__, ret);
+	return ret;
 }
 #endif
 
@@ -826,11 +930,6 @@ static void fsa9485_otg_cb(bool attached)
 
 	pr_info("fsa9485_otg_cb attached %d\n", attached);
 
-/*	if (attached) {
-		pr_info("%s set id state\n", __func__);
-		msm_otg_set_id_state(attached);
-	}*/
-
 #if 0
 	for (i = 0; i < 10; i++) {
 		psy = power_supply_get_by_name("battery");
@@ -865,6 +964,10 @@ static void fsa9485_otg_cb(bool attached)
 #endif
 }
 
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_VIENNAVZW)
+extern int vienna_usb_rdrv_pin;
+#endif
+
 static void fsa9485_usb_cb(bool attached)
 {
 	union power_supply_propval value;
@@ -874,7 +977,15 @@ static void fsa9485_usb_cb(bool attached)
 	pr_info("fsa9485_usb_cb attached %d\n", attached);
 	set_cable_status = attached ? CABLE_TYPE_USB : CABLE_TYPE_NONE;
 
-#ifdef CONFIG_USB_DWC3_MSM
+        /* Vienna SS - USB 3.0 redriver enable/disable */
+#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_VIENNAVZW)
+	gpio_set_value(vienna_usb_rdrv_pin, attached);
+	pr_info("%s vienna_usb_rdrv_pin = %d, enable=%d\n",
+		__func__,
+		vienna_usb_rdrv_pin,
+		attached);
+#endif
+
 	psy = power_supply_get_by_name("dwc-usb");
 	if (!psy) {
 		pr_info("%s: couldn't get usb power supply\n", __func__);
@@ -884,15 +995,9 @@ static void fsa9485_usb_cb(bool attached)
 
 	power_supply_set_present(psy, attached);
 
-
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)
+	mxt_tsp_charger_infom(attached);
 #endif
-
-/*	if (system_rev >= 0x4) {
-		if (attached) {
-			pr_info("%s set vbus state\n", __func__);
-			msm_otg_set_vbus_state(attached);
-		}
-	}*/
 
 	for (i = 0; i < 10; i++) {
 		psy = power_supply_get_by_name("battery");
@@ -948,6 +1053,10 @@ static void fsa9485_charger_cb(bool attached)
 		return;
 	}
 
+#if defined(CONFIG_TOUCHSCREEN_ATMEL_MXT1664S)
+	mxt_tsp_charger_infom(attached);
+#endif
+
 #ifdef CONFIG_TOUCHSCREEN_MMS144
 	if (charger_callbacks && charger_callbacks->inform_charger)
 		charger_callbacks->inform_charger(charger_callbacks, attached);
@@ -1001,12 +1110,15 @@ static void fsa9485_usb_cdp_cb(bool attached)
 	set_cable_status =
 		attached ? CABLE_TYPE_CDP : CABLE_TYPE_NONE;
 
-/*	if (system_rev >= 0x4) {
-		if (attached) {
-			pr_info("%s set vbus state\n", __func__);
-			msm_otg_set_vbus_state(attached);
-		}
-	}*/
+	psy = power_supply_get_by_name("dwc-usb");
+	if (!psy) {
+		pr_info("%s: couldn't get usb power supply\n", __func__);
+		return;
+	}
+	pr_info("%s: MUIC attached: %d\n", __func__, attached);
+
+	power_supply_set_present(psy, attached);
+
 
 	for (i = 0; i < 10; i++) {
 		psy = power_supply_get_by_name("battery");
@@ -1204,7 +1316,8 @@ int msm8974_get_cable_type(void)
 			break;
 		}
 	}
-	return set_cable_status;
+
+	return current_cable_type;
 }
 
 struct fsa9485_platform_data fsa9485_pdata = {

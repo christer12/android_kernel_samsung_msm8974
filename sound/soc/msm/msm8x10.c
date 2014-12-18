@@ -38,6 +38,7 @@ static int msm_btsco_rate = BTSCO_RATE_8KHZ;
 static int msm_btsco_ch = 1;
 
 static int msm_proxy_rx_ch = 2;
+static struct snd_soc_jack hs_jack;
 
 #define MSM8X10_DINO_LPASS_AUDIO_CORE_DIG_CODEC_CLK_SEL	0xFE03B004
 #define MSM8X10_DINO_LPASS_DIGCODEC_CMD_RCGR			0xFE02C000
@@ -92,16 +93,6 @@ static atomic_t aud_init_rsc_ref;
 
 static int msm8x10_mclk_event(struct snd_soc_dapm_widget *w,
 			      struct snd_kcontrol *kcontrol, int event);
-
-static const struct snd_soc_dapm_route msm8x10_common_audio_map[] = {
-	{"RX_BIAS", NULL, "MCLK"},
-	{"INT_LDO_H", NULL, "MCLK"},
-	{"MIC BIAS External", NULL, "Handset Mic"},
-	{"MIC BIAS Internal2", NULL, "Headset Mic"},
-	{"AMIC1", NULL, "MIC BIAS External"},
-	{"AMIC2", NULL, "MIC BIAS Internal2"},
-
-};
 
 static const struct snd_soc_dapm_widget msm8x10_dapm_widgets[] = {
 
@@ -380,12 +371,18 @@ static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
 	snd_soc_dapm_new_controls(dapm, msm8x10_dapm_widgets,
 				ARRAY_SIZE(msm8x10_dapm_widgets));
 
-	snd_soc_dapm_add_routes(dapm, msm8x10_common_audio_map,
-		ARRAY_SIZE(msm8x10_common_audio_map));
-
 	snd_soc_dapm_sync(dapm);
 	ret =  msm_enable_mclk_root(AFE_PORT_ID_SECONDARY_MI2S_RX,
 				    &digital_cdc_clk);
+
+	ret = snd_soc_jack_new(codec, "Headset Jack",
+			SND_JACK_HEADSET, &hs_jack);
+
+	if (ret) {
+		pr_err("%s: Failed to create headset jack\n", __func__);
+		return ret;
+	}
+
 exit:
 	return ret;
 }
@@ -613,6 +610,21 @@ static struct snd_soc_dai_link msm8x10_dai[] = {
 		.ignore_pmdown_time = 1,
 		.be_id = MSM_FRONTEND_DAI_MULTIMEDIA5,
 	},
+	{/* hw:x,13 */
+		.name = "Voice2",
+		.stream_name = "Voice2",
+		.cpu_dai_name   = "Voice2",
+		.platform_name  = "msm-pcm-voice",
+		.dynamic = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			    SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		/* this dainlink has playback support */
+		.ignore_pmdown_time = 1,
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
 	/* Backend I2S DAI Links */
 	{
 		.name = LPASS_BE_SEC_MI2S_RX,
@@ -637,7 +649,6 @@ static struct snd_soc_dai_link msm8x10_dai[] = {
 		.codec_dai_name = "msm8x10_wcd_i2s_tx1",
 		.no_pcm = 1,
 		.be_id = MSM_BACKEND_DAI_PRI_MI2S_TX,
-		.init = &msm_audrx_init,
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
 		.ops = &msm8x10_mi2s_be_ops,
 		.ignore_suspend = 1,
@@ -759,45 +770,6 @@ static struct snd_soc_dai_link msm8x10_dai[] = {
 		.be_hw_params_fixup = msm_be_hw_params_fixup,
 		.ignore_suspend = 1,
 	},
-	/* Incall Record Uplink BACK END DAI Link */
-	{
-		.name = LPASS_BE_INCALL_RECORD_TX,
-		.stream_name = "Voice Uplink Capture",
-		.cpu_dai_name = "msm-dai-q6-dev.32772",
-		.platform_name = "msm-pcm-routing",
-		.codec_name     = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-tx",
-		.no_pcm = 1,
-		.be_id = MSM_BACKEND_DAI_INCALL_RECORD_TX,
-		.be_hw_params_fixup = msm_be_hw_params_fixup,
-		.ignore_suspend = 1,
-	},
-	/* Incall Record Downlink BACK END DAI Link */
-	{
-		.name = LPASS_BE_INCALL_RECORD_RX,
-		.stream_name = "Voice Downlink Capture",
-		.cpu_dai_name = "msm-dai-q6-dev.32771",
-		.platform_name = "msm-pcm-routing",
-		.codec_name     = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-tx",
-		.no_pcm = 1,
-		.be_id = MSM_BACKEND_DAI_INCALL_RECORD_RX,
-		.be_hw_params_fixup = msm_be_hw_params_fixup,
-		.ignore_suspend = 1,
-	},
-	/* Incall Music BACK END DAI Link */
-	{
-		.name = LPASS_BE_VOICE_PLAYBACK_TX,
-		.stream_name = "Voice Farend Playback",
-		.cpu_dai_name = "msm-dai-q6-dev.32773",
-		.platform_name = "msm-pcm-routing",
-		.codec_name     = "msm-stub-codec.1",
-		.codec_dai_name = "msm-stub-rx",
-		.no_pcm = 1,
-		.be_id = MSM_BACKEND_DAI_VOICE_PLAYBACK_TX,
-		.be_hw_params_fixup = msm_be_hw_params_fixup,
-		.ignore_suspend = 1,
-	},
 };
 
 struct snd_soc_card snd_soc_card_msm8x10 = {
@@ -821,6 +793,10 @@ static __devinit int msm8x10_asoc_machine_probe(struct platform_device *pdev)
 	card->dev = &pdev->dev;
 	platform_set_drvdata(pdev, card);
 
+	ret = snd_soc_of_parse_audio_routing(card,
+			"qcom,audio-routing");
+	if (ret)
+		goto err;
 
 	ret = snd_soc_register_card(card);
 	if (ret) {

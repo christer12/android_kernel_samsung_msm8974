@@ -17,16 +17,18 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/input.h>
-#include <mach/gpio.h>
-#include <mach/irqs.h>
-#include <asm/gpio.h>
+#include <linux/gpio.h>
+
+//#include <mach/gpio.h>
+//#include <mach/irqs.h>
+//#include <asm/gpio.h>
 //#include <mach/msm8930-gpio.h>
 #include "melfas_tkey_download.h"
 
 #define _3_TOUCH_SDA_28V 	95
 #define _3_TOUCH_SCL_28V	96
 
-#define GPIO_TKEY_INT 8 //temp
+#define GPIO_TKEY_INT 564 //pm8941 gpio 29
 #define _3_GPIO_TOUCH_INT	GPIO_TKEY_INT
 //============================================================
 //
@@ -487,8 +489,9 @@ void melfas_send_download_enable_command(void)
 //============================================================
 //#include "MCS5080_SAMPLE_FIRMWARE_R01_V00_bin.c"
 //#include "MMH_SVESTA_R00_V02_bin.c"  //1 include bin file
-#define BINARY_FIRMWARE_VERSION 0x07
-#include "MCH_M550_R03_V07_bin.c"
+#define BINARY_FIRMWARE_VERSION 0x60
+//#include "MCH_M550_R04_V59_bin.c"
+#include "MCH_W2014_R04_V60_bin.c"
 
 //============================================================
 //
@@ -1781,19 +1784,12 @@ MCSDL_I2C_PROGRAM_FLASH_FINISH :
 //============================================================
 static void mcsdl_delay(UINT32 nCount)
 {
-
 	#if 1
-
-		udelay(nCount);			//1 Baseband delay function
-
+		udelay((int)nCount);			 //Baseband delay function
 	#else
-
 		UINT32 i;
-
-		for(i=0;i<nCount;i++){
-
+		for(i=0;i<((int)nCount);i++){
 		}
-
 	#endif
 }
 

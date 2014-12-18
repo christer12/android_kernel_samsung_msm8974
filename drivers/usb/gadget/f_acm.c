@@ -913,6 +913,11 @@ acm_bind(struct usb_configuration *c, struct usb_function *f)
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
 			acm->port.in->name, acm->port.out->name,
 			acm->notify->name);
+
+	/* To notify serial state by datarouter*/
+	#ifdef CONFIG_USB_DUN_SUPPORT
+	modem_register(acm);
+	#endif
 	return 0;
 
 fail:
@@ -942,6 +947,9 @@ acm_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_acm		*acm = func_to_acm(f);
 
+#ifdef CONFIG_USB_DUN_SUPPORT
+        modem_unregister();
+#endif
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
 	if (gadget_is_superspeed(c->cdev->gadget))
@@ -950,10 +958,6 @@ acm_unbind(struct usb_configuration *c, struct usb_function *f)
 	gs_free_req(acm->notify, acm->notify_req);
 	kfree(acm->port.func.name);
 	kfree(acm);
-#ifdef CONFIG_USB_DUN_SUPPORT
-	modem_unregister();
-#endif
-
 }
 
 /* Some controllers can't support CDC ACM ... */
@@ -1029,7 +1033,12 @@ int acm_bind_config(struct usb_configuration *c, u8 port_num)
 #ifndef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
 	acm->port.send_modem_ctrl_bits = acm_send_modem_ctrl_bits;
 #endif
+
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+	acm->port.func.name = kasprintf(GFP_KERNEL, "acm%u", port_num);
+#else
 	acm->port.func.name = kasprintf(GFP_KERNEL, "acm%u", port_num + 1);
+#endif
 	if (!acm->port.func.name) {
 		kfree(acm);
 		return -ENOMEM;

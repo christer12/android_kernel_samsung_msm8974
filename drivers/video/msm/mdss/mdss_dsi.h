@@ -84,16 +84,14 @@ enum dsi_panel_bl_ctrl {
 	UNKNOWN_CTRL,
 };
 
-enum dsi_ctrl_state {
+enum dsi_ctrl_op_mode {
 	DSI_LP_MODE,
 	DSI_HS_MODE,
 };
 
-enum dsi_panel_state {
-	UNKNOWN_STATE,
-	PANEL_ON,
-	PANEL_OFF,
-};
+#define CTRL_STATE_UNKNOWN		0x00
+#define CTRL_STATE_PANEL_INIT		BIT(0)
+#define CTRL_STATE_MDP_ACTIVE		BIT(1)
 
 #define DSI_NON_BURST_SYNCH_PULSE	0
 #define DSI_NON_BURST_SYNCH_EVENT	1
@@ -242,6 +240,10 @@ struct dsi_buf {
 #define DTYPE_DCS_LREAD_RESP    0x1c
 #define DTYPE_DCS_READ1_RESP    0x21    /* 1 parameter, short */
 #define DTYPE_DCS_READ2_RESP    0x22    /* 2 parameter, short */
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
+	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
+#define DEBUG_LDI_STATUS
+#endif
 
 
 struct dsi_ctrl_hdr {
@@ -319,6 +321,9 @@ struct mdss_panel_common_pdata {
 	void (*panel_reset)(struct mdss_panel_data *pdata, int enable);
 	int (*event_handler) (int e);
 	int (*panel_registered) (struct mdss_panel_data *pdata);
+#ifdef CONFIG_ESD_ERR_FG_RECOVERY
+	int esd_gpio;
+#endif
 	int (*dimming_init) (struct mdss_panel_data *pdata);;
 };
 
@@ -326,6 +331,12 @@ struct dsi_drv_cm_data {
 	struct regulator *vdd_vreg;
 	struct regulator *vdd_io_vreg;
 	struct regulator *vdda_vreg;
+#ifdef CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL
+	struct regulator *iovdd_vreg;
+#endif
+#if defined(CONFIG_REGULATOR_LP8720)
+	struct regulator *vdd_io_lp8720_vreg;
+#endif
 	int broadcast_enable;
 };
 
@@ -334,7 +345,6 @@ enum {
 	DSI_CTRL_1,
 	DSI_CTRL_MAX,
 };
-
 
 struct mdss_dsi_ctrl_pdata {
 	int ndx;	/* panel_num */
@@ -348,15 +358,24 @@ struct mdss_dsi_ctrl_pdata {
 	unsigned char *ctrl_base;
 	int reg_size;
 	u32 clk_cnt;
+	struct clk *mdp_core_clk;
 	struct clk *ahb_clk;
 	struct clk *axi_clk;
 	struct clk *byte_clk;
 	struct clk *esc_clk;
 	struct clk *pixel_clk;
-	u8 panel_state;
+	u8 ctrl_state;
 	int irq_cnt;
 	int mdss_dsi_clk_on;
 	int rst_gpio;
+#ifdef CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL
+	int lcd_en_gpio;
+	int bl_en_gpio;
+#endif
+#ifdef CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL
+	int lcd_en_p_gpio;
+	int lcd_en_n_gpio;
+#endif
 	int disp_en_gpio;
 	int disp_te_gpio;
 	int bklt_ctrl;  /* backlight ctrl */
@@ -366,6 +385,11 @@ struct mdss_dsi_ctrl_pdata {
 	int bklt_max;
 #ifdef CONFIG_SAMSUNG_CMC624
 	int boost_gpio;
+        int vddi_en;
+        int lcd_en;
+#endif
+#if defined(CONFIG_DUAL_LCD)
+	int lcd_sel_gpio;
 #endif
 	struct pwm_device *pwm_bl;
 	struct dsi_drv_cm_data shared_pdata;
@@ -396,10 +420,19 @@ struct mdss_dsi_ctrl_pdata {
 
 	struct dsi_buf tx_buf;
 	struct dsi_buf rx_buf;
+	int dsi_err_cnt;
 };
 
-extern int contsplash_lkstat;
+#ifdef MDP_RECOVERY
+#define DSI_EV_PLL_UNLOCKED		0x0001
+#define DSI_EV_MDP_FIFO_UNDERFLOW	0x0002
+#define DSI_EV_MDP_BUSY_RELEASE		0x80000000
+extern int mdss_recovery_start;
+void dsi_send_events(struct mdss_dsi_ctrl_pdata *ctrl, u32 events);
+#endif
 
+extern int contsplash_lkstat;
+extern unsigned int gv_manufacture_id;
 int dsi_panel_device_register(struct platform_device *pdev,
 			      struct mdss_panel_common_pdata *panel_data);
 
@@ -422,10 +455,8 @@ void mdss_dsi_cmd_mode_ctrl(int enable);
 void mdp4_dsi_cmd_trigger(void);
 void mdss_dsi_cmd_mdp_start(struct mdss_dsi_ctrl_pdata *ctrl);
 void mdss_dsi_cmd_bta_sw_trigger(struct mdss_panel_data *pdata);
-void mdss_dsi_ack_err_status(unsigned char *dsi_base);
-void mdss_dsi_clk_enable(struct mdss_dsi_ctrl_pdata *ctrl);
-void mdss_dsi_clk_disable(struct mdss_dsi_ctrl_pdata *ctrl);
-void mdss_dsi_clk_ctrl(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
+void mdss_dsi_ack_err_status(struct mdss_dsi_ctrl_pdata *ctrl);
+int mdss_dsi_clk_ctrl(struct mdss_dsi_ctrl_pdata *ctrl, int enable);
 void mdss_dsi_clk_req(struct mdss_dsi_ctrl_pdata *ctrl,
 				int enable);
 void mdss_dsi_clk_ctrl_mdp(int ndx, int enable);
@@ -442,8 +473,6 @@ int mdss_dsi_clk_div_config(struct mdss_panel_info *panel_info,
 int mdss_dsi_clk_init(struct platform_device *pdev,
 		      struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 void mdss_dsi_clk_deinit(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
-void mdss_dsi_prepare_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
-void mdss_dsi_unprepare_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 int mdss_dsi_enable_bus_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 void mdss_dsi_disable_bus_clocks(struct mdss_dsi_ctrl_pdata *ctrl_pdata);
 void mdss_dsi_panel_reset(struct mdss_panel_data *pdata, int enable);
@@ -467,5 +496,8 @@ void mdss_dsi_cmdlist_kickoff(int intf);
 void mdss_dsi_mdp_busy_wait(int panel_ndx);
 void dumpreg(void);
 void mdp5_dump_regs(void);
-
+#if defined(CONFIG_ESD_ERR_FG_RECOVERY)
+void esd_recovery(void);
+#endif
+void mdss_dsi_dump_power_clk(struct mdss_panel_data *pdata, int flag);
 #endif /* MDSS_DSI_H */

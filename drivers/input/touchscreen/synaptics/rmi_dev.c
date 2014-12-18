@@ -267,7 +267,7 @@ static ssize_t rmidev_sysfs_attn_state_show(struct device *dev,
 	const struct synaptics_rmi4_platform_data *platform_data =
 		rmidev->rmi4_data->board;
 
-	attn_state = gpio_get_value(platform_data->gpio);
+	attn_state = gpio_get_value(platform_data->tsp_int);
 
 	return snprintf(buf, PAGE_SIZE, "%u\n", attn_state);
 }
@@ -630,19 +630,19 @@ static int rmidev_init_device(struct synaptics_rmi4_data *rmi4_data)
 		goto err_char_device;
 	}
 
-	retval = gpio_request(rmi4_data->board->gpio, "synaptics,tsp_int");
+	retval = gpio_request(rmi4_data->board->tsp_int, "synaptics,tsp_int");
 	if (retval) {
 		pr_err("[TSP]%s: unable to request tsp_int [%d]\n",
-				__func__, rmi4_data->board->gpio);
+				__func__, rmi4_data->board->tsp_int);
 	}
-	retval = gpio_export(rmi4_data->board->gpio, false);
+	retval = gpio_export(rmi4_data->board->tsp_int, false);
 	if (retval < 0) {
 		dev_err(&rmi4_data->i2c_client->dev,
 				"%s: Failed to export attention gpio\n",
 				__func__);
 	} else {
 		retval = gpio_export_link(&(rmi4_data->input_dev->dev),
-				"attn", rmi4_data->board->gpio);
+				"attn", rmi4_data->board->tsp_int);
 		if (retval < 0) {
 			dev_err(&rmi4_data->input_dev->dev,
 					"%s Failed to create gpio symlink\n",
@@ -650,7 +650,7 @@ static int rmidev_init_device(struct synaptics_rmi4_data *rmi4_data)
 		} else {
 			dev_dbg(&rmi4_data->input_dev->dev,
 					"%s: Exported attention gpio %d\n",
-					__func__, rmi4_data->board->gpio);
+					__func__, rmi4_data->board->tsp_int);
 		}
 	}
 

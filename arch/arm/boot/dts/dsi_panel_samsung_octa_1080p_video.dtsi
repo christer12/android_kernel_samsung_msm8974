@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-/ {
+&soc {
 
 	qcom,mdss_dsi_samsung_octa_1080p_video {
 		compatible = "samsung,mdss-amoled-dsi-panel";
@@ -19,6 +19,7 @@
 		qcom,dsi-ctrl-phandle = <&mdss_dsi0>;
 		qcom,rst-gpio = <&pm8941_gpios 19 0>;
 		qcom,mdss-pan-res = <1080 1920>;
+		qcom,mdss-pan-size = <62 111>; /* <Width> <Height> real size of panel in mm */
 		qcom,mdss-pan-bpp = <24>;
 		qcom,mdss-pan-dest = "display_1";
 		qcom,mdss-clk-rate=<898000000>;
@@ -50,39 +51,50 @@
 		qcom,panel-phy-strengthCtrl = [ff 06];		/*!!!! */
 		qcom,panel-phy-bistCtrl = [00 00 b1 ff           /*!!!! BIST Ctrl settings */
 					   00 00];
-		qcom,panel-phy-laneConfig = [ 
-		00 00 00 00 00 00 00 01 97 /* lane0 config */ 
-		00 00 00 00 05 00 00 01 97 /* lane1 config */ 
-		00 00 00 00 0a 00 00 01 97 /* lane2 config */ 
-		00 00 00 00 0f 00 00 01 97 /* lane3 config */ 
-		00 c0 00 00 00 00 00 01 bb]; /* Clk ln config */ 
+		qcom,panel-phy-laneConfig = [
+		00 00 00 00 00 00 00 01 97 /* lane0 config */
+		00 00 00 00 05 00 00 01 97 /* lane1 config */
+		00 00 00 00 0a 00 00 01 97 /* lane2 config */
+		00 00 00 00 0f 00 00 01 97 /* lane3 config */
+		00 c0 00 00 00 00 00 01 bb]; /* Clk ln config */
 
-		qcom,panel-on-cmds = [	
+		qcom,panel-on-cmds = [
 					29 01 00 00 00 00 03 f0 5a 5a /* Tesk key ON */
-					29 01 00 00 00 00 03 f1 5a 5a
 					29 01 00 00 00 00 03 fc 5a 5a
+
+					29 01 00 00 00 00 03 ff 1f 01
+					29 01 00 00 00 00 03 fc a5 a5
+
 					05 01 00 00 14 00 02 11 00  /* Sleep out */
 					/* !! Needs 20ms !!*/
 					/* !! Scan timing setting - JF Panel !! */
+					29 01 00 00 00 00 04 F2 00 06 0A	/* samsung_display_contol */
+					29 01 00 00 00 00 02 B0 02  /* samsung_lpts_0 */
+					29 01 00 00 00 00 02 CB 10  /* samsung_lpts_1 */
 					29 01 00 00 00 00 02 B0 20		/* samsung_lpts_0 */
 					29 01 00 00 00 00 02 CB 04		/* samsung_lpts_1 */
-					29 01 00 00 00 00 04 F2 00 06 0A	/* samsung_display_contol */
 					23 01 00 00 64 00 03 f7 03	00	/* samsung_gamma_update */
-					/* !! Needs 100ms !!*/					
+					/* !! Needs 100ms !!*/
+
 					29 01 00 00 00 00 22                   /* samsung_brightness_gamma */
 						ca 01 00 01 00 01 00 80
 						80 80 80 80 80 80 80 80
 						80 80 80 80 80 80 80 80
 						80 80 80 80 80 80 80 00
 						00 00
+
 					29 01 00 00 00 00 08 B2 01 00 00 00 00 00 06	/* samsung_brightness_aor_condition */
+
 					29 01 00 00 00 00 03 b6 2c 0a /* ELVSS  */
 					23 01 00 00 00 00 02 55 00	   /* Etc Cond Set */
 					23 01 00 00 00 00 03 f7 03	00	/* samsung_gamma_update */
-					29 01 00 00 11 00 03 ff 07 01	/* Touch Sensing on */
+
+					29 01 00 00 00 00 03 fc 5a 5a /* Tesk key ON 2*/
+					29 01 00 00 00 00 03 ff 07 01	/* Touch Sensing on */
+					29 01 00 00 00 00 03 fc a5 a5 /* Test Key Off */
 					05 01 00 00 11 00 02 29 00];
 		qcom,on-cmds-dsi-state = "DSI_LP_MODE";
-		qcom,panel-off-cmds = [ 
+		qcom,panel-off-cmds = [
 					29 01 00 00 00 00 03 ff 1f 01
 					05 01 00 00 32 00 02 28 00
 					05 01 00 00 78 00 02 10 00];

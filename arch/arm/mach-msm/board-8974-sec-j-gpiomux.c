@@ -553,28 +553,28 @@ static struct msm_gpiomux_config msm_blsp_configs[] __initdata = {
 		.gpio	   = 8,		/* BLSP1 QUP3 SPI_DATA_MOSI */
 		.settings = {
 			[GPIOMUX_ACTIVE] = &gpio_spi_config,
-			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[2],
 		},
 	},
 	{
 		.gpio	   = 9,		/* BLSP1 QUP3 SPI_DATA_MISO */
 		.settings = {
 			[GPIOMUX_ACTIVE] = &gpio_spi_config,
-			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[2],
 		},
 	},
 	{
 		.gpio	   = 10,		/* BLSP1 QUP3 SPI_CS0_N */
 		.settings = {
 			[GPIOMUX_ACTIVE] = &gpio_spi_config,
-			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[2],
 		},
 	},
 	{
 		.gpio	   = 11,		/* BLSP1 QUP3 SPI_CLK */
 		.settings = {
 			[GPIOMUX_ACTIVE] = &gpio_spi_config,
-			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[1],
+			[GPIOMUX_SUSPENDED] = &gpio_suspend_config[2],
 		},
 	},
 #if !defined(CONFIG_MACH_KS01SKT) && !defined(CONFIG_MACH_KS01KTT)\
@@ -1272,6 +1272,23 @@ static void msm_gpiomux_sdc4_install(void)
 static void msm_gpiomux_sdc4_install(void) {}
 #endif /* CONFIG_MMC_MSM_SDC4_SUPPORT */
 
+static struct msm_gpiomux_config apq8074_dragonboard_ts_config[] __initdata = {
+	{
+		/* BLSP1 QUP I2C_DATA */
+		.gpio      = 2,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
+		},
+	},
+	{
+		/* BLSP1 QUP I2C_CLK */
+		.gpio      = 3,
+		.settings = {
+			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
+		},
+	},
+};
+
 static struct gpiomux_setting nc_cfg = {
         .func = GPIOMUX_FUNC_GPIO,
         .drv = GPIOMUX_DRV_2MA,
@@ -1279,8 +1296,8 @@ static struct gpiomux_setting nc_cfg = {
 };
 
 
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)	&& defined(CONFIG_BT_BCM4335)
+#if (defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
+	|| defined(CONFIG_MACH_KS01LGT))&& defined(CONFIG_BT_BCM4335)
 static struct msm_gpiomux_config msm8974_btuart_configs[] __initdata = {
 	{
 		/* TXD */
@@ -1451,8 +1468,8 @@ void __init msm_8974_init_gpiomux(void)
 	msm_gpiomux_install(msm_blsp2_uart7_configs, ARRAY_SIZE(msm_blsp2_uart7_configs));
 #endif
 
-#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
-	|| defined(CONFIG_MACH_KS01LGT)	&& defined(CONFIG_BT_BCM4335)
+#if (defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
+	|| defined(CONFIG_MACH_KS01LGT)) && defined(CONFIG_BT_BCM4335)
 	msm_gpiomux_btuart_install();
 #endif
 
@@ -1531,6 +1548,10 @@ void __init msm_8974_init_gpiomux(void)
 	if (socinfo_get_platform_subtype() == PLATFORM_SUBTYPE_MDM)
 		msm_gpiomux_install(mdm_configs,
 			ARRAY_SIZE(mdm_configs));
+
+	if (of_board_is_dragonboard() && machine_is_apq8074())
+		msm_gpiomux_install(apq8074_dragonboard_ts_config,
+			ARRAY_SIZE(apq8074_dragonboard_ts_config));
 
 #ifdef CONFIG_SENSORS_HALL
 	msm_gpiomux_install(msm8974_hall_configs, ARRAY_SIZE(msm8974_hall_configs));

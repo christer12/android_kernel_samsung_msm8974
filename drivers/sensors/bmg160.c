@@ -29,15 +29,18 @@
 #include "sensors_core.h"
 #include "bmg160_reg.h"
 
-/* It's for HW issue in Rev 0.4 */
-#define EXECPTION_FOR_I2CFAIL
-
 #define VENDOR_NAME                        "BOSCH"
 #define MODEL_NAME                         "BMG160"
 #define MODULE_NAME                        "gyro_sensor"
 
+#define I2C_M_WR                           0 /* for i2c Write */
+#define I2c_M_RD                           1 /* for i2c Read */
+#define READ_DATA_LENTH                    6
+
 #define CALIBRATION_FILE_PATH              "/efs/gyro_calibration_data"
 #define CALIBRATION_DATA_AMOUNT            20
+#define SELFTEST_DATA_AMOUNT               64
+#define SELFTEST_LIMITATION_OF_ERROR       5250
 
 #define BMG160_DEFAULT_DELAY               200
 #define	BMG160_CHIP_ID                     0x0F
@@ -77,56 +80,57 @@ struct bmg160_p {
 	int gyro_dps;
 	int gyro_int;
 	int gyro_drdy;
-#ifdef EXECPTION_FOR_I2CFAIL
-	int i2cfail_cnt;
-#endif
-
 };
 
 static int bmg160_open_calibration(struct bmg160_p *);
 
-static int bmg160_smbus_read_byte_block(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char *data, unsigned char len)
-{
-	s32 dummy;
-
-	dummy = i2c_smbus_read_i2c_block_data(client, reg_addr, len, data);
-	if (dummy < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, dummy);
-		return -EIO;
-	}
-	return 0;
-}
-
-static int bmg160_smbus_read_byte(struct i2c_client *client,
+static int bmg160_i2c_read(struct i2c_client *client,
 		unsigned char reg_addr, unsigned char *buf)
 {
-	s32 dummy;
+        int ret;
+        struct i2c_msg msg[2];
 
-	dummy = i2c_smbus_read_byte_data(client, reg_addr);
-	if (dummy < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, dummy);
-		return -EIO;
+        msg[0].addr = client->addr;
+        msg[0].flags = I2C_M_WR;
+        msg[0].len = 1;
+        msg[0].buf = &reg_addr;
+
+        msg[1].addr = client->addr;
+        msg[1].flags = I2C_M_RD;
+        msg[1].len = 1;
+        msg[1].buf = buf;
+
+        ret = i2c_transfer(client->adapter, msg, 2);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - i2c read error %d\n", __func__, ret);
+	        return ret;
 	}
-	*buf = dummy & 0x000000ff;
 
-	return 0;
+        return 0;
 }
 
-static int bmg160_smbus_write_byte(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char *buf)
+static int bmg160_i2c_write(struct i2c_client *client,
+		unsigned char reg_addr, unsigned char buf)
 {
-	s32 dummy;
+        int ret;
+        struct i2c_msg msg;
+	unsigned char w_buf[2];
 
-	dummy = i2c_smbus_write_byte_data(client, reg_addr, *buf);
-	if (dummy < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, dummy);
-		return -EIO;
+	w_buf[0] = reg_addr;
+	w_buf[1] = buf;
+
+        msg.addr = client->addr;
+        msg.flags = I2C_M_WR;
+        msg.len = 2;
+        msg.buf = (char *)w_buf;
+
+        ret = i2c_transfer(client->adapter, &msg, 1);
+	if (ret < 0) {
+		pr_err("[SENSOR]: %s - i2c write error %d\n", __func__, ret);
+	        return ret;
 	}
-	return 0;
+
+        return 0;
 }
 
 static int bmg160_get_bw(struct bmg160_p *data, unsigned char *bandwidth)
@@ -134,7 +138,7 @@ static int bmg160_get_bw(struct bmg160_p *data, unsigned char *bandwidth)
 	int ret;
 	unsigned char temp;
 
-	ret = bmg160_smbus_read_byte(data->client, BMG160_BW_ADDR__REG, &temp);
+	ret = bmg160_i2c_read(data->client, BMG160_BW_ADDR__REG, &temp);
 	*bandwidth = BMG160_GET_BITSLICE(temp, BMG160_BW_ADDR);
 
 	return ret;
@@ -146,8 +150,8 @@ static int bmg160_get_autosleepdur(struct bmg160_p *data,
 	int ret = 0;
 	unsigned char temp;
 
-	ret = bmg160_smbus_read_byte(data->client,
-		BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR__REG, &temp);
+	ret = bmg160_i2c_read(data->client,
+			BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR__REG, &temp);
 
 	*duration = BMG160_GET_BITSLICE(temp,
 			BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR);
@@ -161,8 +165,8 @@ static int bmg160_set_autosleepdur(struct bmg160_p *data,
 	int ret = 0;
 	unsigned char temp, autosleepduration;
 
-	ret = bmg160_smbus_read_byte(data->client,
-		BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR__REG, &temp);
+	ret = bmg160_i2c_read(data->client,
+			BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR__REG, &temp);
 
 	switch (bandwith) {
 	case BMG160_No_Filter:
@@ -220,8 +224,8 @@ static int bmg160_set_autosleepdur(struct bmg160_p *data,
 	temp = BMG160_SET_BITSLICE(temp, BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR,
 			autosleepduration);
 
-	ret += bmg160_smbus_write_byte(data->client,
-			BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR__REG, &temp);
+	ret += bmg160_i2c_write(data->client,
+			BMG160_MODE_LPM2_ADDR_AUTOSLEEPDUR__REG, temp);
 
 	return ret;
 }
@@ -233,9 +237,8 @@ static int bmg160_get_mode(struct bmg160_p *data, unsigned char *mode)
 	unsigned char buf2 = 0;
 	unsigned char buf3 = 0;
 
-	ret = bmg160_smbus_read_byte(data->client, BMG160_MODE_LPM1_ADDR, &buf1);
-	ret += bmg160_smbus_read_byte(data->client,
-			BMG160_MODE_LPM2_ADDR, &buf2);
+	ret = bmg160_i2c_read(data->client, BMG160_MODE_LPM1_ADDR, &buf1);
+	ret += bmg160_i2c_read(data->client, BMG160_MODE_LPM2_ADDR, &buf2);
 
 	buf1  = (buf1 & 0xA0) >> 5;
 	buf3  = (buf2 & 0x40) >> 6;
@@ -260,11 +263,11 @@ static int bmg160_set_range(struct bmg160_p *data, unsigned char range)
 	int ret = 0;
 	unsigned char temp;
 
-	ret = bmg160_smbus_read_byte(data->client,
+	ret = bmg160_i2c_read(data->client,
 			BMG160_RANGE_ADDR_RANGE__REG, &temp);
 	temp = BMG160_SET_BITSLICE(temp, BMG160_RANGE_ADDR_RANGE, range);
-	ret += bmg160_smbus_write_byte(data->client,
-			BMG160_RANGE_ADDR_RANGE__REG, &temp);
+	ret += bmg160_i2c_write(data->client,
+			BMG160_RANGE_ADDR_RANGE__REG, temp);
 
 	return ret;
 }
@@ -280,10 +283,9 @@ static int bmg160_set_bw(struct bmg160_p *data, unsigned char bandwidth)
 		bmg160_set_autosleepdur(data, autosleepduration, bandwidth);
 	}
 
-	ret = bmg160_smbus_read_byte(data->client, BMG160_BW_ADDR__REG, &temp);
+	ret = bmg160_i2c_read(data->client, BMG160_BW_ADDR__REG, &temp);
 	temp = BMG160_SET_BITSLICE(temp, BMG160_BW_ADDR, bandwidth);
-	ret += bmg160_smbus_write_byte(data->client,
-		BMG160_BW_ADDR__REG, &temp);
+	ret += bmg160_i2c_write(data->client, BMG160_BW_ADDR__REG, temp);
 
 	return ret;
 }
@@ -295,10 +297,8 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 	unsigned char autosleepduration;
 	unsigned char v_bw_u8r;
 
-	ret = bmg160_smbus_read_byte(data->client,
-			BMG160_MODE_LPM1_ADDR, &buf1);
-	ret += bmg160_smbus_read_byte(data->client,
-			BMG160_MODE_LPM2_ADDR, &buf2);
+	ret = bmg160_i2c_read(data->client, BMG160_MODE_LPM1_ADDR, &buf1);
+	ret += bmg160_i2c_read(data->client, BMG160_MODE_LPM2_ADDR, &buf2);
 
 	switch (mode) {
 	case BMG160_MODE_NORMAL:
@@ -307,11 +307,11 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 			BMG160_MODE_LPM2_ADDR_FAST_POWERUP, 0);
 		buf3 = BMG160_SET_BITSLICE(buf2,
 			BMG160_MODE_LPM2_ADDR_ADV_POWERSAVING, 0);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM1_ADDR, &buf1);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM1_ADDR, buf1);
 		mdelay(1);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM2_ADDR, &buf3);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM2_ADDR, buf3);
 		break;
 	case BMG160_MODE_DEEPSUSPEND:
 		buf1 = BMG160_SET_BITSLICE(buf1, BMG160_MODE_LPM1, 1);
@@ -319,11 +319,11 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 			BMG160_MODE_LPM2_ADDR_FAST_POWERUP, 0);
 		buf3 = BMG160_SET_BITSLICE(buf2,
 			BMG160_MODE_LPM2_ADDR_ADV_POWERSAVING, 0);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM1_ADDR, &buf1);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM1_ADDR, buf1);
 		mdelay(1);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM2_ADDR, &buf3);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM2_ADDR, buf3);
 		break;
 	case BMG160_MODE_SUSPEND:
 		buf1 = BMG160_SET_BITSLICE(buf1, BMG160_MODE_LPM1, 4);
@@ -331,11 +331,11 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 			BMG160_MODE_LPM2_ADDR_FAST_POWERUP, 0);
 		buf3 = BMG160_SET_BITSLICE(buf2,
 			BMG160_MODE_LPM2_ADDR_ADV_POWERSAVING, 0);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM1_ADDR, &buf1);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM1_ADDR, buf1);
 		mdelay(1);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM2_ADDR, &buf3);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM2_ADDR, buf3);
 		break;
 	case BMG160_MODE_FASTPOWERUP:
 		buf1 = BMG160_SET_BITSLICE(buf1, BMG160_MODE_LPM1, 4);
@@ -343,11 +343,11 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 			BMG160_MODE_LPM2_ADDR_FAST_POWERUP, 1);
 		buf3 = BMG160_SET_BITSLICE(buf2,
 			BMG160_MODE_LPM2_ADDR_ADV_POWERSAVING, 0);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM1_ADDR, &buf1);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM1_ADDR, buf1);
 		mdelay(1);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM2_ADDR, &buf3);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM2_ADDR, buf3);
 		break;
 	case BMG160_MODE_ADVANCEDPOWERSAVING:
 		/* Configuring the proper settings for auto
@@ -355,7 +355,7 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 		bmg160_get_bw(data, &v_bw_u8r);
 		bmg160_get_autosleepdur(data, &autosleepduration);
 		bmg160_set_autosleepdur(data, autosleepduration, v_bw_u8r);
-		ret += bmg160_smbus_read_byte(data->client,
+		ret += bmg160_i2c_read(data->client,
 				BMG160_MODE_LPM2_ADDR, &buf2);
 		/* Configuring the advanced power saving mode*/
 		buf1 = BMG160_SET_BITSLICE(buf1, BMG160_MODE_LPM1, 0);
@@ -363,11 +363,11 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 			BMG160_MODE_LPM2_ADDR_FAST_POWERUP, 0);
 		buf3 = BMG160_SET_BITSLICE(buf2,
 			BMG160_MODE_LPM2_ADDR_ADV_POWERSAVING, 1);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM1_ADDR, &buf1);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM1_ADDR, buf1);
 		mdelay(1);
-		ret += bmg160_smbus_write_byte(data->client,
-				BMG160_MODE_LPM2_ADDR, &buf3);
+		ret += bmg160_i2c_write(data->client,
+				BMG160_MODE_LPM2_ADDR, buf3);
 		break;
 	default:
 		ret = -EINVAL;
@@ -379,11 +379,13 @@ static int bmg160_set_mode(struct bmg160_p *data, unsigned char mode)
 
 static int bmg160_read_gyro_xyz(struct bmg160_p *data, struct bmg160_v *gyro)
 {
-	int ret = 0;
-	unsigned char temp[6];
+	int ret = 0, i;
+	unsigned char temp[READ_DATA_LENTH];
 
-	ret = bmg160_smbus_read_byte_block(data->client,
-			BMG160_RATE_X_LSB_VALUEX__REG, temp, 6);
+	for (i = 0; i < READ_DATA_LENTH; i++) {
+		ret += bmg160_i2c_read(data->client,
+				BMG160_RATE_X_LSB_VALUEX__REG + i, &temp[i]);
+	}
 
 	temp[0] = BMG160_GET_BITSLICE(temp[0], BMG160_RATE_X_LSB_VALUEX);
 	gyro->x = (short)((((short)((signed char)temp[1])) << 8) | (temp[0]));
@@ -397,17 +399,13 @@ static int bmg160_read_gyro_xyz(struct bmg160_p *data, struct bmg160_v *gyro)
 	remap_sensor_data(gyro->v, data->chip_pos);
 
 	if (data->gyro_dps == BMG160_RANGE_250DPS) {
-		gyro->x = (gyro->x >> 1) - data->caldata.x;
-		gyro->y = (gyro->y >> 1) - data->caldata.y;
-		gyro->z = (gyro->z >> 1) - data->caldata.z;
+		gyro->x = gyro->x >> 1;
+		gyro->y = gyro->y >> 1;
+		gyro->z = gyro->z >> 1;
 	} else if (data->gyro_dps == BMG160_RANGE_2000DPS) {
-		gyro->x = (gyro->x << 2) - data->caldata.x;
-		gyro->y = (gyro->y << 2) - data->caldata.y;
-		gyro->z = (gyro->z << 2) - data->caldata.z;
-	} else {
-		gyro->x = gyro->x - data->caldata.x;
-		gyro->y = gyro->y - data->caldata.y;
-		gyro->z = gyro->z - data->caldata.z;
+		gyro->x = gyro->x << 2;
+		gyro->y = gyro->y << 2;
+		gyro->z = gyro->z << 2;
 	}
 
 	return ret;
@@ -420,18 +418,7 @@ static void bmg160_work_func(struct work_struct *work)
 			struct bmg160_p, work);
 	unsigned long delay = msecs_to_jiffies(atomic_read(&data->delay));
 
-#ifdef EXECPTION_FOR_I2CFAIL
-	int ret;
-
-	ret = bmg160_read_gyro_xyz(data, &gyro);
-	if (ret < 0)
-		data->i2cfail_cnt++;
-	if (data->i2cfail_cnt > 5)
-		return;
-#else
 	bmg160_read_gyro_xyz(data, &gyro);
-#endif
-
 	input_report_rel(data->input, REL_RX, gyro.x - data->caldata.x);
 	input_report_rel(data->input, REL_RY, gyro.y - data->caldata.y);
 	input_report_rel(data->input, REL_RZ, gyro.z - data->caldata.z);
@@ -562,8 +549,7 @@ static int bmg160_open_calibration(struct bmg160_p *data)
 		data->caldata.y = 0;
 		data->caldata.z = 0;
 
-		pr_err("[SENSOR]: %s - cal_filp open failed(%d)\n",
-			__func__, ret);
+		pr_info("[SENSOR]: %s - No Calibration\n", __func__);
 
 		return ret;
 	}
@@ -586,51 +572,11 @@ static int bmg160_open_calibration(struct bmg160_p *data)
 	return ret;
 }
 
-static int bmg160_do_calibrate(struct bmg160_p *data, int enable)
+static int bmg160_save_calibration(struct bmg160_p *data)
 {
-	int sum[3] = { 0, };
-	int ret = 0, cnt;
-	struct file *cal_filp = NULL;
-	struct bmg160_v gyro;
+	int ret = 0;
 	mm_segment_t old_fs;
-
-	if (enable) {
-		data->caldata.x = 0;
-		data->caldata.y = 0;
-		data->caldata.z = 0;
-
-		if (atomic_read(&data->enable) == 1)
-			cancel_delayed_work_sync(&data->work);
-		else
-			bmg160_set_mode(data, BMG160_MODE_NORMAL);
-
-		msleep(300);
-
-		for (cnt = 0; cnt < CALIBRATION_DATA_AMOUNT; cnt++) {
-			bmg160_read_gyro_xyz(data, &gyro);
-			sum[0] += gyro.x;
-			sum[1] += gyro.y;
-			sum[2] += gyro.z;
-			mdelay(10);
-		}
-
-		if (atomic_read(&data->enable) == 1)
-			schedule_delayed_work(&data->work,
-				msecs_to_jiffies(atomic_read(&data->delay)));
-		else
-			bmg160_set_mode(data, BMG160_MODE_SUSPEND);
-
-		data->caldata.x = (sum[0] / CALIBRATION_DATA_AMOUNT);
-		data->caldata.y = (sum[1] / CALIBRATION_DATA_AMOUNT);
-		data->caldata.z = (sum[2] / CALIBRATION_DATA_AMOUNT);
-	} else {
-		data->caldata.x = 0;
-		data->caldata.y = 0;
-		data->caldata.z = 0;
-	}
-
-	pr_info("[SENSOR]: %s - do gyro calibrate %d, %d, %d\n", __func__,
-		data->caldata.x, data->caldata.y, data->caldata.z);
+	struct file *cal_filp = NULL;
 
 	old_fs = get_fs();
 	set_fs(KERNEL_DS);
@@ -638,10 +584,16 @@ static int bmg160_do_calibrate(struct bmg160_p *data, int enable)
 	cal_filp = filp_open(CALIBRATION_FILE_PATH,
 			O_CREAT | O_TRUNC | O_WRONLY, 0666);
 	if (IS_ERR(cal_filp)) {
-		pr_err("[SENSOR]: %s - Can't open calibration file\n",
-			__func__);
 		set_fs(old_fs);
 		ret = PTR_ERR(cal_filp);
+
+		data->caldata.x = 0;
+		data->caldata.y = 0;
+		data->caldata.z = 0;
+
+		pr_err("[SENSOR]: %s - cal_filp open failed(%d)\n",
+			__func__, ret);
+
 		return ret;
 	}
 
@@ -656,7 +608,31 @@ static int bmg160_do_calibrate(struct bmg160_p *data, int enable)
 	filp_close(cal_filp, current->files);
 	set_fs(old_fs);
 
+	pr_info("[SENSOR]: save gyro calibration %d, %d, %d\n",
+		data->caldata.x, data->caldata.y, data->caldata.z);
+
 	return ret;
+}
+
+static int bmg160_get_caldata(struct bmg160_p *data)
+{
+	int sum[3] = { 0, };
+	int cnt;
+	struct bmg160_v gyro;
+
+	for (cnt = 0; cnt < CALIBRATION_DATA_AMOUNT; cnt++) {
+		bmg160_read_gyro_xyz(data, &gyro);
+		sum[0] += gyro.x;
+		sum[1] += gyro.y;
+		sum[2] += gyro.z;
+		mdelay(10);
+	}
+
+	data->caldata.x = (sum[0] / CALIBRATION_DATA_AMOUNT);
+	data->caldata.y = (sum[1] / CALIBRATION_DATA_AMOUNT);
+	data->caldata.z = (sum[2] / CALIBRATION_DATA_AMOUNT);
+
+	return 0;
 }
 
 static ssize_t bmg160_calibration_show(struct device *dev,
@@ -673,7 +649,7 @@ static ssize_t bmg160_calibration_show(struct device *dev,
 	pr_info("[SENSOR]: %s - cal data %d %d %d - ret : %d\n", __func__,
 		data->caldata.x, data->caldata.y, data->caldata.z, ret);
 
-	return snprintf(buf, PAGE_SIZE, "%d %d %d %d\n", ret, data->caldata.x,
+	return snprintf(buf, PAGE_SIZE, "%d,%d,%d,%d\n", ret, data->caldata.x,
 			data->caldata.y, data->caldata.z);
 }
 
@@ -688,9 +664,25 @@ static ssize_t bmg160_calibration_store(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	ret = bmg160_do_calibrate(data, (int)dEnable);
-	if (ret < 0)
-		pr_err("[SENSOR]: %s - gyro calibrate failed\n", __func__);
+	if (atomic_read(&data->enable) == 1)
+		cancel_delayed_work_sync(&data->work);
+	else
+		bmg160_set_mode(data, BMG160_MODE_NORMAL);
+
+	msleep(100);
+
+	if (dEnable == 1)
+		bmg160_get_caldata(data);
+	else
+		memset(&data->caldata, 0, sizeof(struct bmg160_v));
+
+	bmg160_save_calibration(data);
+
+	if (atomic_read(&data->enable) == 1)
+		schedule_delayed_work(&data->work,
+			msecs_to_jiffies(atomic_read(&data->delay)));
+	else
+		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
 
 	return size;
 }
@@ -698,22 +690,43 @@ static ssize_t bmg160_calibration_store(struct device *dev,
 static ssize_t bmg160_raw_data_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct bmg160_v gyro;
 	struct bmg160_p *data = dev_get_drvdata(dev);
 
 	if (atomic_read(&data->enable) == 0) {
 		bmg160_set_mode(data, BMG160_MODE_NORMAL);
-		msleep(20);
-		bmg160_read_gyro_xyz(data, &gyro);
+		msleep(30);
+		bmg160_read_gyro_xyz(data, &data->gyrodata);
 		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
-	} else {
-		gyro = data->gyrodata;
 	}
 
 	return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n",
-		gyro.x - data->caldata.x,
-		gyro.y - data->caldata.y,
-		gyro.z - data->caldata.z);
+		data->gyrodata.x - data->caldata.x,
+		data->gyrodata.y - data->caldata.y,
+		data->gyrodata.z - data->caldata.z);
+}
+
+static ssize_t bmg160_get_temp(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	unsigned char tmp;
+	s8 temperature;
+
+	struct bmg160_p *data = dev_get_drvdata(dev);
+
+	if (atomic_read(&data->enable) == 0)
+		bmg160_set_mode(data, BMG160_MODE_NORMAL);
+
+	msleep(100);
+
+	bmg160_i2c_read(data->client, BMG160_TEMP_ADDR, &tmp);
+	temperature = 24 + ((s8)tmp >> 2);
+
+	if (atomic_read(&data->enable) == 0)
+		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
+
+	pr_info("[SENSOR]: %s - temperature = %d\n", __func__, temperature);
+
+	return sprintf(buf, "%d\n", temperature);
 }
 
 static ssize_t bmg160_selftest_dps_store(struct device *dev,
@@ -733,8 +746,8 @@ static ssize_t bmg160_selftest_dps_store(struct device *dev,
 	else
 		data->gyro_dps = BMG160_RANGE_500DPS;
 
-	pr_info("[SENSOR]: %s - %d dps = %d\n", __func__,
-		newdps, data->gyro_dps);
+	bmg160_set_range(data, data->gyro_dps);
+	pr_info("[SENSOR]: %s - dps = %d\n", __func__, data->gyro_dps);
 
 	return size;
 }
@@ -747,40 +760,110 @@ static ssize_t bmg160_selftest_dps_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%d\n", data->gyro_dps);
 }
 
-static int bmg160_selftest_show(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static unsigned char bmg160_selftest(struct bmg160_p *data)
 {
-	int ret = 0, result;
-	unsigned char tmp1 = 0;
-	unsigned char tmp2 = 0;
-	struct bmg160_p *data = dev_get_drvdata(dev);
+	int ret = 0;
+	unsigned char bist = 0;
+	unsigned char rateok = 0;
 
-	ret = bmg160_smbus_read_byte(data->client,
-			BMG160_SELF_TEST_ADDR, &tmp1);
-	tmp2  = BMG160_GET_BITSLICE(tmp1, BMG160_SELF_TEST_ADDR_RATEOK);
-	tmp1  = BMG160_SET_BITSLICE(tmp1, BMG160_SELF_TEST_ADDR_TRIGBIST, 1);
-	ret += bmg160_smbus_write_byte(data->client,
-			BMG160_SELF_TEST_ADDR_TRIGBIST__REG, &tmp1);
+	ret = bmg160_i2c_read(data->client, BMG160_SELF_TEST_ADDR, &bist);
+	rateok = BMG160_GET_BITSLICE(bist, BMG160_SELF_TEST_ADDR_RATEOK);
+	bist = BMG160_SET_BITSLICE(bist, BMG160_SELF_TEST_ADDR_TRIGBIST, 1);
+	ret += bmg160_i2c_write(data->client,
+			BMG160_SELF_TEST_ADDR_TRIGBIST__REG, bist);
 
 	/* Waiting time to complete the selftest process */
 	mdelay(10);
 
 	/* Reading Selftest result bir bist_failure */
-	ret += bmg160_smbus_read_byte(data->client,
-			BMG160_SELF_TEST_ADDR_BISTFAIL__REG, &tmp1);
-	tmp1  = BMG160_GET_BITSLICE(tmp1, BMG160_SELF_TEST_ADDR_BISTFAIL);
-
+	ret += bmg160_i2c_read(data->client,
+			BMG160_SELF_TEST_ADDR_BISTFAIL__REG, &bist);
 	if (ret < 0)
-		pr_err("[SENSOR]: %s- selftest i2c failed %d\n", __func__, ret);
+		pr_err("[SENSOR]: %s - i2c failed %d\n", __func__, ret);
 
-	if ((tmp1 == 0x00) && (tmp2 == 0x01))
-		result = 1;
+	bist = !(BMG160_GET_BITSLICE(bist, BMG160_SELF_TEST_ADDR_BISTFAIL));
+
+	pr_info("[SENSOR]: %s - rate %u, bist %u\n", __func__, rateok, bist);
+
+	return bist;
+}
+
+static int bmg160_selftest_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	unsigned char bist, selftest = 0;
+	int datax_check = 0;
+	int datay_check = 0;
+	int dataz_check = 0;
+	int sum[3], cnt;
+	struct bmg160_v avg;
+	struct bmg160_p *data = dev_get_drvdata(dev);
+
+	if (atomic_read(&data->enable) == 1)
+		cancel_delayed_work_sync(&data->work);
 	else
-		result = -EIO;
+		bmg160_set_mode(data, BMG160_MODE_NORMAL);
 
-	pr_info("[SENSOR]: %s- rate %u, bist %u\n", __func__, tmp2, tmp1);
+	msleep(100);
+	bist = bmg160_selftest(data);
+	if (bist == 0)
+		selftest |= 1;
 
-	return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n", result, tmp1, tmp2);
+	data->gyro_dps = BMG160_RANGE_2000DPS;
+	bmg160_set_range(data, data->gyro_dps);
+
+	msleep(100);
+	memset(sum, 0, sizeof(int) * 3);
+	for (cnt = 0; cnt < SELFTEST_DATA_AMOUNT; cnt++) {
+		bmg160_read_gyro_xyz(data, &avg);
+		sum[0] += avg.x;
+		sum[1] += avg.y;
+		sum[2] += avg.z;
+	}
+
+	avg.x = (s16)(sum[0] / SELFTEST_DATA_AMOUNT);
+	avg.y = (s16)(sum[1] / SELFTEST_DATA_AMOUNT);
+	avg.z = (s16)(sum[2] / SELFTEST_DATA_AMOUNT);
+
+	datax_check = (int)abs((2000 * (long)avg.x * 1000) / 32768);
+	datay_check = (int)abs((2000 * (long)avg.y * 1000) / 32768);
+	dataz_check = (int)abs((2000 * (long)avg.z * 1000) / 32768);
+
+	pr_info("[SENSOR]: %s - x = %d.%03d, y = %d.%03d, z= %d.%03d\n",
+		__func__, (datax_check / 1000), (datax_check % 1000),
+		(datay_check / 1000), (datay_check % 1000),
+		(dataz_check / 1000), (dataz_check % 1000));
+
+	data->gyro_dps = BMG160_RANGE_500DPS;
+	bmg160_set_range(data, data->gyro_dps);
+
+	if ((datax_check <= SELFTEST_LIMITATION_OF_ERROR)
+		&& (datay_check <= SELFTEST_LIMITATION_OF_ERROR)
+		&& (dataz_check <= SELFTEST_LIMITATION_OF_ERROR)) {
+		pr_info("[SENSOR]: %s - Gyro zero rate OK!\n", __func__);
+		bmg160_get_caldata(data);
+		bmg160_save_calibration(data);
+	} else {
+		pr_info("[SENSOR]: %s - Gyro zero rate NG!\n", __func__);
+		selftest |= 1;
+	}
+
+	if (atomic_read(&data->enable) == 1)
+		schedule_delayed_work(&data->work,
+			msecs_to_jiffies(atomic_read(&data->delay)));
+	else
+		bmg160_set_mode(data, BMG160_MODE_SUSPEND);
+
+	if (selftest == 0)
+		pr_info("[SENSOR]: %s - Gyro selftest Pass!\n", __func__);
+	else
+		pr_err("[SENSOR]: %s - Gyro selftest fail!\n", __func__);
+
+	return snprintf(buf, PAGE_SIZE, "%u,%u,%d.%03d,%d.%03d,%d.%03d\n",
+			selftest ? 0 : 1, bist,
+			(datax_check / 1000), (datax_check % 1000),
+			(datay_check / 1000), (datay_check % 1000),
+			(dataz_check / 1000), (dataz_check % 1000));
 }
 
 static DEVICE_ATTR(name, S_IRUGO, bmg160_name_show, NULL);
@@ -788,6 +871,7 @@ static DEVICE_ATTR(vendor, S_IRUGO, bmg160_vendor_show, NULL);
 static DEVICE_ATTR(calibration, S_IRUGO | S_IWUSR | S_IWGRP,
 	bmg160_calibration_show, bmg160_calibration_store);
 static DEVICE_ATTR(raw_data, S_IRUGO, bmg160_raw_data_show, NULL);
+static DEVICE_ATTR(temperature, S_IRUGO, bmg160_get_temp, NULL);
 static DEVICE_ATTR(selftest, S_IRUGO, bmg160_selftest_show, NULL);
 static DEVICE_ATTR(selftest_dps, S_IRUGO | S_IWUSR | S_IWGRP,
 	bmg160_selftest_dps_show, bmg160_selftest_dps_store);
@@ -797,6 +881,7 @@ static struct device_attribute *sensor_attrs[] = {
 	&dev_attr_vendor,
 	&dev_attr_calibration,
 	&dev_attr_raw_data,
+	&dev_attr_temperature,
 	&dev_attr_selftest,
 	&dev_attr_selftest_dps,
 	NULL,
@@ -877,6 +962,8 @@ static int bmg160_input_init(struct bmg160_p *data)
 	/* sysfs node creation */
 	ret = sysfs_create_group(&dev->dev.kobj, &bmg160_attribute_group);
 	if (ret < 0) {
+		sensors_remove_symlink(&data->input->dev.kobj,
+			data->input->name);
 		input_unregister_device(dev);
 		return ret;
 	}
@@ -971,14 +1058,9 @@ static int bmg160_probe(struct i2c_client *client,
 	atomic_set(&data->enable, 0);
 
 	data->gyro_dps = BMG160_RANGE_500DPS;
-	bmg160_set_bw(data, BMG160_BW_23Hz);
 	bmg160_set_range(data, data->gyro_dps);
+	bmg160_set_bw(data, BMG160_BW_47Hz);
 	bmg160_set_mode(data, BMG160_MODE_SUSPEND);
-
-#ifdef EXECPTION_FOR_I2CFAIL
-	data->i2cfail_cnt = 0;
-#endif
-
 	pr_info("[SENSOR]: %s - Probe done!(chip pos : %d)\n",
 		__func__, data->chip_pos);
 

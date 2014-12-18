@@ -68,7 +68,9 @@ void asmlinkage __attribute__((weak)) early_printk(const char *fmt, ...)
 #define __LOG_BUF_LEN	(1 << CONFIG_LOG_BUF_SHIFT)
 
 #ifdef CONFIG_SEC_LOG_LAST_KMSG
-#define LAST_LOG_BUF_SHIFT 18
+#define LAST_LOG_BUF_SHIFT 19
+char *last_kmsg_buffer;
+unsigned last_kmsg_size;
 #endif
 
 /* printk's without a loglevel use this.. */
@@ -290,6 +292,7 @@ static int __init printk_remap_nocache(void)
 
 	sec_getlog_supply_kloginfo(log_buf);
 
+#ifndef CONFIG_SEC_LOCALE_KOR
 	if (0 == sec_debug_is_enabled()) {
 #ifdef CONFIG_SEC_DEBUG_LOW_LOG
 		nocache_base = ioremap_nocache(sec_log_save_base - 4096,
@@ -304,6 +307,8 @@ static int __init printk_remap_nocache(void)
 #endif
 		return rc;
 	}
+#endif
+
 	pr_err("%s: sec_log_save_size %d at sec_log_save_base 0x%x\n",
 	__func__, sec_log_save_size, (unsigned int)sec_log_save_base);
 	pr_err("%s: sec_log_reserve_size %d at sec_log_reserve_base 0x%x\n",
@@ -312,7 +317,7 @@ static int __init printk_remap_nocache(void)
 	nocache_base = ioremap_nocache(sec_log_save_base - 4096,
 					sec_log_save_size + 8192);
 
-pr_err("%s: nocache_base printk virtual addrs 0x%x  phy=0x%x\n",__func__, (unsigned int)(nocache_base), (unsigned int)(sec_log_save_base));
+	pr_err("%s: nocache_base printk virtual addrs 0x%x  phy=0x%x\n",__func__, (unsigned int)(nocache_base), (unsigned int)(sec_log_save_base));
 	
 	nocache_base = nocache_base + 4096;
 
@@ -346,8 +351,13 @@ static ssize_t seclog_read(struct file *file, char __user *buf,
 {
 	loff_t pos = *offset;
 	ssize_t count = 0;
+#ifdef CONFIG_SEC_LOG_LAST_KMSG
+	size_t log_size = last_kmsg_size;
+	const char *log = last_kmsg_buffer;
+#else
 	size_t log_size = sec_log_size;
 	const char *log = sec_log_buf;
+#endif
 
 	if (pos < log_size) {
 		count = min(len, (size_t)(log_size - pos));
@@ -385,7 +395,11 @@ static int __init seclog_late_init(void)
 	}
 
 	entry->proc_fops = &seclog_file_ops;
+#ifdef CONFIG_SEC_LOG_LAST_KMSG
+	entry->size = last_kmsg_size;
+#else
 	entry->size = sec_log_size;
+#endif
 	return 0;
 }
 late_initcall(seclog_late_init);

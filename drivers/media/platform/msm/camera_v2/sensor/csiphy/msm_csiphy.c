@@ -384,12 +384,18 @@ static int msm_csiphy_release(struct csiphy_device *csiphy_dev, void *arg)
 		csi_lane_params->csi_lane_assign,
 		csi_lane_params->csi_lane_mask);
 
+
 	if (csiphy_dev->hw_version < CSIPHY_VERSION_V3) {
 		csiphy_dev->lane_mask[csiphy_dev->pdev->id] = 0;
 		for (i = 0; i < 4; i++)
 			msm_camera_io_w(0x0, csiphy_dev->base +
 				MIPI_CSIPHY_LNn_CFG2_ADDR + 0x40*i);
 	} else {
+
+	if (csi_lane_params->csi_lane_mask == 0x0) {
+		csi_lane_params->csi_lane_mask = 0x1f;
+	}
+
 		csiphy_dev->lane_mask[csiphy_dev->pdev->id] &=
 			~(csi_lane_params->csi_lane_mask);
 		i = 0;

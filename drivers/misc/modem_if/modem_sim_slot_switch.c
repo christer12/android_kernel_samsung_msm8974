@@ -84,7 +84,7 @@ static ssize_t set_slot_switch(struct device *dev, struct device_attribute *attr
 	return size;
 }
 
-static DEVICE_ATTR(slot_sel, S_IRUGO |S_IWUGO | S_IRUSR | S_IWUSR, get_slot_switch, set_slot_switch);
+static DEVICE_ATTR(slot_sel, S_IRUGO | S_IWUSR | S_IWGRP, get_slot_switch, set_slot_switch);
 
 static void slot_switch_init_work(struct work_struct *work)
 {
@@ -174,7 +174,7 @@ static int __init slot_switch_manager_init(void)
 		gpio_tlmm_config(GPIO_CFG(GPIO_GG_SEL,  0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), GPIO_CFG_ENABLE);
 		gpio_direction_output(gpio, 0);
 		gpio_export(gpio, 0);
-		gpio_set_value(GPIO_GG_SEL, 0);
+		gpio_set_value(GPIO_GG_SEL, 1);  // fixed to '1' from '0' by jw01.yoo
 		printk("%s end \n",__func__);
 	}
 

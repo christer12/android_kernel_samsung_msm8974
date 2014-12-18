@@ -332,23 +332,14 @@ static int venus_hfi_read_queue(void *info, u8 *packet, u32 *pb_tx_req_is_set)
 		if (new_read_idx < queue->qhdr_q_size) {
 			memcpy(packet, read_ptr,
 					packet_size_in_words << 2);
-			
-			memset(read_ptr, 0xff, packet_size_in_words << 2);
-			mb();
 		} else {
 			new_read_idx -= queue->qhdr_q_size;
 			memcpy(packet, read_ptr,
 			(packet_size_in_words - new_read_idx) << 2);
-			
-			memset(read_ptr, 0xff, (packet_size_in_words - new_read_idx) << 2);
-			mb();
 			memcpy(packet + ((packet_size_in_words -
 					new_read_idx) << 2),
 					(u8 *)qinfo->q_array.align_virtual_addr,
 					new_read_idx << 2);
-			
-			memset((u8 *)qinfo->q_array.align_virtual_addr, 0xff, new_read_idx << 2);
-			mb();
 		}
 	} else {
 		dprintk(VIDC_WARN,
@@ -1466,12 +1457,12 @@ static void *venus_hfi_session_init(void *device, u32 session_id,
 		goto err_session_init_fail;
 	}
 
-	if (venus_hfi_iface_cmdq_write(dev, &pkt))
-		goto err_session_init_fail;
 	if (venus_hfi_sys_set_debug(dev, msm_fw_debug))
 		dprintk(VIDC_ERR, "Setting fw_debug msg ON failed");
 	if (venus_hfi_sys_set_idle_message(dev, msm_fw_low_power_mode))
 		dprintk(VIDC_ERR, "Setting idle response ON failed");
+	if (venus_hfi_iface_cmdq_write(dev, &pkt))
+		goto err_session_init_fail;
 	return (void *) new_session;
 
 err_session_init_fail:
@@ -1516,6 +1507,21 @@ static int venus_hfi_session_abort(void *session)
 {
 	return venus_hfi_send_session_cmd(session,
 		HFI_CMD_SYS_SESSION_ABORT);
+}
+
+static int venus_hfi_session_clean(void *session)
+{
+	struct hal_session *sess_close;
+	if (!session) {
+		dprintk(VIDC_ERR, "Invalid Params %s", __func__);
+		return -EINVAL;
+	}
+	sess_close = session;
+	dprintk(VIDC_DBG, "deleted the session: 0x%p",
+			sess_close);
+	list_del(&sess_close->list);
+	kfree(sess_close);
+	return 0;
 }
 
 static int venus_hfi_session_set_buffers(void *sess,
@@ -2622,7 +2628,7 @@ static void venus_hfi_deinit_resources(struct venus_hfi_device *device)
 
 static int venus_hfi_iommu_attach(struct venus_hfi_device *device)
 {
-	int rc;
+	int rc = 0;
 	struct iommu_domain *domain;
 	int i;
 	struct iommu_set *iommu_group_set;
@@ -2769,7 +2775,7 @@ static int venus_hfi_load_fw(void *dev)
 		device->resources.fw.cookie = subsystem_get("venus");
 
 	if (IS_ERR_OR_NULL(device->resources.fw.cookie)) {
-		dprintk(VIDC_ERR, "Failed to download firmware\n");
+		dprintk(VIDC_ERR, "Failed to download firmware: %ld\n", (signed long)(device->resources.fw.cookie));
 		rc = -ENOMEM;
 		goto fail_load_fw;
 	}
@@ -2858,6 +2864,28 @@ int venus_hfi_get_stride_scanline(int color_fmt,
 	return 0;
 }
 
+int venus_hfi_capability_check(u32 fourcc, u32 width,
+		u32 *max_width, u32 *max_height)
+{
+	int rc = 0;
+	if (!max_width || !max_height) {
+		dprintk(VIDC_ERR, "%s - invalid parameter\n", __func__);
+		return -EINVAL;
+	}
+
+	if (msm_vp8_low_tier && fourcc == V4L2_PIX_FMT_VP8) {
+		*max_width = DEFAULT_WIDTH;
+		*max_height = DEFAULT_HEIGHT;
+	}
+	if (width > *max_width) {
+		dprintk(VIDC_ERR,
+		"Unsupported width = %u supported max width = %u",
+		width, *max_width);
+		rc = -ENOTSUPP;
+	}
+	return rc;
+}
+
 static void *venus_hfi_add_device(u32 device_id,
 			struct msm_vidc_platform_resources *res,
 			hfi_cmd_response_callback callback)
@@ -2940,12 +2968,12 @@ err_fail_init_res:
 
 void venus_hfi_delete_device(void *device)
 {
-	struct venus_hfi_device *close, *dev;
+	struct venus_hfi_device *close, *tmp, *dev;
 
 	if (device) {
 		venus_hfi_deinit_resources(device);
 		dev = (struct venus_hfi_device *) device;
-		list_for_each_entry(close, &hal_ctxt.dev_head, list) {
+		list_for_each_entry_safe(close, tmp, &hal_ctxt.dev_head, list) {
 			if (close->hal_data->irq == dev->hal_data->irq) {
 				hal_ctxt.dev_count--;
 				free_irq(dev->hal_data->irq, close);
@@ -2970,6 +2998,7 @@ static void venus_init_hfi_callbacks(struct hfi_device *hdev)
 	hdev->session_init = venus_hfi_session_init;
 	hdev->session_end = venus_hfi_session_end;
 	hdev->session_abort = venus_hfi_session_abort;
+	hdev->session_clean = venus_hfi_session_clean;
 	hdev->session_set_buffers = venus_hfi_session_set_buffers;
 	hdev->session_release_buffers = venus_hfi_session_release_buffers;
 	hdev->session_load_res = venus_hfi_session_load_res;
@@ -2997,6 +3026,7 @@ static void venus_init_hfi_callbacks(struct hfi_device *hdev)
 	hdev->unload_fw = venus_hfi_unload_fw;
 	hdev->get_fw_info = venus_hfi_get_fw_info;
 	hdev->get_stride_scanline = venus_hfi_get_stride_scanline;
+	hdev->capability_check = venus_hfi_capability_check;
 }
 
 int venus_hfi_initialize(struct hfi_device *hdev, u32 device_id,

@@ -58,6 +58,7 @@
 #define BMG160_RATE_Y_MSB_ADDR             0x05
 #define BMG160_RATE_Z_LSB_ADDR             0x06
 #define BMG160_RATE_Z_MSB_ADDR             0x07
+#define BMG160_TEMP_ADDR                   0x08
 
 /* Control Register */
 #define BMG160_RANGE_ADDR                  0x0F

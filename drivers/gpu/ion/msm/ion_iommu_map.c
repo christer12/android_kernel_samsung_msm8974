@@ -446,6 +446,7 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 	BUG_ON(iommu_meta->size != size);
 	mutex_unlock(&msm_iommu_map_mutex);
 
+	mutex_lock(&iommu_meta->lock);
 	iommu_map = ion_iommu_lookup(iommu_meta, domain_num, partition_num);
 	if (!iommu_map) {
 		iommu_map = __ion_iommu_map(iommu_meta, domain_num,
@@ -476,11 +477,13 @@ int ion_map_iommu(struct ion_client *client, struct ion_handle *handle,
 			*iova = iommu_map->iova_addr;
 		}
 	}
+	mutex_unlock(&iommu_meta->lock);
 	*buffer_size = size;
 	return ret;
 
 
 meta_put_out:
+	mutex_unlock(&iommu_meta->lock);
 	ion_iommu_meta_put(iommu_meta);
 out:	
 	return ret;
