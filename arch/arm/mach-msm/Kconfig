@@ -145,7 +145,7 @@ config ARCH_MSM8960
 	select CPU_V7
 	select GPIO_MSM_V2
 	select MSM_GPIOMUX
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MSM_DIRECT_SCLK_ACCESS
 	select REGULATOR
 	select MSM_RPM_REGULATOR
@@ -187,7 +187,7 @@ config ARCH_MSM8930
 	select CPU_V7
 	select GPIO_MSM_V2
 	select MSM_GPIOMUX
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MSM_DIRECT_SCLK_ACCESS
 	select REGULATOR
 	select MSM_RPM_REGULATOR
@@ -223,7 +223,7 @@ config ARCH_APQ8064
 	select GPIO_MSM_V2
 	select ARM_GIC
 	select CPU_V7
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MSM_GPIOMUX
 	select MSM_REMOTE_SPINLOCK_SFPB
 	select MSM_PIL
@@ -257,7 +257,7 @@ config ARCH_MSM8974
 	select GPIO_MSM_V3
 	select ARM_GIC
 	select CPU_V7
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MSM_GPIOMUX
 	select MULTI_IRQ_HANDLER
 	select MSM_MULTIMEDIA_USE_ION
@@ -292,7 +292,7 @@ config ARCH_APQ8084
 	select GPIO_MSM_V3
 	select ARM_GIC
 	select CPU_V7
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MSM_GPIOMUX
 	select MULTI_IRQ_HANDLER
 	select MSM_NATIVE_RESTART
@@ -304,9 +304,6 @@ config ARCH_APQ8084
 	select ARM_HAS_SG_CHAIN
 	select ARCH_DMA_ADDR_T_64BIT if ARM_LPAE
 	select ARCH_WANT_KMAP_ATOMIC_FLUSH
-	select MEMORY_HOLE_CARVEOUT
-	select DONT_MAP_HOLE_AFTER_MEMBANK0
-	select QMI_ENCDEC
 
 config ARCH_MPQ8092
 	bool "MPQ8092"
@@ -318,25 +315,6 @@ config ARCH_MPQ8092
 	select MSM_GPIOMUX
 	select MAY_HAVE_SPARSE_IRQ
 	select SPARSE_IRQ
-	select MSM_NOPM
-
-config ARCH_FSM9900
-	bool "FSM9900"
-	select ARCH_MSM_KRAITMP
-	select GPIO_MSM_V3
-	select ARM_GIC
-	select CPU_V7
-	select MSM_SCM
-	select MSM_GPIOMUX
-	select MULTI_IRQ_HANDLER
-	select MSM_PIL
-	select MSM_NATIVE_RESTART
-	select MSM_RESTART_V2
-	select MAY_HAVE_SPARSE_IRQ
-	select SPARSE_IRQ
-	select REGULATOR
-	select ARM_HAS_SG_CHAIN
-	select MSM_RUN_QUEUE_STATS
 	select MSM_NOPM
 
 config ARCH_FSM9XXX
@@ -400,11 +378,11 @@ config ARCH_MSM9625
 	select MSM_RESTART_V2
 	select MSM_SPM_V2
 	select MSM_PM8X60 if PM
+	select MSM_SCM if SMP
 	select MULTI_IRQ_HANDLER
 	select GPIO_MSM_V3
 	select MAY_HAVE_SPARSE_IRQ
 	select SPARSE_IRQ
-	select CPU_FREQ_MSM
 	select MSM_MULTIMEDIA_USE_ION
 	select MSM_RPM_STATS_LOG
 	select MSM_QDSP6_APRV2
@@ -436,7 +414,7 @@ config ARCH_MSM8610
 	select GIC_SECURE
 	select ARCH_MSM_CORTEXMP
 	select CPU_V7
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MAY_HAVE_SPARSE_IRQ
 	select SPARSE_IRQ
 	select MULTI_IRQ_HANDLER
@@ -478,7 +456,7 @@ config ARCH_MSM8226
 	select GIC_SECURE
 	select ARCH_MSM_CORTEXMP
 	select CPU_V7
-	select MSM_SCM
+	select MSM_SCM if SMP
 	select MAY_HAVE_SPARSE_IRQ
 	select SPARSE_IRQ
 	select MULTI_IRQ_HANDLER
@@ -512,26 +490,6 @@ config ARCH_MSM8226
 	select MSM_CPR_REGULATOR
 	select MSM_RPM_LOG
 	select MSM_RPM_STATS_LOG
-	select ARCH_WANT_KMAP_ATOMIC_FLUSH
-
-config ARCH_MSMSAMARIUM
-	bool "MSMSAMARIUM"
-	select ARCH_MSM_KRAITMP
-	select GPIO_MSM_V3
-	select ARM_GIC
-	select CPU_V7
-	select MSM_SCM
-	select MSM_GPIOMUX
-	select MULTI_IRQ_HANDLER
-	select MSM_SPM_V2
-	select MSM_L2_SPM
-	select MSM_NATIVE_RESTART
-	select MSM_RESTART_V2
-	select MSM_PM8X60 if PM
-	select MAY_HAVE_SPARSE_IRQ
-	select SPARSE_IRQ
-	select ARM_HAS_SG_CHAIN
-	select MSM_RUN_QUEUE_STATS
 	select ARCH_WANT_KMAP_ATOMIC_FLUSH
 endmenu
 
@@ -1120,29 +1078,11 @@ config SEC_J_PROJECT
 	help
 	  Support for Samsung KS01 series.
 
-config SEC_JACTIVE_PROJECT
-	default n
-	bool "Samsung Jactive project"
-	help
-	  Support for Samsung Jactive series.
-
 config SEC_H_PROJECT
 	default n
 	bool "Samsung H project"
 	help
 	  Support for Samsung H project.
-
-config SEC_F_PROJECT
-	default n
-	bool "Samsung F project"
-	help
-	  Support for Samsung F project.
-
-config SEC_JS_PROJECT
-	default n
-	bool "Samsung JS project"
-	help
-	  Support for Samsung JS project.
 
 config USER_RESET_DEBUG
 	bool "KOR reset reason debug feature in user version"
@@ -1171,18 +1111,6 @@ config SEC_MONTBLANC_PROJECT
 	help
 	  Support for Samsung MONTBLANC project.
 
-config SEC_MELIUSCA_PROJECT
-	default n
-	bool "Samsung MELIUS CA project"
-	help
-	  Support for Samsung MELKUSCA project.
-	  
-config SEC_JVE_PROJECT
-	default n
-	bool "Samsung JVE project"
-	help
-	  Support for Samsung JVE project.
-
 config MACH_KS01SKT
 	default n
 	bool "Samsung model KS01SKT"
@@ -1203,13 +1131,6 @@ config MACH_KS01LGT
 	select SEC_J_PROJECT
 	help
 	  Support for Samsung KS01LGT device.
-
-config MACH_JACTIVESKT
-	default n
-	bool "Samsung model JACTIVESKT"
-	select SEC_JACTIVE_PROJECT
-	help
-	  Support for Samsung JACTIVESKT device.
 
 config MACH_HLTEATT
 	default n
@@ -1253,27 +1174,6 @@ config MACH_HLTEEUR
 	help
 	  Support for Samsung HLTEEUR device.
 
-config MACH_JVELTEEUR
-	default n
-	bool "Samsung model JVELTEEUR"
-	select SEC_JVE_PROJECT
-	help
-	  Support for Samsung JVELTEEUR device.
-
-config MACH_FLTEEUR
-	default n
-	bool "Samsung model FLTEEUR"
-	select SEC_F_PROJECT
-	help
-	  Support for Samsung FLTEEUR device.
-
-config MACH_FLTESKT
-	default n
-	bool "Samsung model FLTESKT"
-	select SEC_F_PROJECT
-	help
-	  Support for Samsung FLTESKT device.
-
 config MACH_HLTESKT
 	default n
 	bool "Samsung model HLTESKT"
@@ -1309,13 +1209,6 @@ config MACH_HLTEKDI
 	help
 	  Support for Samsung HLTEKDI device.
 
-config MACH_JS01LTEDCM
-	default n
-	bool "Samsung model JS01LTEDCM"
-	select SEC_JS_PROJECT
-	help
-	  Support for Samsung JS01LTEDCM device.
-
 config MACH_H3GDUOS
 	default n
 	bool "Samsung model H3GDUOS"
@@ -1323,41 +1216,6 @@ config MACH_H3GDUOS
 	help
 	  Support for Samsung H3GDUOS device.
 
-config MACH_H3GDUOS_CU
-	default n
-	bool "Samsung model H3GDUOS_CU"
-	select SEC_H_PROJECT
-	help
-	  Support for Samsung H3GDUOS_CU device.
-
-config MACH_H3GDUOS_CTC
-	default n
-	bool "Samsung model H3GDUOS_CTC"
-	select SEC_H_PROJECT
-	help
-	  Support for Samsung H3GDUOS_CTC device.
-
-config MACH_H3G_CHN_OPEN
-	default n
-	bool "Samsung model H3G_CHN_OPEN"
-	select SEC_H_PROJECT
-	help
-	  Support for Samsung H3G_CHN_OPEN device.
-
-config MACH_H3G_CHN_CMCC
-	default n
-	bool "Samsung model H3G_CHN_CMCC"
-	select SEC_H_PROJECT
-	help
-	  Support for Samsung H3G_CHN_CMCC device.
-	  
-config MACH_HLTE_CHN_CMCC
-	default n
-	bool "Samsung model HLTE_CHN_CMCC"
-	select SEC_H_PROJECT
-	help
-	  Support for Samsung HLTE_CHN_CMCC device.
-	  
 config MACH_MONTBLANC
 	default n
 	bool "Samsung model MONTBLANC"
@@ -1365,13 +1223,6 @@ config MACH_MONTBLANC
 	help
 	  Support for Samsung MONTBLANC device.
 
-config MACH_VIKALCU
-	default n
-	bool "Samsung model VIKALCU"
-	select SEC_VIKAL_PROJECT
-	help
-	  Support for Samsung VIKAL device.
-	  
 config MACH_VIENNAEUR
 	default n
 	bool "Samsung model VIENNAEUR"
@@ -1379,13 +1230,6 @@ config MACH_VIENNAEUR
 	help
 	  Support for Samsung VIENNAEUR device.
 	  
-config MACH_VIENNAVZW
-	default n
-	bool "Samsung model VIENNAVZW"
-	select SEC_VIENNA_PROJECT
-	help
-	  Support for Samsung VIENNAVZW device.
-
 config MACH_LT03EUR
 	default n
 	bool "Samsung model LT03EUR"
@@ -1393,55 +1237,9 @@ config MACH_LT03EUR
 	help
 	  Support for Samsung LT03EUR device.
 
-config MACH_LT03SKT
-	default n
-	bool "Samsung model LT03SKT"
-	select SEC_LT03_PROJECT
-	help
-	  Support for Samsung LT03SKT device.
-
-config MACH_LT03KTT
-	default n
-	bool "Samsung model LT03KTT"
-	select SEC_LT03_PROJECT
-	help
-	  Support for Samsung LT03KTT device.
-
-config MACH_LT03LGT
-	default n
-	bool "Samsung model LT03LGT"
-	select SEC_LT03_PROJECT
-	help
-	  Support for Samsung LT03LGT device.
-
-config MACH_MELIUSCASKT
-	default n
-	bool "Samsung model MELIUSCASKT"
-	select SEC_MELIUSCA_PROJECT
-	help
-	  Support for Samsung MELIUSCASKT device.
-
-config MACH_MELIUSCAKTT
-	default n
-	bool "Samsung model MELIUSCAKTT"
-	select SEC_MELIUSCA_PROJECT
-	help
-	  Support for Samsung MELIUSCAKTT device.
-
-config MACH_MELIUSCALGT
-	default n
-	bool "Samsung model MELIUSCALGT"
-	select SEC_MELIUSCA_PROJECT
-	help
-	  Support for Samsung MELIUSCALGT device.
-	  
 config SEC_LOCALE_KOR
 	default n
 	bool "Samsung model KOREA"
-
-config SEC_LOCALE_KOR_H
-	default n
-	bool "Samsung H model KOREA"
 
 config SEC_LOCALE_USA
 	default n
@@ -1482,22 +1280,6 @@ config MSM_STACKED_MEMORY
 	  memory.  When present this memory bank is used for a high speed
 	  shared memory interface.  When not present regular RAM is used.
 
-config RTC_AUTO_PWRON
-        bool "RTC Auto Power on PM8xxx PMICs"
-        depends on ARCH_MSM8974
-        default n
-        help
-          Support for the auto power on alarm on the PM8XXX PMIC.
-          Say Y if you want to enable this feature.
-
-config RTC_AUTO_PWRON_PARAM
-        bool "RTC Auto Power on with param PM8xxx PMICs"
-        depends on RTC_AUTO_PWRON
-        default n
-        help
-          This option is used to prevent invalid RTC alarm power on.
-          Say Y if you want to enable this feature.
-
 config PHYS_OFFSET
 	hex
 	default "0x40800000" if ARCH_MSM9615
@@ -1509,9 +1291,7 @@ config PHYS_OFFSET
 	default "0x00000000" if ARCH_MPQ8092
 	default "0x00000000" if ARCH_MSM8226
 	default "0x00000000" if ARCH_MSM8610
-	default "0x00000000" if ARCH_MSMSAMARIUM
 	default "0x10000000" if ARCH_FSM9XXX
-	default "0x00000000" if ARCH_FSM9900
 	default "0x00200000" if ARCH_MSM9625
 	default "0x00000000" if ARCH_MSMKRYPTON
 	default "0x00200000" if !MSM_STACKED_MEMORY
@@ -1675,22 +1455,6 @@ choice
                 help
                   Say Y here if you want the debug print routines to direct
                   their output to the serial port on MSM9625 devices.
-
-	config DEBUG_FSM9900_UART
-		bool "Kernel low-level debugging messages via FSM9900 UART"
-		depends on ARCH_FSM9900
-		select MSM_HAS_DEBUG_UART_HS_V14
-		help
-		  Say Y here if you want the debug print routines to direct
-		  their output to the serial port on FSM9900 devices.
-
-	config DEBUG_MSMSAMARIUM_UART
-		bool "Kernel low-level debugging messages via MSM SAMARIUM UART"
-		depends on ARCH_MSMSAMARIUM
-		select MSM_HAS_DEBUG_UART_HS_V14
-		help
-		  Say Y here if you want the debug print routines to direct
-		  their output to the serial port on MSM SAMARIUM devices.
 endchoice
 
 choice
@@ -2751,15 +2515,6 @@ config MSM_RPM_RBCPR_STATS_LOG
           RBCPR (Rapid Bridge Core Power Reduction) information . The drivers
           outputs the message via a debugfs node.
 
-config MSM_RPM_RBCPR_STATS_V2_LOG
-        tristate "MSM Resource Power Manager RPBCPR Stat Driver"
-        depends on DEBUG_FS
-          help
-          This option enables v2 of the rpmrbcpr_stats driver which reads RPM
-          memory for statistics pertaining to RPM's RBCPR(Rapid Bridge Core
-          Power Reduction) driver. The drivers outputs the message via a
-          debugfs node.
-
 config MSM_DIRECT_SCLK_ACCESS
 	bool "Direct access to the SCLK timer"
 	default n
@@ -3011,7 +2766,7 @@ config MSM_AUDIO_QDSP6V2
 config MSM_ADSP_LOADER
         tristate "ADSP loader support"
         select SND_SOC_MSM_APRV2_INTF
-	depends on MSM_AUDIO_QDSP6V2
+	depends on MSM_AUDIO_QDSP6V2 && m
         help
           Enable ADSP image loader.
 	  The ADSP loader brings ADSP out of reset
@@ -3067,15 +2822,6 @@ config MSM_SPM_V2
 	  Enables the support for Version 2 of the SPM driver. SPM hardware is
 	  used to manage the processor power during sleep. The driver allows
 	  configuring SPM to allow different power modes.
-
-config USER_RESET_DEBUG
-	bool "KOR reset reason debug feature in user version"
-	default n
-	help
-	  This option enables debugging log for B10 project.
-	  This option provides reset history log in user version.
-	  This option enable proc/reset_reason support
-	  It's only support KOR Model
 
 config MSM_L2_SPM
 	bool "SPM support for L2 cache"
@@ -3137,25 +2883,14 @@ config MSM_OCMEM_POWER_DEBUG
 	  related operations of OCMEM. Both local power management
 	  and RPM assisted power management operations are supported.
 
-config MSM_OCMEM_DEBUG_ALWAYS_ON
-	bool "Keep OCMEM always turned ON"
-	depends on MSM_OCMEM_DEBUG
-	help
-	  Always vote for all OCMEM clocks and keep all OCMEM
-	  macros turned ON and never allow them to be turned OFF.
-	  Both local power management and RPM assisted power modes
-	  are supported for individual macro power control operations.
-
 config MSM_OCMEM_POWER_DISABLE
 	bool "OCMEM Disable Power Control"
-	depends on MSM_OCMEM
+	depends on MSM_OCMEM_DEBUG
 	help
 	  Disable all OCMEM power management.
-	  Skip all OCMEM power operations that turn ON or
-	  turn OFF the macros. Both local power management and
-	  RPM assisted power management operations are skipped.
-	  Enable this configuration if OCMEM is being exclusively
-	  used as GMEM or OCIMEM.
+	  This keeps all OCMEM macros turned ON at all times thus
+	  never allowing them to be turned OFF. Both local power
+	  management and RPM assisted power modes are supported.
 
 config SENSORS_ADSP
 	bool "Enable Sensors Driver Support for ADSP"
@@ -3290,12 +3025,7 @@ config SEC_SSR_DEBUG_LEVEL_CHK
 	bool "SSR DEBUG LEVEL check"
 	help
 	  To check the level of debug for SSR.
-
-config SEC_PERIPHERAL_SECURE_CHK
-        bool "PERIPHERAL SECURE check"
-        help
-          To check the authentication of peripheral image.	  
-
+	  
 config SEC_LOG_LAST_KMSG
 	default n
 	bool "Enable /proc/last_kmsg support: if EMBEDDED"
@@ -3462,22 +3192,6 @@ config MSM_CPR_REGULATOR
 	  to voltage value before writing to a voltage regulator API, such as
 	  that provided by spm-regulator driver.
 
-config WALL_CLK
-	tristate "Wall Clock hardware block simulation"
-	depends on ARCH_APQ8064
-	help
-	 This driver simulates the wall-clock hardware block on fsm8064_ep
-	 femto emulation platform. This block will be used to provide
-	 clock information to the LTE Layer 2 module running on the hexagon
-	 processor.
-
-config WALL_CLK_SYSFS
-	tristate "Wall Clock SysFS Support"
-	depends on SYSFS && WALL_CLK
-	help
-	 Support the wallclk directory in sysfs filesystem to enable the
-	 wall clock simulation and read the current SFN.
-
 config I2C_ACTUATOR
 	bool "support autofocus on camera without using cci"
 	depends on MSMB_CAMERA
@@ -3488,88 +3202,4 @@ config SWITCH_DUAL_MODEM
 	default n
 	bool "Switch UART/USB to AP/CP/CP2"
 
-config TIMA_RKP
-       bool "Enable RKP (Realtime Kernel Protection) TIMA feature"
-       default n
-
-config TIMA_RKP_L1_TABLES
-       bool
-       depends on TIMA_RKP
-       default y
-       help
-         TIMA taking over management of L1 tables.
-
-config TIMA_RKP_L2_TABLES
-       bool
-       depends on TIMA_RKP
-       default y
-       help
-         TIMA taking over management L2 tables too.
-
-config TIMA_RKP_L2_GROUP
-	bool
-	depends on TIMA_RKP_L2_TABLES
-	default y
-	help
-	 TIMA grouping page table writes
-
-config TIMA_RKP_LAZY_MMU
-	bool
-	depends on TIMA_RKP_L2_TABLES
-	default y
-	help
-	 TIMA lazy MMU for L2 pages
-
-config	TIMA_RKP_DMA_MVA_TO_SETWAY
-	bool
-	depends on TIMA_RKP
-	default n
-	help
-	 Flush cache by set-way for dma?
-
-config TIMA_RKP_DEBUG
-       bool
-       depends on TIMA_RKP
-       default n
-       help
-         TIMA debug infrastructure.
-
-config TIMA_LKMAUTH
-       bool "Enable LKM authentication TIMA feature"
-       default n
-       help
-         TIMA authenticates loaded kernel modules. Disable it if you don't
-         want TIMA enabled.
-
-config TIMA_LKMAUTH_CODE_PROT
-       bool
-       depends on TIMA_LKMAUTH
-       default y
-       help
-         When enabled, this feature will mark all Executable sections in an
-         LKM as RO
-
-config TIMA_TEST_INFRA
-       tristate "Testing infrastructure for TIMA"
-       default n
-       help
-         Kernel bits of the TIMA test infrastructure
-
-config TIMA_UEVENT
-       bool "Uevent message propagation for TIMA"
-       default n
-       help
-         Uevent messages for TIMA PKM/LKM
-
-config TIMA_LOG
-       bool "Log dumping support for TIMA"
-       default n
-       help
-         TIMA Log dumping support
-
-config PCM_ROUTE_VOICE_STUB
-	default n
-	bool "External AUXPCM device route to SLIMBUS or WCN(BT) using the VOICE_STUB Front End"
-	depends on ARCH_MSM8974
-	
 endif

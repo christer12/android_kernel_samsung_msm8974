@@ -31,7 +31,6 @@
 #include <media/msmb_camera.h>
 
 #define MSM_POST_EVT_TIMEOUT 5000
-#define MSM_POST_STREAMOFF_EVT_TIMEOUT 9000
 #define MSM_POST_EVT_NOTIMEOUT 0xFFFFFFFF
 
 struct msm_video_device {
@@ -102,8 +101,6 @@ struct msm_session {
 	struct mutex lock;
 };
 
-int msm_cam_get_module_init_status(void);
-int msm_module_init_status(void);
 int msm_post_event(struct v4l2_event *event, int timeout);
 int  msm_create_session(unsigned int session, struct video_device *vdev);
 int msm_destroy_session(unsigned int session_id);

@@ -32,7 +32,6 @@
 #include <mach/iommu.h>
 #include <mach/msm_iommu_priv.h>
 #include <mach/iommu_perfmon.h>
-#include <mach/msm_bus.h>
 #include "msm_iommu_pagetable.h"
 
 /* bitmap of the page sizes currently supported */
@@ -42,18 +41,15 @@ static DEFINE_MUTEX(msm_iommu_lock);
 
 static int __enable_regulators(struct msm_iommu_drvdata *drvdata)
 {
-	int ret = 0;
-	if (drvdata->gdsc) {
-		ret = regulator_enable(drvdata->gdsc);
-		if (ret)
-			goto fail;
+	int ret = regulator_enable(drvdata->gdsc);
+	if (ret)
+		goto fail;
 
-		if (drvdata->alt_gdsc)
-			ret = regulator_enable(drvdata->alt_gdsc);
+	if (drvdata->alt_gdsc)
+		ret = regulator_enable(drvdata->alt_gdsc);
 
-		if (ret)
-			regulator_disable(drvdata->gdsc);
-	}
+	if (ret)
+		regulator_disable(drvdata->gdsc);
 fail:
 	return ret;
 }
@@ -63,22 +59,7 @@ static void __disable_regulators(struct msm_iommu_drvdata *drvdata)
 	if (drvdata->alt_gdsc)
 		regulator_disable(drvdata->alt_gdsc);
 
-	if (drvdata->gdsc)
-		regulator_disable(drvdata->gdsc);
-}
-
-static int apply_bus_vote(struct msm_iommu_drvdata *drvdata, unsigned int vote)
-{
-	int ret = 0;
-
-	if (drvdata->bus_client) {
-		ret = msm_bus_scale_client_update_request(drvdata->bus_client,
-							  vote);
-		if (ret)
-			pr_err("%s: Failed to vote for bus: %d\n", __func__,
-				vote);
-	}
-	return ret;
+	regulator_disable(drvdata->gdsc);
 }
 
 static int __enable_clocks(struct msm_iommu_drvdata *drvdata)
@@ -135,12 +116,12 @@ static void _iommu_lock_release(void)
 struct iommu_access_ops iommu_access_ops_v1 = {
 	.iommu_power_on = __enable_regulators,
 	.iommu_power_off = __disable_regulators,
-	.iommu_bus_vote = apply_bus_vote,
 	.iommu_clk_on = __enable_clocks,
 	.iommu_clk_off = __disable_clocks,
 	.iommu_lock_acquire = _iommu_lock_acquire,
 	.iommu_lock_release = _iommu_lock_release,
 };
+EXPORT_SYMBOL(iommu_access_ops_v1);
 
 void iommu_halt(const struct msm_iommu_drvdata *iommu_drvdata)
 {
@@ -532,10 +513,6 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	if (ret)
 		goto fail;
 
-	ret = apply_bus_vote(iommu_drvdata, 1);
-	if (ret)
-		goto fail;
-
 	ret = __enable_clocks(iommu_drvdata);
 	if (ret) {
 		__disable_regulators(iommu_drvdata);
@@ -625,8 +602,6 @@ static void msm_iommu_detach_dev(struct iommu_domain *domain,
 
 	__disable_clocks(iommu_drvdata);
 
-	apply_bus_vote(iommu_drvdata, 0);
-
 	__disable_regulators(iommu_drvdata);
 
 	list_del_init(&ctx_drvdata->attached_elm);
@@ -655,6 +630,7 @@ static int msm_iommu_map(struct iommu_domain *domain, unsigned long va,
 	if (ret)
 		goto fail;
 
+	ret = __flush_iotlb_va(domain, va);
 fail:
 	mutex_unlock(&msm_iommu_lock);
 	return ret;
@@ -704,6 +680,7 @@ static int msm_iommu_map_range(struct iommu_domain *domain, unsigned int va,
 	if (ret)
 		goto fail;
 
+	__flush_iotlb(domain);
 fail:
 	mutex_unlock(&msm_iommu_lock);
 	return ret;
@@ -784,12 +761,10 @@ static int msm_iommu_domain_has_cap(struct iommu_domain *domain,
 	return 0;
 }
 
-void print_ctx_regs(struct msm_iommu_context_regs *regs)
+static void print_ctx_regs(void __iomem *base, int ctx, unsigned int fsr)
 {
-	uint32_t fsr = regs->fsr;
-
 	pr_err("FAR    = %08x    PAR    = %08x\n",
-		 regs->far, regs->par);
+		 GET_FAR(base, ctx), GET_PAR(base, ctx));
 	pr_err("FSR    = %08x [%s%s%s%s%s%s%s%s%s]\n", fsr,
 			(fsr & 0x02) ? "TF " : "",
 			(fsr & 0x04) ? "AFF " : "",
@@ -802,31 +777,13 @@ void print_ctx_regs(struct msm_iommu_context_regs *regs)
 			(fsr & 0x80000000) ? "MULTI " : "");
 
 	pr_err("FSYNR0 = %08x    FSYNR1 = %08x\n",
-		 regs->fsynr0, regs->fsynr1);
+		 GET_FSYNR0(base, ctx), GET_FSYNR1(base, ctx));
 	pr_err("TTBR0  = %08x    TTBR1  = %08x\n",
-		 regs->ttbr0, regs->ttbr1);
+		 GET_TTBR0(base, ctx), GET_TTBR1(base, ctx));
 	pr_err("SCTLR  = %08x    ACTLR  = %08x\n",
-		 regs->sctlr, regs->actlr);
+		 GET_SCTLR(base, ctx), GET_ACTLR(base, ctx));
 	pr_err("PRRR   = %08x    NMRR   = %08x\n",
-		 regs->prrr, regs->nmrr);
-}
-
-static void __print_ctx_regs(void __iomem *base, int ctx, unsigned int fsr)
-{
-	struct msm_iommu_context_regs regs = {
-		.far = GET_FAR(base, ctx),
-		.par = GET_PAR(base, ctx),
-		.fsr = fsr,
-		.fsynr0 = GET_FSYNR0(base, ctx),
-		.fsynr1 = GET_FSYNR1(base, ctx),
-		.ttbr0 = GET_TTBR0(base, ctx),
-		.ttbr1 = GET_TTBR1(base, ctx),
-		.sctlr = GET_SCTLR(base, ctx),
-		.actlr = GET_ACTLR(base, ctx),
-		.prrr = GET_PRRR(base, ctx),
-		.nmrr = GET_NMRR(base, ctx),
-	};
-	print_ctx_regs(&regs);
+		 GET_PRRR(base, ctx), GET_NMRR(base, ctx));
 }
 
 irqreturn_t msm_iommu_fault_handler_v2(int irq, void *dev_id)
@@ -882,7 +839,7 @@ irqreturn_t msm_iommu_fault_handler_v2(int irq, void *dev_id)
 			pr_err("context = %s (%d)\n", ctx_drvdata->name,
 							ctx_drvdata->num);
 			pr_err("Interesting registers:\n");
-			__print_ctx_regs(drvdata->base, ctx_drvdata->num, fsr);
+			print_ctx_regs(drvdata->base, ctx_drvdata->num, fsr);
 		}
 
 		SET_FSR(drvdata->base, ctx_drvdata->num, fsr);

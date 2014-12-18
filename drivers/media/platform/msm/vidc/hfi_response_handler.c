@@ -44,7 +44,6 @@ static enum vidc_status hfi_map_err_status(int hfi_err)
 	case HFI_ERR_SESSION_UNSUPPORTED_PROPERTY:
 	case HFI_ERR_SESSION_UNSUPPORTED_SETTING:
 	case HFI_ERR_SESSION_INSUFFICIENT_RESOURCES:
-	case HFI_ERR_SESSION_UNSUPPORTED_STREAM:
 		vidc_err = VIDC_ERR_NOT_SUPPORTED;
 		break;
 	case HFI_ERR_SYS_MAX_SESSIONS_REACHED:
@@ -677,7 +676,7 @@ static void hfi_process_session_init_done(
 {
 	struct msm_vidc_cb_cmd_done cmd_done;
 	struct vidc_hal_session_init_done session_init_done;
-	struct hal_session *sess_close = NULL;
+
 	dprintk(VIDC_DBG, "RECEIVED:SESSION_INIT_DONE");
 	if (sizeof(struct hfi_msg_sys_session_init_done_packet)
 		> pkt->size) {
@@ -697,16 +696,6 @@ static void hfi_process_session_init_done(
 	if (!cmd_done.status) {
 		cmd_done.status = hfi_process_sess_init_done_prop_read(
 			pkt, &session_init_done);
-	} else {
-		sess_close = (struct hal_session *)pkt->session_id;
-		if (sess_close) {
-			dprintk(VIDC_INFO,
-				"Sess init failed: Deleting session: 0x%x 0x%p",
-				sess_close->session_id, sess_close);
-			list_del(&sess_close->list);
-			kfree(sess_close);
-			sess_close = NULL;
-		}
 	}
 	cmd_done.size = sizeof(struct vidc_hal_session_init_done);
 	callback(SESSION_INIT_DONE, &cmd_done);
@@ -786,8 +775,6 @@ static void hfi_process_session_etb_done(
 	data_done.input_done.offset = pkt->offset;
 	data_done.input_done.filled_len = pkt->filled_len;
 	data_done.input_done.packet_buffer = pkt->packet_buffer;
-	data_done.input_done.status =
-		hfi_map_err_status((u32) pkt->error_type);
 	callback(SESSION_ETB_DONE, &data_done);
 }
 
@@ -1028,7 +1015,6 @@ static void hfi_process_session_end_done(
 		sess_close->session_id);
 	list_del(&sess_close->list);
 	kfree(sess_close);
-	sess_close = NULL;
 	callback(SESSION_END_DONE, &cmd_done);
 }
 
@@ -1064,7 +1050,6 @@ static void hfi_process_session_abort_done(
 		sess_close->session_id);
 	list_del(&sess_close->list);
 	kfree(sess_close);
-	sess_close = NULL;
 	callback(SESSION_ABORT_DONE, &cmd_done);
 }
 

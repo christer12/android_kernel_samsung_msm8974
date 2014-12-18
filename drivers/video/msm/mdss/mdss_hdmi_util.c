@@ -187,15 +187,13 @@ void hdmi_setup_video_mode_lut(void)
 	MSM_HDMI_MODES_SET_SUPP_TIMINGS(
 		hdmi_supported_video_mode_lut, MSM_HDMI_MODES_CEA);
 
-#ifndef CONFIG_VIDEO_MHL_V2
 	/* Add all supported extended hdmi modes to the lut */
 	MSM_HDMI_MODES_SET_SUPP_TIMINGS(
 		hdmi_supported_video_mode_lut, MSM_HDMI_MODES_XTND);
 
 	/* Add any other specific DVI timings (DVI modes, etc.) */
-	MSM_HDMI_MODES_SET_SUPP_TIMINGS(
-		hdmi_supported_video_mode_lut, MSM_HDMI_MODES_DVI);
-#endif
+	MSM_HDMI_MODES_SET_TIMING(hdmi_supported_video_mode_lut,
+		HDMI_VFRMT_2560x1600p60_16_9);
 } /* hdmi_setup_video_mode_lut */
 
 const char *hdmi_get_single_video_3d_fmt_2string(u32 format)

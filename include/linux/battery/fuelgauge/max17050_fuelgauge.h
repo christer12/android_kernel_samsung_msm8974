@@ -20,11 +20,6 @@
 
 #include <linux/android_alarm.h>
 
-#if defined(CONFIG_MACH_LT03SKT) || defined(CONFIG_MACH_LT03KTT) || \
-	defined(CONFIG_MACH_LT03LGT)
-#define FUELALERT_CHECK_VOLTAGE_FEATURE
-#endif
-
 /* Slave address should be shifted to the right 1bit.
  * R/W bit should NOT be included.
  */

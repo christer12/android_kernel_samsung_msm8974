@@ -62,15 +62,15 @@ static const unsigned int folder_keymap[] = {
 	KEY(2, 3, KEY_9), 
 	KEY(2, 4, KEY_NUMERIC_POUND),
 	
-	KEY(3, 0, KEY_NET_SEL),	
-	KEY(3, 1, KEY_LEFT), //KEY_RIGHT),
+	KEY(3, 0, KEY_CAMERA),	
+	KEY(3, 1, KEY_RIGHT),
 	KEY(3, 2, KEY_BACK),
 	KEY(3, 3, KEY_UP),	
 	KEY(3, 4, KEY_MENU), 
 	
 	KEY(4, 0, KEY_ENTER), 
 	KEY(4, 1, KEY_DOWN), 
-	KEY(4, 2, KEY_RIGHT), //KEY_LEFT), 
+	KEY(4, 2, KEY_LEFT), 
 #endif	
 };
 
@@ -85,50 +85,19 @@ static struct matrix_keypad_platform_data folder_keypad_data = {
 	.col_gpios		= mpq_col_gpios,
 	.num_row_gpios		= 5,
 	.num_col_gpios		= 5,
-	.col_scan_delay_us	= 5000, //32000,
-	.debounce_ms		= 10, //20,
+	.col_scan_delay_us	= 32000,
+	.debounce_ms		= 20,
 	.wakeup			= 1,
 	.active_low		= 1,
 	.no_autorepeat		= 1,
 };
 
 static struct platform_device folder_keypad_device = {
-	.name           = "montblanc_3x4_keypad", //"matrix-keypad", // "ks02_3x4_keypad",  //"matrix-keypad"
+	.name           = "matrix-keypad", // "ks02_3x4_keypad",  //"matrix-keypad"
 	.id             = -1,
 	.dev            = {
 		.platform_data  = &folder_keypad_data,
 	},
 };
 
-
-
-#if defined(CONFIG_INPUT_FLIP)
-static void flip_init_hw(void)
-{
-	int ret;
-
-
-	ret = gpio_request(44, "HALL_SW");
-	if (ret)
-		pr_err("failed to request gpio(HALL_SW)\n");
-	gpio_tlmm_config(GPIO_CFG(44, 0, GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-	/* s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP); */
-}
-
-struct sec_flip_pdata {
-	int wakeup;
-};
-
-static struct sec_flip_pdata sec_flip_dev_data = {
-	.wakeup			= 1,
-};
-
-static struct platform_device sec_flip_device = {
-	.name = "sec_flip",
-	.id = -1,
-	.dev = {
-		.platform_data = &sec_flip_dev_data,
-	}
-};
-#endif
 

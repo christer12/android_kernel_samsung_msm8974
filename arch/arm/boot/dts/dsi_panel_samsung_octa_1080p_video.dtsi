@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-&soc {
+/ {
 
 	qcom,mdss_dsi_samsung_octa_1080p_video {
 		compatible = "samsung,mdss-amoled-dsi-panel";

@@ -46,7 +46,8 @@
 #define REG_BLUE	0x0A
 #define REG_WHITE	0x0B
 
-#define LIGHT_LOG_TIME	15 /* 15 sec */
+/*lightsnesor log time 150 SEC 200 mec X 150*/
+#define LIGHT_LOG_TIME	150
 #define ALS_REG_NUM	2
 
 enum {
@@ -65,89 +66,90 @@ struct cm3323_p {
 	struct i2c_client *i2c_client;
 	struct input_dev *input;
 	struct mutex power_lock;
-	struct mutex i2c_lock;
+	struct mutex read_lock;
 	struct hrtimer light_timer;
 	struct workqueue_struct *light_wq;
 	struct work_struct work_light;
 	struct device *light_dev;
-	ktime_t poll_delay;
+	ktime_t ns_poll_delay;
 
 	u8 power_state;
 	u16 color[4];
 	int irq;
-	int time_count;
+	int count_log_time;
 };
 
-static int cm3323_i2c_read_word(struct cm3323_p *data,
-		unsigned char reg_addr, u16 *buf)
-{
-        int ret;
-        struct i2c_msg msg[2];
-	unsigned char r_buf[2];
-
-        msg[0].addr = data->i2c_client->addr;
-        msg[0].flags = I2C_M_WR;
-        msg[0].len = 1;
-        msg[0].buf = &reg_addr;
-
-        msg[1].addr = data->i2c_client->addr;
-        msg[1].flags = I2C_M_RD;
-        msg[1].len = 2;
-        msg[1].buf = r_buf;
-
-        ret = i2c_transfer(data->i2c_client->adapter, msg, 2);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - i2c read error %d\n", __func__, ret);
-
-	        return ret;
-	}
-
-	*buf = (u16)r_buf[1];
-	*buf = (*buf << 8) | (u16)r_buf[0];
-
-        return 0;
-}
-
-static int cm3323_i2c_write(struct cm3323_p *data,
-		unsigned char reg_addr, unsigned char buf)
+static int cm3323_i2c_read_word(struct cm3323_p *data, u8 command, u16 *val)
 {
 	int ret = 0;
-	struct i2c_msg msg;
-	unsigned char w_buf[2];
+	int retry = 3;
+	struct i2c_msg msg[2];
+	unsigned char buf[2] = {0,};
+	u16 value = 0;
 
-	mutex_lock(&data->i2c_lock);
+	while (retry--) {
+		/* send slave address & command */
+		msg[0].addr = data->i2c_client->addr;
+		msg[0].flags = I2C_M_WR;
+		msg[0].len = 1;
+		msg[0].buf = &command;
 
-	w_buf[0] = reg_addr;
-	w_buf[1] = buf;
+		/* read word data */
+		msg[1].addr = data->i2c_client->addr;
+		msg[1].flags = I2C_M_RD;
+		msg[1].len = 2;
+		msg[1].buf = buf;
 
-	/* send slave address & command */
-	msg.addr = data->i2c_client->addr;
-	msg.flags = I2C_M_WR;
-	msg.len = 2;
-	msg.buf = (char *)w_buf;
+		ret = i2c_transfer(data->i2c_client->adapter, msg, 2);
 
-	ret = i2c_transfer(data->i2c_client->adapter, &msg, 1);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - i2c write error %d\n", __func__, ret);
-		mutex_unlock(&data->i2c_lock);
-	        return ret;
+		if (ret >= 0) {
+			value = (u16)buf[1];
+			*val = (value << 8) | (u16)buf[0];
+			return ret;
+		}
 	}
 
-	mutex_unlock(&data->i2c_lock);
-	return 0;
+	pr_err("[SENSOR]: %s - i2c transfer error(%d)\n", __func__, ret);
+	return ret;
+}
+
+static int cm3323_i2c_write_byte(struct cm3323_p *data, u8 command, u8 val)
+{
+	int ret = 0;
+	struct i2c_msg msg[1];
+	unsigned char buf[2];
+	int retry = 3;
+
+	while (retry--) {
+		buf[0] = command;
+		buf[1] = val;
+
+		/* send slave address & command */
+		msg->addr = data->i2c_client->addr;
+		msg->flags = I2C_M_WR;
+		msg->len = 2;
+		msg->buf = buf;
+
+		ret = i2c_transfer(data->i2c_client->adapter, msg, 1);
+		if (ret >= 0)
+			return 0;
+	}
+
+	pr_err("[SENSOR]: %s - i2c transfer error(%d)\n", __func__, ret);
+	return ret;
 }
 
 static void cm3323_light_enable(struct cm3323_p *data)
 {
-	cm3323_i2c_write(data, REG_CS_CONF1, als_reg_setting[0][1]);
-	hrtimer_start(&data->light_timer, data->poll_delay,
+	cm3323_i2c_write_byte(data, REG_CS_CONF1, als_reg_setting[0][1]);
+	hrtimer_start(&data->light_timer, data->ns_poll_delay,
 	      HRTIMER_MODE_REL);
 }
 
 static void cm3323_light_disable(struct cm3323_p *data)
 {
 	/* disable setting */
-	cm3323_i2c_write(data, REG_CS_CONF1, als_reg_setting[1][1]);
+	cm3323_i2c_write_byte(data, REG_CS_CONF1, als_reg_setting[1][1]);
 
 	hrtimer_cancel(&data->light_timer);
 	cancel_work_sync(&data->work_light);
@@ -163,21 +165,22 @@ static enum hrtimer_restart cm3323_light_timer_func(struct hrtimer *timer)
 					struct cm3323_p, light_timer);
 
 	queue_work(data->light_wq, &data->work_light);
-	hrtimer_forward_now(&data->light_timer, data->poll_delay);
+	hrtimer_forward_now(&data->light_timer, data->ns_poll_delay);
 
 	return HRTIMER_RESTART;
 }
 
 static void cm3323_work_func_light(struct work_struct *work)
 {
-	struct cm3323_p *data = container_of(work, struct cm3323_p, work_light);
+	struct cm3323_p *data = container_of(work, struct cm3323_p,
+						    work_light);
 
-	mutex_lock(&data->i2c_lock);
+	mutex_lock(&data->read_lock);
 	cm3323_i2c_read_word(data, REG_RED, &data->color[0]);
 	cm3323_i2c_read_word(data, REG_GREEN, &data->color[1]);
 	cm3323_i2c_read_word(data, REG_BLUE, &data->color[2]);
 	cm3323_i2c_read_word(data, REG_WHITE, &data->color[3]);
-	mutex_unlock(&data->i2c_lock);
+	mutex_unlock(&data->read_lock);
 
 	input_report_rel(data->input, REL_RED, data->color[0] + 1);
 	input_report_rel(data->input, REL_GREEN, data->color[1] + 1);
@@ -185,15 +188,13 @@ static void cm3323_work_func_light(struct work_struct *work)
 	input_report_rel(data->input, REL_WHITE, data->color[3] + 1);
 	input_sync(data->input);
 
-	if ((ktime_to_ms(data->poll_delay) * (int64_t)data->time_count)
-		>= ((int64_t)LIGHT_LOG_TIME * MSEC_PER_SEC)) {
+	if (data->count_log_time >= LIGHT_LOG_TIME) {
 		pr_info("[SENSOR]: %s - r = %u g = %u b = %u w = %u\n",
 			__func__, data->color[0], data->color[1],
 			data->color[2], data->color[3]);
-		data->time_count = 0;
-	} else {
-		data->time_count++;
-	}
+		data->count_log_time = 0;
+	} else
+		data->count_log_time++;
 }
 
 /* sysfs */
@@ -203,7 +204,7 @@ static ssize_t cm3323_poll_delay_show(struct device *dev,
 	struct cm3323_p *data = dev_get_drvdata(dev);
 
 	return snprintf(buf, PAGE_SIZE, "%lld\n",
-			ktime_to_ns(data->poll_delay));
+			ktime_to_ns(data->ns_poll_delay));
 }
 
 static ssize_t cm3323_poll_delay_store(struct device *dev,
@@ -220,8 +221,9 @@ static ssize_t cm3323_poll_delay_store(struct device *dev,
 	}
 
 	mutex_lock(&data->power_lock);
-	if (new_delay != ktime_to_ms(data->poll_delay)) {
-		data->poll_delay = ns_to_ktime(new_delay * NSEC_PER_MSEC);
+	new_delay = new_delay * NSEC_PER_MSEC;
+	if (new_delay != ktime_to_ns(data->ns_poll_delay)) {
+		data->ns_poll_delay = ns_to_ktime(new_delay);
 		if (data->power_state & LIGHT_ENABLED) {
 			cm3323_light_disable(data);
 			cm3323_light_enable(data);
@@ -336,7 +338,7 @@ static int cm3323_setup_reg(struct cm3323_p *data)
 	int ret = 0;
 
 	/* ALS initialization */
-	ret = cm3323_i2c_write(data,
+	ret = cm3323_i2c_write_byte(data,
 			als_reg_setting[0][0],
 			als_reg_setting[0][1]);
 	if (ret < 0) {
@@ -346,7 +348,7 @@ static int cm3323_setup_reg(struct cm3323_p *data)
 	}
 
 	/* turn off */
-	cm3323_i2c_write(data, REG_CS_CONF1, 0x01);
+	cm3323_i2c_write_byte(data, REG_CS_CONF1, 0x01);
 	return ret;
 }
 
@@ -383,8 +385,6 @@ static int cm3323_input_init(struct cm3323_p *data)
 
 	ret = sysfs_create_group(&dev->dev.kobj, &light_attribute_group);
 	if (ret < 0) {
-		sensors_remove_symlink(&data->input->dev.kobj,
-			data->input->name);
 		input_unregister_device(dev);
 		return ret;
 	}
@@ -417,7 +417,7 @@ static int cm3323_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, data);
 
 	mutex_init(&data->power_lock);
-	mutex_init(&data->i2c_lock);
+	mutex_init(&data->read_lock);
 
 	/* Check if the device is there or not. */
 	ret = cm3323_setup_reg(data);
@@ -433,9 +433,8 @@ static int cm3323_probe(struct i2c_client *client,
 
 	/* light_timer settings. we poll for light values using a timer. */
 	hrtimer_init(&data->light_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	data->poll_delay = ns_to_ktime(200 * NSEC_PER_MSEC);
+	data->ns_poll_delay = ns_to_ktime(200 * NSEC_PER_MSEC);
 	data->light_timer.function = cm3323_light_timer_func;
-	data->time_count = 0;
 
 	/* the timer just fires off a work queue request.  we need a thread
 	   to read the i2c (can be slow and blocking). */
@@ -462,7 +461,7 @@ exit_create_light_workqueue:
 	input_unregister_device(data->input);
 exit_input_init:
 exit_setup_reg:
-	mutex_destroy(&data->i2c_lock);
+	mutex_destroy(&data->read_lock);
 	mutex_destroy(&data->power_lock);
 	kfree(data);
 exit_kzalloc:
@@ -483,7 +482,7 @@ static int __devexit cm3323_remove(struct i2c_client *client)
 	destroy_workqueue(data->light_wq);
 
 	/* lock destroy */
-	mutex_destroy(&data->i2c_lock);
+	mutex_destroy(&data->read_lock);
 	mutex_destroy(&data->power_lock);
 
 	/* sysfs destroy */

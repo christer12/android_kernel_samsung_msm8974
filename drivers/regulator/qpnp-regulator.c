@@ -514,10 +514,8 @@ static int qpnp_regulator_vs_enable(struct regulator_dev *rdev)
 {
 	struct qpnp_regulator *vreg = rdev_get_drvdata(rdev);
 
-	if (vreg->ocp_irq) {
-		vreg->ocp_count = 0;
+	if (vreg->ocp_irq)
 		vreg->vs_enable_time = ktime_get();
-	}
 
 	return qpnp_regulator_common_enable(rdev);
 }

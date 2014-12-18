@@ -25,10 +25,6 @@
 #include <linux/input/matrix_keypad.h>
 #include <linux/slab.h>
 
-#if defined(CONFIG_MACH_MONTBLANC)
-	static int check_key_press;
-#endif
-
 struct matrix_keypad {
 	const struct matrix_keypad_platform_data *pdata;
 	struct input_dev *input_dev;
@@ -160,12 +156,6 @@ static void matrix_keypad_scan(struct work_struct *work)
 #if defined(CONFIG_MACH_MONTBLANC)    // jjlee for debug
 			printk("[key] [%d:%d] %x, %s\n", row, col, (new_state[col] & (1 << row)), 
 			     !(!(new_state[col] & (1 << row))) ?	"pressed" : "released");
-
-			if(!(!(new_state[col] & (1 << row)))){
-				check_key_press++;
-			}else{
-				check_key_press--;
-			}
 #endif			
 			input_report_key(input_dev,
 					 keypad->keycodes[code],
@@ -183,16 +173,6 @@ static void matrix_keypad_scan(struct work_struct *work)
 	enable_row_irqs(keypad);
 	mutex_unlock(&keypad->lock);
 }
-
-#if defined(CONFIG_MACH_MONTBLANC)
-int check_short_key(void)
-{
-	int ret;
-		ret = !(!check_key_press);
-	return ret;
-}
-EXPORT_SYMBOL(check_short_key);
-#endif
 
 static irqreturn_t matrix_keypad_interrupt(int irq, void *id)
 {
@@ -487,11 +467,6 @@ static int __devinit matrix_keypad_probe(struct platform_device *pdev)
 	device_init_wakeup(&pdev->dev, pdata->wakeup);
 	platform_set_drvdata(pdev, keypad);
 
-#if 0//defined(CONFIG_MACH_MONTBLANC)	//key sleep temp code 
-	keypad->stopped = false;
-	mb();
-	schedule_delayed_work(&keypad->work, 0);
-#endif	
 	return 0;
 
 err_free_mem:
@@ -535,11 +510,7 @@ static struct platform_driver matrix_keypad_driver = {
 	.probe		= matrix_keypad_probe,
 	.remove		= __devexit_p(matrix_keypad_remove),
 	.driver		= {
-#if defined(CONFIG_MACH_MONTBLANC)	
-		.name	= "montblanc_3x4_keypad",
-#else		
 		.name	= "matrix-keypad",
-#endif
 		.owner	= THIS_MODULE,
 #ifdef CONFIG_PM
 		.pm	= &matrix_keypad_pm_ops,

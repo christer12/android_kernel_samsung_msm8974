@@ -116,7 +116,6 @@
 			qcom,chg-term-ua = <100000>;
 			qcom,batt-type = <0>;
 			qcom,low-voltage-threshold = <3420000>;
-			qcom,tm-temp-margin = <5000>;
 			qcom,low-ocv-correction-limit-uv = <100>;
 			qcom,high-ocv-correction-limit-uv = <50>;
 			qcom,hold-soc-est = <3>;
@@ -136,15 +135,14 @@
 						<0x0 0x40 0x6>,
 						<0x0 0x40 0x7>;
 
-				interrupt-names = "cc_thr",
-						  "ocv_for_r",
-						  "good_ocv",
-						  "charge_begin",
-						  "ocv_thr",
-						  "sw_cc_thr",
+				interrupt-names = "vsense_for_r",
 						  "vsense_avg",
-						  "vsense_for_r";
-
+						  "sw_cc_thr",
+						  "ocv_thr",
+						  "charge_begin",
+						  "good_ocv",
+						  "ocv_for_r",
+						  "cc_thr";
 			};
 		};
 
@@ -174,10 +172,9 @@
 			status = "disabled";
 
 			qcom,vddmax-mv = <4200>;
-			qcom,vddsafe-mv = <4230>;
-			qcom,vinmin-mv = <4300>;
+			qcom,vddsafe-mv = <4200>;
+			qcom,vinmin-mv = <4200>;
 			qcom,ibatmax-ma = <1500>;
-			qcom,ibatterm-ma = <100>;
 			qcom,ibatsafe-ma = <1500>;
 			qcom,thermal-mitigation = <1500 700 600 325>;
 			qcom,cool-bat-decidegc = <100>;
@@ -186,8 +183,7 @@
 			qcom,warm-bat-decidegc = <450>;
 			qcom,warm-bat-mv = <4100>;
 			qcom,ibatmax-cool-ma = <350>;
-			qcom,vbatdet-delta-mv = <100>;
-			qcom,resume-soc = <99>;
+			qcom,vbatdet-delta-mv = <350>;
 			qcom,tchg-mins = <150>;
 
 			qcom,chgr@1000 {
@@ -249,7 +245,7 @@
 
 			};
 
-			pm8941_chg_otg: qcom,usb-chgpth@1300 {
+			qcom,usb-chgpth@1300 {
 				status = "disabled";
 				reg = <0x1300 0x100>;
 				interrupts =	<0 0x13 0x0>,
@@ -271,7 +267,7 @@
 							"dcin-valid";
 			};
 
-			pm8941_chg_boost: qcom,boost@1500 {
+			qcom,boost@1500 {
 				status = "disabled";
 				reg = <0x1500 0x100>;
 				interrupts =	<0x0 0x15 0x0>,
@@ -553,7 +549,6 @@
 			interrupt-names = "eoc-int-en-set";
 			qcom,adc-bit-resolution = <15>;
 			qcom,adc-vdd-reference = <1800>;
-			qcom,vadc-poll-eoc;
 
 			chan@0 {
 				label = "usb_in";
@@ -589,10 +584,10 @@
 			};
 
 			chan@3 {
-				label = "spare1_div3";
+				label = "spare1";
 				reg = <3>;
 				qcom,decimation = <0>;
-				qcom,pre-div-channel-scaling = <1>;
+				qcom,pre-div-channel-scaling = <6>;
 				qcom,calibration-type = "absolute";
 				qcom,scale-function = <0>;
 				qcom,hw-settle-time = <0>;
@@ -600,10 +595,10 @@
 			};
 
 			chan@4 {
-				label = "usb_id_mv";
+				label = "spare2";
 				reg = <4>;
 				qcom,decimation = <0>;
-				qcom,pre-div-channel-scaling = <1>;
+				qcom,pre-div-channel-scaling = <6>;
 				qcom,calibration-type = "absolute";
 				qcom,scale-function = <0>;
 				qcom,hw-settle-time = <0>;
@@ -796,7 +791,6 @@
 			interrupt-names = "eoc-int-en-set";
 			qcom,adc-bit-resolution = <16>;
 			qcom,adc-vdd-reference = <1800>;
-			qcom,iadc-poll-eoc;
 
 			chan@0 {
 				label = "internal_rsense";
@@ -878,7 +872,7 @@
 				reg = <0xb5>;
 				qcom,decimation = <0>;
 				qcom,pre-div-channel-scaling = <0>;
-				qcom,calibration-type = "ratiometric";
+				qcom,calibration-type = "absolute";
 				qcom,scale-function = <2>;
 				qcom,hw-settle-time = <2>;
 				qcom,fast-avg-setup = <3>;
@@ -1234,7 +1228,6 @@
 			compatible = "qcom,leds-qpnp";
 			reg = <0xd300 0x100>;
 			label = "flash";
-			flash_boost-supply = <&pm8941_chg_boost>;
 		};
 
 		qcom,leds@d400 {
@@ -1321,12 +1314,6 @@
 			label = "wled";
 		};
 
-		qcom,leds@e200 {
-			compatible = "qcom,leds-qpnp";
-			reg = <0xe200 0x100>;
-			label = "kpdbl";
-		};
-
 		pwm@b100 {
 			compatible = "qcom,qpnp-pwm";
 			reg = <0xb100 0x100>,
@@ -1390,38 +1377,5 @@
 			reg-names = "qpnp-lpg-channel-base", "qpnp-lpg-lut-base";
 			qcom,channel-id = <7>;
 		};
-
-		pwm@e400 {
-			compatible = "qcom,qpnp-pwm";
-			reg = <0xe400 0x100>,
-			      <0xe342 0x7e>;
-			reg-names = "qpnp-lpg-channel-base", "qpnp-lpg-lut-base";
-			qcom,channel-id = <8>;
-		};
-
-		pwm@e500 {
-			compatible = "qcom,qpnp-pwm";
-			reg = <0xe500 0x100>,
-			      <0xe342 0x7e>;
-			reg-names = "qpnp-lpg-channel-base", "qpnp-lpg-lut-base";
-			qcom,channel-id = <9>;
-		};
-
-		pwm@e600 {
-			compatible = "qcom,qpnp-pwm";
-			reg = <0xe600 0x100>,
-			      <0xe342 0x7e>;
-			reg-names = "qpnp-lpg-channel-base", "qpnp-lpg-lut-base";
-			qcom,channel-id = <10>;
-		};
-
-		pwm@e700 {
-			compatible = "qcom,qpnp-pwm";
-			reg = <0xe700 0x100>,
-			      <0xe342 0x1e>;
-			reg-names = "qpnp-lpg-channel-base", "qpnp-lpg-lut-base";
-			qcom,channel-id = <11>;
-		};
-
 	};
 };

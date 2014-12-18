@@ -233,8 +233,8 @@ static int cypress_touchkey_i2c_read(struct i2c_client *client,
 	int retry = 3;
 
 	if (!info->enabled) {
-		dev_info(&client->dev, "%s: touchkey is not enabled\n", __func__);
-		return 0;
+	 dev_info(&client->dev, "%s: touchkey is not enabled\n", __func__);
+	 return 0;
 	}
 
 	while (retry--) {
@@ -258,8 +258,8 @@ static int cypress_touchkey_i2c_write(struct i2c_client *client,
 	int retry = 3;
 
 	if (!info->enabled) {
-		dev_info(&client->dev, "%s: touchkey is not enabled\n", __func__);
-		return 0;
+	 dev_info(&client->dev, "%s: touchkey is not enabled\n", __func__);
+	 return 0;
 	}
 
 	while (retry--) {
@@ -1477,7 +1477,7 @@ static struct attribute_group touchkey_attr_group = {
 	.attrs = touchkey_attributes,
 };
 
-#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_JS_PROJECT)	/*HLTE temp update block(0426)*/
+#if !defined(CONFIG_SEC_H_PROJECT)	/*HLTE temp update block(0426)*/
 static void cypress_config_gpio_i2c(struct cypress_touchkey_platform_data *pdata, int onoff)
 {
 	if (onoff) {
@@ -1599,7 +1599,7 @@ static int __devinit cypress_touchkey_probe(struct i2c_client *client,
 	int ic_fw_ver;
 	int error;
 	u8 data[6] = { 0, };
-#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_JS_PROJECT)	/*HLTE temp update block(0426)*/
+#if !defined(CONFIG_SEC_H_PROJECT)	/*HLTE temp update block(0426)*/
 	int retry = NUM_OF_RETRY_UPDATE;
 #endif
 	if (!i2c_check_functionality(adapter, I2C_FUNC_I2C))
@@ -1758,7 +1758,7 @@ static int __devinit cypress_touchkey_probe(struct i2c_client *client,
 	dev_info(&info->client->dev, "%s: IC ID Version: 0x%02x\n",
 			__func__, info->fw_id);
 
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_JS_PROJECT)	/*HLTE temp update block(0426)*/
+#if defined(CONFIG_SEC_H_PROJECT)	/*HLTE temp update block(0426)*/
 	dev_info(&client->dev, "[TouchKey] FW update does not need!\n");
 #else
 	if ((info->fw_id & CYPRESS_65_IC_MASK) && (ic_fw_ver >= BASE_FW_VERSION) && (ic_fw_ver < BIN_FW_VERSION)) {
@@ -2036,6 +2036,16 @@ static int __init cypress_touchkey_init(void)
 {
 
 	int ret = 0;
+
+#ifdef CONFIG_SAMSUNG_LPM_MODE
+	extern int poweroff_charging;
+
+	if (poweroff_charging) {
+		pr_info("%s : LPM Charging Mode! return 0\n", __func__);
+		return -ENODEV;
+	}
+#endif
+
 	printk(KERN_ERR "%s: init\n", __func__);
 	ret = i2c_add_driver(&cypress_touchkey_driver);
 	if (ret) {

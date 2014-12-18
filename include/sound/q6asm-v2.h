@@ -70,30 +70,17 @@
 #define COMPRESSED_IO	0x0040
 #define NT_MODE        0x0400
 
+
 #define NO_TIMESTAMP    0xFF00
 #define SET_TIMESTAMP   0x0000
 
 #define SOFT_PAUSE_ENABLE	1
 #define SOFT_PAUSE_DISABLE	0
 
-#define SESSION_MAX		0x08
-#define ASM_CONTROL_SESSION	0x0F
-
-/* payload structure bytes */
-#define READDONE_IDX_STATUS 0
-#define READDONE_IDX_BUFADD_LSW 1
-#define READDONE_IDX_BUFADD_MSW 2
-#define READDONE_IDX_MEMMAP_HDL 3
-#define READDONE_IDX_SIZE 4
-#define READDONE_IDX_OFFSET 5
-#define READDONE_IDX_LSW_TS 6
-#define READDONE_IDX_MSW_TS 7
-#define READDONE_IDX_FLAGS 8
-#define READDONE_IDX_NUMFRAMES 9
-#define READDONE_IDX_SEQ_ID 10
+#define SESSION_MAX	0x08
 
 #define SOFT_PAUSE_PERIOD       30   /* ramp up/down for 30ms    */
-#define SOFT_PAUSE_STEP         100 /* Step value 2ms or 2000us */
+#define SOFT_PAUSE_STEP         2000 /* Step value 2ms or 2000us */
 enum {
 	SOFT_PAUSE_CURVE_LINEAR = 0,
 	SOFT_PAUSE_CURVE_EXP,
@@ -101,7 +88,7 @@ enum {
 };
 
 #define SOFT_VOLUME_PERIOD       30   /* ramp up/down for 30ms    */
-#define SOFT_VOLUME_STEP         100 /* Step value 2ms or 2000us */
+#define SOFT_VOLUME_STEP         2000 /* Step value 2ms or 2000us */
 enum {
 	SOFT_VOLUME_CURVE_LINEAR = 0,
 	SOFT_VOLUME_CURVE_EXP,
@@ -166,8 +153,6 @@ struct audio_client {
 	wait_queue_head_t      cmd_wait;
 	wait_queue_head_t      time_wait;
 	bool                   perf_mode;
-	/* audio cache operations fptr*/
-	int (*fptr_cache_ops)(struct audio_buffer *abuff, int cache_op);
 };
 
 void q6asm_audio_client_free(struct audio_client *ac);
@@ -221,8 +206,6 @@ int q6asm_memory_map(struct audio_client *ac, uint32_t buf_add,
 
 int q6asm_memory_unmap(struct audio_client *ac, uint32_t buf_add,
 							int dir);
-
-int q6asm_unmap_cal_blocks(void);
 
 int q6asm_run(struct audio_client *ac, uint32_t flags,
 		uint32_t msw_ts, uint32_t lsw_ts);

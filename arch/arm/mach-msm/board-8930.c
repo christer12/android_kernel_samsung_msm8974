@@ -96,6 +96,7 @@
 #include "rpm_resources.h"
 #include <mach/mpm.h>
 #include "clock.h"
+#include "smd_private.h"
 #include "pm-boot.h"
 #include "msm_watchdog.h"
 #include "board-8930.h"

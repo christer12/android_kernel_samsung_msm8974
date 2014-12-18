@@ -21,11 +21,7 @@
 #include <linux/usb/composite.h>
 #include <asm/unaligned.h>
 
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-#include <linux/of_gpio.h>
-#define GPIO_REDRIVER_EN 129
 #include "multi_config.h"
-#endif
 /*
 #undef DBG
 #define DBG(dev, fmt, args...) printk(KERN_DEBUG "usb: "fmt, ##args)
@@ -864,15 +860,9 @@ int usb_remove_config(struct usb_composite_dev *cdev,
 
 	if (cdev->config == config)
 		reset_config(cdev);
-	/* Incase the Bind fails we have already deleted the config list */
-	/* Avoid kernel Panic */
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-	if(config->cdev) {
-#endif
-		list_del(&config->list);
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-	}
-#endif
+
+	list_del(&config->list);
+
 	spin_unlock_irqrestore(&cdev->lock, flags);
 
 	return unbind_config(cdev, config);
@@ -1143,7 +1133,7 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	struct usb_function		*f = NULL;
 	u8				endp;
 	struct usb_configuration *c;
-	int 			ret;
+
 
 	if (w_length > USB_BUFSIZ)
 		return value;
@@ -1201,9 +1191,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 				break;
 			/* FALLTHROUGH */
 		case USB_DT_CONFIG:
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-			set_string_mode(w_length);
-#endif
 			value = config_desc(cdev, w_value);
 			if (value >= 0)
 				value = min(w_length, (u16) value);
@@ -1219,6 +1206,9 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 						USB_DT_OTG);
 			break;
 		case USB_DT_STRING:
+#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
+			set_string_mode(w_length);
+#endif
 			value = get_string(cdev, req->buf,
 					w_index, w_value & 0xff);
 			if (value >= 0)
@@ -1249,22 +1239,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		value = set_config(cdev, ctrl, w_value);
 		spin_unlock(&cdev->lock);
 		printk(KERN_DEBUG "usb: SET_CON\n");
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-		/* USB3.0 ch9 set configuration test issue for multi-config */
-		if (value == 0)
-			if (w_value) 
-				set_config_number(w_value -1);
-
-		if (gadget->speed == USB_SPEED_SUPER) {
-			if (get_host_os_type() == 0) {
-				ret = gpio_tlmm_config(GPIO_CFG(GPIO_REDRIVER_EN, 0, GPIO_CFG_OUTPUT,
-				GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-				gpio_set_value(GPIO_REDRIVER_EN,0);
-				ret = gpio_get_value(GPIO_REDRIVER_EN);
-				printk(KERN_INFO "Redriver OFF in Mac OS(gpio 129: %d)\n", ret);
-			}
-		}
-#endif
 		break;
 	case USB_REQ_GET_CONFIGURATION:
 		if (ctrl->bRequestType != USB_DIR_IN)

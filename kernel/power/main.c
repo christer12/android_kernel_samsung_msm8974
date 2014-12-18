@@ -620,7 +620,6 @@ static unsigned long touch_min_freq;
 static unsigned long ltetp_min_freq;
 static unsigned long unicpu_max_freq = MAX_UNICPU_LIMIT;
 
-static unsigned int cpufreq_allow = 0xffffffff;
 
 static int verify_cpufreq_target(unsigned int target)
 {
@@ -647,9 +646,6 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 {
 	unsigned int min = MIN_FREQ_LIMIT;
 	unsigned int max = MAX_FREQ_LIMIT;
-
-	if (!(cpufreq_allow & id))
-		return 0;
 
 	if (freq != 0 && freq != -1 && verify_cpufreq_target(freq)) {
 		if (id == DVFS_APPS_MIN_ID && freq == MIN_LTETP_LOCK) {
@@ -734,28 +730,6 @@ int set_freq_limit(unsigned long id, unsigned int freq)
 	mutex_unlock(&dvfs_mutex);	
 
 	return 0;
-}
-
-static ssize_t cpufreq_allow_show(struct kobject *kobj,
-		struct kobj_attribute *attr, char *buf)
-{
-	return sprintf(buf,
-			"Allow: 0x%x TOUCH(0x1), MIN(0x2), MAX(0x4), THERMAL(0x100)\n",
-			cpufreq_allow);
-}
-
-static ssize_t cpufreq_allow_store(struct kobject *kobj,
-					struct kobj_attribute *attr,
-					const char *buf, size_t n)
-{
-	int ret = 0;
-
-	ret = sscanf(buf, "%x", &cpufreq_allow);
-
-	if (ret != 1)
-		return -EINVAL;
-
-	return n;
 }
 
 static ssize_t cpufreq_min_limit_show(struct kobject *kobj,
@@ -852,7 +826,6 @@ static ssize_t cpufreq_table_store(struct kobject *kobj,
 	return n;
 }
 
-power_attr(cpufreq_allow);
 power_attr(cpufreq_max_limit);
 power_attr(cpufreq_min_limit);
 power_attr(cpufreq_table);
@@ -884,7 +857,6 @@ static struct attribute *g[] = {
 #endif
 #endif
 #ifdef CONFIG_SEC_DVFS
-	&cpufreq_allow_attr.attr,
 	&cpufreq_min_limit_attr.attr,
 	&cpufreq_max_limit_attr.attr,
 	&cpufreq_table_attr.attr,

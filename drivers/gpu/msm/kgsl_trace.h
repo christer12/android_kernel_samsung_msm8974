@@ -539,33 +539,6 @@ TRACE_EVENT(kgsl_mem_sync_cache,
 	)
 );
 
-TRACE_EVENT(kgsl_mem_sync_full_cache,
-
-	TP_PROTO(unsigned int num_bufs, unsigned int bulk_size,
-		unsigned int op),
-
-	TP_ARGS(num_bufs, bulk_size, op),
-
-	TP_STRUCT__entry(
-		__field(unsigned int, num_bufs)
-		__field(unsigned int, bulk_size)
-		__field(unsigned int, op)
-	),
-
-	TP_fast_assign(
-		__entry->num_bufs = num_bufs;
-		__entry->bulk_size = bulk_size;
-		__entry->op = op;
-	),
-
-	TP_printk(
-		"num_bufs=%d bulk_size=%d op=%c%c",
-		__entry->num_bufs, __entry->bulk_size,
-		(__entry->op & KGSL_GPUMEM_CACHE_CLEAN) ? 'c' : '.',
-		(__entry->op & KGSL_GPUMEM_CACHE_INV) ? 'i' : '.'
-	)
-);
-
 DECLARE_EVENT_CLASS(kgsl_mem_timestamp_template,
 
 	TP_PROTO(struct kgsl_device *device, struct kgsl_mem_entry *mem_entry,
@@ -678,28 +651,6 @@ TRACE_EVENT(kgsl_context_detach,
 	)
 );
 
-TRACE_EVENT(kgsl_context_destroy,
-
-	TP_PROTO(struct kgsl_device *device, struct kgsl_context *context),
-
-	TP_ARGS(device, context),
-
-	TP_STRUCT__entry(
-		__string(device_name, device->name)
-		__field(unsigned int, id)
-	),
-
-	TP_fast_assign(
-		__assign_str(device_name, device->name);
-		__entry->id = context->id;
-	),
-
-	TP_printk(
-		"d_name=%s ctx=%u",
-		__get_str(device_name), __entry->id
-	)
-);
-
 TRACE_EVENT(kgsl_mmu_pagefault,
 
 	TP_PROTO(struct kgsl_device *device, unsigned int page,
@@ -786,30 +737,6 @@ TRACE_EVENT(kgsl_fire_event,
 		TP_printk(
 			"ctx=%d ts=%d age=%u",
 			__entry->id, __entry->ts, __entry->age)
-);
-
-TRACE_EVENT(kgsl_active_count,
-
-	TP_PROTO(struct kgsl_device *device, unsigned long ip),
-
-	TP_ARGS(device, ip),
-
-	TP_STRUCT__entry(
-		__string(device_name, device->name)
-		__field(unsigned int, count)
-		__field(unsigned long, ip)
-	),
-
-	TP_fast_assign(
-		__assign_str(device_name, device->name);
-		__entry->count = device->active_cnt;
-		__entry->ip = ip;
-	),
-
-	TP_printk(
-		"d_name=%s active_cnt=%x func=%pf",
-		__get_str(device_name), __entry->count, (void *) __entry->ip
-	)
 );
 
 #endif /* _KGSL_TRACE_H */

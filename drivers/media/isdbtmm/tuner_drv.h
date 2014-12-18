@@ -144,12 +144,16 @@ extern void tuner_drv_end( void );
 /* Add End 20121218 No_3 */ 
 
 #if defined(CONFIG_TMM_CHG_CTRL)
-	#define TMM_CHG_TEST_LOG 1
-	#if TMM_CHG_TEST_LOG
-		#define tmm_chg_log printk
-	#else
-		#define tmm_chg_log(A, ...) ;
-	#endif
+
+#define TMM_CHG_TEST_LOG 0
+#if TMM_CHG_TEST_LOG
+#define tmm_chg_log printk
+#else
+#define tmm_chg_log(A, ...) ;
+#endif
+
+void tmm_chg_ctrl_start(void);
+void tmm_chg_ctrl_stop(void);
 #endif
 
 #endif /* _TUNER_DRV_H */

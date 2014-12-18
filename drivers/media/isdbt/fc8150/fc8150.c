@@ -19,8 +19,6 @@
 #include <mach/gpiomux.h>
 #include <linux/of_gpio.h>
 
-
-
 #if defined(CONFIG_ISDBT_ANT_DET)
 static struct wake_lock isdbt_ant_wlock;
 #endif
@@ -32,8 +30,6 @@ static struct wake_lock isdbt_ant_wlock;
 #include "fc8150_regs.h"
 #include "fc8150_isr.h"
 #include "fci_hal.h"
-#include <asm/system_info.h>
-
 
 struct ISDBT_INIT_INFO_T *hInit;
 
@@ -45,17 +41,13 @@ static struct isdbt_platform_data *isdbt_pdata;
 
 
 enum ISDBT_MODE driver_mode = ISDBT_POWEROFF;
-static DEFINE_MUTEX(ringbuffer_lock);
 
 static DECLARE_WAIT_QUEUE_HEAD(isdbt_isr_wait);
 
 static u8 isdbt_isr_sig;
 static struct task_struct *isdbt_kthread;
-#ifdef CONFIG_ISDBT_SPMI
-static unsigned int spmi_addr;
-#endif
-void isdbt_hw_start(void);
-void isdbt_hw_stop(void);
+
+
 
 #ifdef CONFIG_ISDBT_SPMI
 struct isdbt_qpnp_data
@@ -79,20 +71,15 @@ static int __devinit qpnp_isdbt_clk_probe(struct spmi_device *spmi)
 		
 		spmi_data->spmi = spmi;
 		isdbt_spmi = spmi_data;
-                if(system_rev >= 9)
-                {
-                    spmi_addr = 0x5546;
-                }
-                else
-                {
-                    spmi_addr = 0x5246;
-                }
-		rc = spmi_ext_register_readl(spmi->ctrl, spmi->sid, spmi_addr, &reg, 1);
+
+		
+
+		rc = spmi_ext_register_readl(spmi->ctrl, spmi->sid, 0x5246, &reg, 1);
 		if (rc) {
-			printk("Unable to read from addr=0x%x, rc(%d)\n", spmi_addr, rc);
+			printk("Unable to read from addr=%x, rc(%d)\n", 0x5246, rc);
 		}
 
-		printk("%s Register 0x%x contains 0x%x\n", __func__,spmi_addr,  reg);
+		printk("%s Register 0x5246 contains 0x%x\n", __func__, reg);
 
 
 		return 0;
@@ -101,25 +88,22 @@ static int __devinit qpnp_isdbt_clk_probe(struct spmi_device *spmi)
 static int __devexit qpnp_isdbt_clk_remove(struct spmi_device *spmi)
 {
 		u8 reg = 0x00;
-		int rc = spmi_ext_register_writel(spmi->ctrl, spmi->sid, spmi_addr,&reg, 1);
+		int rc = spmi_ext_register_writel(spmi->ctrl, spmi->sid, 0x5246,&reg, 1);
 		if (rc) {
-				printk("Unable to write from addr=%x, rc(%d)\n", spmi_addr, rc);
+				printk("Unable to write from addr=%x, rc(%d)\n", 0x5246, rc);
 		}
 		return 0;
 }
+
 static struct of_device_id spmi_match_table[] = {
-		    {  
-                          .compatible = "qcom,qpnp-clkrf2"
-			},
-			{  
-                          .compatible = "qcom,qpnp-clkbb2"
+		    {   .compatible = "qcom,qpnp-clkbb2",
 			}
 };
 
 static struct spmi_driver qpnp_isdbt_clk_driver = {
 		    .driver     = {
-					        .name   = "qcom,qpnp-isdbclk", 
-		                    .of_match_table = spmi_match_table,
+					        .name   = "qcom,qpnp-clkbb2",
+					        .of_match_table = spmi_match_table,
 			 		    },
 			.probe      = qpnp_isdbt_clk_probe,
 			.remove     = __devexit_p(qpnp_isdbt_clk_remove),
@@ -130,6 +114,7 @@ static struct spmi_driver qpnp_isdbt_clk_driver = {
 
 static irqreturn_t isdbt_irq(int irq, void *dev_id)
 {
+	printk("isdb isdbt_irq\n");
 	isdbt_isr_sig = 1;
 	wake_up_interruptible(&isdbt_isr_wait);
 
@@ -148,7 +133,7 @@ int isdbt_hw_setting(void)
 		printk("isdbt_hw_setting: Couldn't request isdbt_en\n");
 		goto ISBT_EN_ERR;
 	}
-	gpio_direction_output(isdbt_pdata->gpio_en, 0);	//moved to hw_init
+	gpio_direction_output(isdbt_pdata->gpio_en, 0);
 
 	err =	gpio_request(isdbt_pdata->gpio_rst, "isdbt_rst");
 	if (err) {
@@ -162,7 +147,7 @@ int isdbt_hw_setting(void)
 		printk("isdbt_hw_setting: Couldn't request isdbt_irq\n");
 		goto ISDBT_INT_ERR;
 	}
-//	gpio_direction_input(isdbt_pdata->gpio_int);
+	gpio_direction_input(isdbt_pdata->gpio_int);
 
 #ifdef CONFIG_ISDBT_ANT_DET
 	err =	gpio_request(isdbt_pdata->gpio_ant_det, "gpio_ant_det");
@@ -170,7 +155,7 @@ int isdbt_hw_setting(void)
 		printk("isdbt_hw_setting: Couldn't request gpio_ant_det\n");
 		goto ISDBT_ANT_DET_ERR;
 	}
-//	gpio_direction_input(isdbt_pdata->gpio_ant_det);
+	gpio_direction_input(isdbt_pdata->gpio_ant_det);
 #endif
 
 	
@@ -190,7 +175,6 @@ ISBT_EN_ERR:
 
 static void isdbt_gpio_init(void)
 {
-	printk("%s\n",__func__);
 	gpio_tlmm_config(GPIO_CFG(isdbt_pdata->gpio_spi_di, GPIOMUX_FUNC_1,
 					 GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 					 GPIO_CFG_ENABLE);
@@ -211,12 +195,12 @@ static void isdbt_gpio_init(void)
 	gpio_tlmm_config(GPIO_CFG(isdbt_pdata->gpio_en, GPIOMUX_FUNC_GPIO,
 						GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
 						GPIO_CFG_ENABLE);
-	//gpio_set_value(isdbt_pdata->gpio_en, 0);
+	gpio_set_value(isdbt_pdata->gpio_en, 0);
 
 	gpio_tlmm_config(GPIO_CFG(isdbt_pdata->gpio_rst, GPIOMUX_FUNC_GPIO,
 						GPIO_CFG_OUTPUT, GPIO_CFG_PULL_UP, GPIO_CFG_2MA),
 						GPIO_CFG_ENABLE);
-	//gpio_set_value(isdbt_pdata->gpio_rst, 0);
+	gpio_set_value(isdbt_pdata->gpio_rst, 0);
 
 	gpio_tlmm_config(GPIO_CFG(isdbt_pdata->gpio_int, GPIOMUX_FUNC_GPIO,
 		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
@@ -229,16 +213,17 @@ static void isdbt_gpio_init(void)
 void isdbt_hw_init(void)
 {
 	int i = 0;
+#ifdef CONFIG_ISDBT_SPMI	
+	u8 reg = 0x00;
 
+#endif
 	while (driver_mode == ISDBT_DATAREAD) {
 		msWait(100);
 		if (i++ > 5)
 			break;
 	}
 
-	printk("%s START\n", __func__);
-	
-
+	printk("isdbt_hw_init\n");
 	gpio_tlmm_config(GPIO_CFG(isdbt_pdata->gpio_int, GPIOMUX_FUNC_GPIO,
         GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
         GPIO_CFG_ENABLE);
@@ -247,92 +232,48 @@ void isdbt_hw_init(void)
         GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
         GPIO_CFG_ENABLE);
 #endif
-	isdbt_hw_start();
-}
 
-void isdbt_hw_start(void)
-{
-#ifdef CONFIG_ISDBT_SPMI	
-	u8 reg = 0x00;
-
-#endif
-	
-#ifdef CONFIG_ISDBT_ANT_DET
-	gpio_direction_input(isdbt_pdata->gpio_ant_det);
-#endif
-	//gpio_direction_output(isdbt_pdata->gpio_en, 1);
 	gpio_set_value(isdbt_pdata->gpio_en, 1);
-
-	gpio_direction_input(isdbt_pdata->gpio_int);	
-	//gpio_direction_output(isdbt_pdata->gpio_rst, 1);
-	//gpio_set_value(isdbt_pdata->gpio_rst, 1);
-	mdelay(3);
-#ifdef CONFIG_ISDBT_SPMI
-	printk("%s, Enabling ISDBT_CLK\n", __func__);
-	printk("%s Writing 0x80 to register 0x5246\n", __func__);
-
-	reg = 0x80;
-	if(isdbt_spmi)
-	{
-		int rc = spmi_ext_register_writel(isdbt_spmi->spmi->ctrl, isdbt_spmi->spmi->sid, spmi_addr,&reg, 1);
-		if (rc) {
-				printk("%s, Unable to write from addr=0x%x, rc(%d)\n", __func__, spmi_addr, rc);
-		}
-	}
-	else
-		printk("%s ERROR !! isdbt_spmi is NULL !!\n", __func__);
-#endif	
-	udelay(600);
-	
-	//mdelay(5);  // removed
+	gpio_set_value(isdbt_pdata->gpio_rst, 1);
+	mdelay(5);
 	gpio_set_value(isdbt_pdata->gpio_rst, 0);
 	mdelay(1);
 	gpio_set_value(isdbt_pdata->gpio_rst, 1);
 
 	driver_mode = ISDBT_POWERON;
-
-	printk("%s \n END. driver_mode=%d ", __func__, driver_mode);	
-}
-
-/*POWER_OFF */
-void isdbt_hw_stop(void)
-{
-#ifdef CONFIG_ISDBT_SPMI
-	u8 reg = 0x00;
-#endif	
-
-	printk("%st\n", __func__);
-
-	driver_mode = ISDBT_POWEROFF;
 	
-#ifdef CONFIG_ISDBT_SPMI	
-	printk("%s, Tuning ISDBT_CLK off\n", __func__);
-	printk("%s Writing 0x00 to register 0x%x\n", __func__, spmi_addr);                
 
-	reg = 0x00;
+#ifdef CONFIG_ISDBT_SPMI
+	printk("Enabling ISDBT_CLK\n");
+	printk("%s Writing 0x80 to register 0x5246\n", __func__);
+
+	reg = 0x80;
 	if(isdbt_spmi)
 	{
-		int rc = spmi_ext_register_writel(isdbt_spmi->spmi->ctrl, isdbt_spmi->spmi->sid, spmi_addr,&reg, 1);
- 
+		int rc = spmi_ext_register_writel(isdbt_spmi->spmi->ctrl, isdbt_spmi->spmi->sid, 0x5246,&reg, 1);//shubham
 		if (rc) {
-				printk("%s, Unable to write from addr=%x, rc(%d)\n", __func__, spmi_addr, rc );
+				printk("Unable to write from addr=%x, rc(%d)\n", 0x5246, rc);
 		}
 	}
 	else
 		printk("%s ERROR !! isdbt_spmi is NULL !!\n", __func__);
-#endif		
-	
-	gpio_set_value(isdbt_pdata->gpio_en, 0);
+#endif	
 
+	
 }
 
+/*POWER_OFF */
 void isdbt_hw_deinit(void)
 {
-
+#ifdef CONFIG_ISDBT_SPMI
+	u8 reg = 0x00;
+#endif	
 	printk("isdbt_hw_deinit\n");
-
-	isdbt_hw_stop();
+	driver_mode = ISDBT_POWEROFF;
+	gpio_set_value(isdbt_pdata->gpio_en, 0);
+		
 	
+
 	gpio_tlmm_config(GPIO_CFG(isdbt_pdata->gpio_int, GPIOMUX_FUNC_GPIO,
         GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
         GPIO_CFG_ENABLE);
@@ -341,6 +282,21 @@ void isdbt_hw_deinit(void)
         GPIO_CFG_INPUT, GPIO_CFG_PULL_UP, GPIO_CFG_2MA),
         GPIO_CFG_ENABLE);
 #endif
+#ifdef CONFIG_ISDBT_SPMI
+	printk("Tuning ISDBT_CLK off\n");
+	printk("%s Writing 0x80 to register 0x5246\n", __func__);
+
+	reg = 0x00;
+	if(isdbt_spmi)
+	{
+		int rc = spmi_ext_register_writel(isdbt_spmi->spmi->ctrl, isdbt_spmi->spmi->sid, 0x5246,&reg, 1);
+		if (rc) {
+				printk("Unable to write from addr=%x, rc(%d)\n", 0x5246, rc);
+		}
+	}
+	else
+		printk("%s ERROR !! isdbt_spmi is NULL !!\n", __func__);
+#endif		
 
 }
 
@@ -351,25 +307,27 @@ int data_callback(u32 hDevice, u8 *data, int len)
 	struct list_head *temp;
 	hInit = (struct ISDBT_INIT_INFO_T *)hDevice;
 
+	printk("isdb data_callback len = %d\n", len);
 
 	list_for_each(temp, &(hInit->hHead))
 	{
 		struct ISDBT_OPEN_INFO_T *hOpen;
+		printk("isdb data_callback open \n");
 		hOpen = list_entry(temp, struct ISDBT_OPEN_INFO_T, hList);
 
 		if (hOpen->isdbttype == TS_TYPE) {
-			mutex_lock(&ringbuffer_lock);
 			if (fci_ringbuffer_free(&hOpen->RingBuffer) < (len+2)) {
 				/*PRINTF(hDevice, "f"); */
-				/* return 0 */;
-				FCI_RINGBUFFER_SKIP(&hOpen->RingBuffer, len);
+				return 0;
 			}
+
+			FCI_RINGBUFFER_WRITE_BYTE(&hOpen->RingBuffer, len >> 8);
+			FCI_RINGBUFFER_WRITE_BYTE(&hOpen->RingBuffer,
+								len & 0xff);
 
 			fci_ringbuffer_write(&hOpen->RingBuffer, data, len);
 
 			wake_up_interruptible(&(hOpen->RingBuffer.queue));
-
-			mutex_unlock(&ringbuffer_lock);
 		}
 	}
 
@@ -378,16 +336,23 @@ int data_callback(u32 hDevice, u8 *data, int len)
 
 static int isdbt_thread(void *hDevice)
 {
+	static DEFINE_MUTEX(thread_lock);
+
 	struct ISDBT_INIT_INFO_T *hInit = (struct ISDBT_INIT_INFO_T *)hDevice;
 
 	set_user_nice(current, -20);
 
+	printk("isdbt_thread started\n");
+	PRINTF(hInit, "isdbt_kthread enter\n");
+
+	
 	BBM_TS_CALLBACK_REGISTER((u32)hInit, data_callback);
 
 	while (1) {
 		wait_event_interruptible(isdbt_isr_wait,
 			isdbt_isr_sig || kthread_should_stop());
 
+		printk("isdb thread started work\n");
 		if (driver_mode == ISDBT_POWERON) {
 			driver_mode = ISDBT_DATAREAD;
 			BBM_ISR(hInit);
@@ -425,8 +390,11 @@ int isdbt_open(struct inode *inode, struct file *filp)
 	struct ISDBT_OPEN_INFO_T *hOpen;
 
 	printk("isdbt_open. \n");
+	PRINTF(hInit, "isdbt open\n");
+
 	hOpen = kmalloc(sizeof(struct ISDBT_OPEN_INFO_T), GFP_KERNEL);
 
+	printk("isdb allocating ring buffer of %d bytes\n", RING_BUFFER_SIZE);
 	hOpen->buf = kmalloc(RING_BUFFER_SIZE, GFP_KERNEL);
 	hOpen->isdbttype = 0;
 
@@ -453,18 +421,16 @@ ssize_t isdbt_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 	struct ISDBT_OPEN_INFO_T *hOpen
 		= (struct ISDBT_OPEN_INFO_T *)filp->private_data;
 	struct fci_ringbuffer *cibuf = &hOpen->RingBuffer;
-	ssize_t len, read_len = 0;
-	static unsigned int log_count=0;
+	ssize_t len;
 
+	printk("isdb isdbt_read count = %d \n", count);
 	if (!cibuf->data || !count)	{
 		printk("isdbt_read read 0\n");
 		return 0;
 	}
 
 	if (non_blocking && (fci_ringbuffer_empty(cibuf)))	{
-		if(log_count%10 == 0)
-			printk("isdbt_read return EWOULDBLOCK count = %d\n", log_count);
-        log_count++;
+		printk("isdbt_read return EWOULDBLOCK\n"); 
 		return -EWOULDBLOCK;
 	}
 
@@ -474,19 +440,26 @@ ssize_t isdbt_read(struct file *filp, char *buf, size_t count, loff_t *f_pos)
 		return -ERESTARTSYS;
 	}
 
-	mutex_lock(&ringbuffer_lock);
+	printk("isdb isdbt_read receieved event on cibuf->queue \n");
 	avail = fci_ringbuffer_avail(cibuf);
 
-	if (count >= avail)
-		len = avail;
-	else
-		len = count - (count % 188);
+	if (avail < 4) {
+		PRINTF(hInit, "return 00\n");
+		printk("isdbt_read avail<4\n");
+		return 0;
+	}
 
-	read_len = fci_ringbuffer_read_user(cibuf, buf, len);
+	len = FCI_RINGBUFFER_PEEK(cibuf, 0) << 8;
+	len |= FCI_RINGBUFFER_PEEK(cibuf, 1);
 
-	mutex_unlock(&ringbuffer_lock);
-    log_count = 0;
-	return read_len;
+	if (avail < len + 2 || count < len)	{
+		PRINTF(hInit, "return EINVAL\n");
+		return -EINVAL;
+	}
+
+	FCI_RINGBUFFER_SKIP(cibuf, 2);
+
+	return fci_ringbuffer_read_user(cibuf, buf, len);
 }
 
 int isdbt_release(struct inode *inode, struct file *filp)
@@ -685,9 +658,6 @@ long isdbt_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 			f_rf = ((u32)info.buff[0] - 13) * 6000 + 473143;
 			isdbt_isr_check(hInit);
 			res = BBM_TUNER_SET_FREQ(hInit, f_rf);
-			mutex_lock(&ringbuffer_lock);
-			fci_ringbuffer_flush(&hOpen->RingBuffer);
-			mutex_unlock(&ringbuffer_lock);
 			BBM_WRITE(hInit, BBM_BUF_INT, 0x01);
 		}
 		break;
@@ -1034,7 +1004,7 @@ static int isdbt_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 	
-isdbt_gpio_init();
+	isdbt_gpio_init();
 	
 	res = misc_register(&fc8150_misc_device);
 
@@ -1053,6 +1023,7 @@ isdbt_gpio_init();
 		return res;
 	}
 		
+	isdbt_hw_init();
 
 	hInit = kmalloc(sizeof(struct ISDBT_INIT_INFO_T), GFP_KERNEL);
 
@@ -1061,7 +1032,7 @@ isdbt_gpio_init();
 	if (res)
 		PRINTF(hInit, "isdbt host interface select fail!\n");
 
-         isdbt_hw_stop();
+	isdbt_hw_deinit();
 
 	if (!isdbt_kthread)	{
 		PRINTF(hInit, "isdb kthread run\n");
@@ -1108,30 +1079,6 @@ static int isdbt_remove(struct platform_device *pdev)
 
 static int isdbt_suspend(struct platform_device *pdev, pm_message_t mesg)
 {
-       int value;
-#ifdef CONFIG_ISDBT_SPMI	
-	u8 reg = 0x00;
-	printk("%s, Tuning ISDBT_CLK off\n", __func__);
-	printk("%s Writing 0x00 to register 0x%x\n", __func__, spmi_addr);
-
-	if(isdbt_spmi)
-	{
-		int rc = spmi_ext_register_writel(isdbt_spmi->spmi->ctrl, isdbt_spmi->spmi->sid, spmi_addr,&reg, 1);
-		if (rc) {
-				printk("%s, Unable to write from addr=%x, rc(%d)\n", __func__, spmi_addr, rc );
-		}
-	}
-	else
-		printk("%s ERROR !! isdbt_spmi is NULL !!\n", __func__);
-#endif		
-	
-       value = gpio_get_value_cansleep(isdbt_pdata->gpio_en);
-       printk("%s  value = %d\n",__func__,value);
-       if(value == 1)
-       {
-          gpio_set_value(isdbt_pdata->gpio_en, 0);
-       }       
-
 	return 0;
 }
 
@@ -1205,7 +1152,7 @@ void isdbt_exit(void)
 	kfree(hInit);
 
 #ifdef CONFIG_ISDBT_SPMI
-	spmi_driver_unregister(&qpnp_isdbt_clk_driver);      
+	spmi_driver_unregister(&qpnp_isdbt_clk_driver);
 #endif
 }
 

@@ -498,14 +498,22 @@ static int fwu_write_f34_command(unsigned char cmd)
 static int fwu_wait_for_idle(int timeout_ms)
 {
 	int count = 0;
+	int polling_period = STATUS_POLLING_PERIOD_US / MAX_SLEEP_TIME_US;
 	int timeout_count = ((timeout_ms * 1000) / MAX_SLEEP_TIME_US) + 1;
 
 	do {
 		usleep_range(MIN_SLEEP_TIME_US, MAX_SLEEP_TIME_US);
 
 		count++;
-		if (count == timeout_count)
+		if ((timeout_ms == WRITE_WAIT_MS) &&
+				(count >= polling_period) &&
+				((count % polling_period) == 0)) {
 			fwu_read_f34_flash_status();
+		} else if (count == timeout_count) {
+			dev_err(&fwu->rmi4_data->i2c_client->dev,
+					"%s: wait usleep, in writing block [%d]\n",
+					__func__, count);
+		}
 
 		if ((fwu->command == 0x00) && (fwu->flash_status == 0x00))
 			return 0;
@@ -1004,119 +1012,6 @@ static int fwu_start_write_config(void)
 	return retval;
 }
 
-#define CHECKSUM_SIZE	4
-static void synaptics_rmi_calculate_checksum(unsigned short *data,
-				unsigned short len, unsigned long *result)
-{
-	unsigned long temp;
-	unsigned long sum1 = 0xffff;
-	unsigned long sum2 = 0xffff;
-
-	*result = 0xffffffff;
-
-	while (len--) {
-		temp = *data;
-		sum1 += temp;
-		sum2 += sum1;
-		sum1 = (sum1 & 0xffff) + (sum1 >> 16);
-		sum2 = (sum2 & 0xffff) + (sum2 >> 16);
-		data++;
-	}
-
-	*result = sum2 << 16 | sum1;
-
-	return;
-}
-
-static void synaptics_rmi_rewrite_checksum(unsigned char *dest,
-				unsigned long src)
-{
-	dest[0] = (unsigned char)(src & 0xff);
-	dest[1] = (unsigned char)((src >> 8) & 0xff);
-	dest[2] = (unsigned char)((src >> 16) & 0xff);
-	dest[3] = (unsigned char)((src >> 24) & 0xff);
-
-	return;
-}
-
-int synaptics_rmi4_set_tsp_test_result_in_config(int pass_fail)
-
-{
-	struct synaptics_rmi4_data *rmi4_data = fwu->rmi4_data;
-	int retval;
-	unsigned char buf[10] = {0, };
-	unsigned long checksum;
-
-	dev_info(&rmi4_data->i2c_client->dev, "%s: test %s\n",
-			__func__, pass_fail == SYNAPTICS_FACTORY_TEST_PASS ? "PASS" :
-			pass_fail == SYNAPTICS_FACTORY_TEST_FAIL ? "FAIL" : "NONE");
-
-	/* read config from IC */
-	memset(buf, 0, sizeof(buf));
-	snprintf(buf, 2, "%u\n", 1);
-	fwu_sysfs_read_config_store(&rmi4_data->i2c_client->dev, NULL, buf, 1);
-
-	/* set test result value */
-	if (pass_fail == SYNAPTICS_FACTORY_TEST_PASS) {
-		fwu->read_config_buf[0] |= 0x20;
-		fwu->read_config_buf[0] &= ~0x10;	
-	} else if (pass_fail == SYNAPTICS_FACTORY_TEST_FAIL) {
-		fwu->read_config_buf[0] |= 0x10;
-		fwu->read_config_buf[0] &= ~0x20;
-	} else if (pass_fail == SYNAPTICS_FACTORY_TEST_NONE) {
-		fwu->read_config_buf[0] &= ~0x10;
-		fwu->read_config_buf[0] &= ~0x20;
-	}
-
-	/* check CRC checksum value and re-write checksum in config */
-	synaptics_rmi_calculate_checksum((unsigned short *)fwu->read_config_buf,
-			(fwu->config_size - CHECKSUM_SIZE) / 2, &checksum);
-
-	synaptics_rmi_rewrite_checksum(&fwu->read_config_buf[fwu->config_size - CHECKSUM_SIZE],
-			checksum);
-
-	retval = fwu_enter_flash_prog();
-	if (retval < 0)
-		goto err_config_write;
-
-
-	retval = fwu_write_bootloader_id();
-	if (retval < 0)
-		goto err_config_write;
-
-	dev_info(&fwu->rmi4_data->i2c_client->dev,
-			"%s: Bootloader ID written\n",
-			__func__);
-
-	retval = fwu_write_f34_command(CMD_ERASE_CONFIG);
-	if (retval < 0)
-		goto err_config_write;
-
-	dev_info(&fwu->rmi4_data->i2c_client->dev,
-			"%s: Erase command written\n",
-			__func__);
-
-	retval = fwu_wait_for_idle(ERASE_WAIT_MS);
-	if (retval < 0)
-		goto err_config_write;
-
-	dev_info(&fwu->rmi4_data->i2c_client->dev,
-			"%s: Idle status detected\n",
-			__func__);
-
-	fwu_write_blocks(fwu->read_config_buf,
-			fwu->config_block_count, CMD_WRITE_CONFIG_BLOCK);
-
-	dev_info(&fwu->rmi4_data->i2c_client->dev, "%s: Config written\n",
-			__func__);
-
-err_config_write:
-	fwu->rmi4_data->reset_device(fwu->rmi4_data);
-	fwu->rmi4_data->doing_reflash = false;
-
-	return retval;
-}
-
 static int fwu_do_read_config(void)
 {
 	int retval;
@@ -1167,12 +1062,6 @@ static int fwu_do_read_config(void)
 
 	kfree(fwu->read_config_buf);
 	fwu->read_config_buf = kzalloc(fwu->config_size, GFP_KERNEL);
-	if (!fwu->read_config_buf) {
-		dev_err(&fwu->rmi4_data->i2c_client->dev,
-				"%s: Failed to alloc mem for config size data\n",
-				__func__);
-		return -ENOMEM;
-	}
 
 	block_offset[1] |= (fwu->config_area << 5);
 
@@ -1226,9 +1115,7 @@ exit:
 
 int synaptics_fw_updater(unsigned char *fw_data)
 {
-	struct synaptics_rmi4_data *rmi4_data;
 	int retval;
-	int before_test_result = 0, after_test_result = 0;
 
 	if (!fwu)
 		return -ENODEV;
@@ -1242,36 +1129,11 @@ int synaptics_fw_updater(unsigned char *fw_data)
 		return -ENODEV;
 	}
 
-	rmi4_data = fwu->rmi4_data;
-
-#if defined(CONFIG_SEC_F_PROJECT)
-	rmi4_data->firmware_cracked = false;
-#endif
-
 	fwu->ext_data_source = fw_data;
 	fwu->config_area = UI_CONFIG_AREA;
 
-	before_test_result = synaptics_rmi4_tsp_read_test_result(rmi4_data);
-
 	retval = fwu_start_reflash();
-	if (retval < 0)
-		goto out_fw_update;
 
-	after_test_result = synaptics_rmi4_tsp_read_test_result(rmi4_data);
-	if (before_test_result != after_test_result) {
-		dev_info(&rmi4_data->i2c_client->dev, "%s: run set_tsp_test_result. [%x]/[%x]\n",
-				__func__, before_test_result, after_test_result);
-
-		retval = synaptics_rmi4_set_tsp_test_result_in_config(before_test_result);
-		if (retval < 0)
-			dev_err(&rmi4_data->i2c_client->dev, "%s: Failed to write tsp_test_result in config\n",
-					__func__);
-	} else {
-		dev_info(&rmi4_data->i2c_client->dev, "%s: same tsp_test_result. [%x]/[%x]\n",
-				__func__, before_test_result, after_test_result);
-	}
-
-out_fw_update:
 	return retval;
 }
 EXPORT_SYMBOL(synaptics_fw_updater);

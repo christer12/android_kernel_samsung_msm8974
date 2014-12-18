@@ -15,8 +15,10 @@
 
 #include "mdss_fb.h"
 #include "mdss_mdp.h"
-#include "mdss_dsi.h"
 #include "mdss_mdp_rotator.h"
+
+/* wait for at most 2 vsync for lowest refresh rate (24hz) */
+#define KOFF_TIMEOUT msecs_to_jiffies(84)
 
 enum mdss_mdp_writeback_type {
 	MDSS_MDP_WRITEBACK_TYPE_ROTATOR,
@@ -214,7 +216,7 @@ static int mdss_mdp_writeback_format_setup(struct mdss_mdp_writeback_ctx *ctx,
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_YSTRIDE0, ystride0);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_YSTRIDE1, ystride1);
 	mdp_wb_write(ctx, MDSS_MDP_REG_WB_OUT_SIZE, outsize);
-	mdp_wb_write(ctx, MDSS_MDP_REG_WB_DST_WRITE_CONFIG, 0x58); 
+
 	return 0;
 }
 
@@ -353,23 +355,10 @@ static int mdss_mdp_wb_wait4comp(struct mdss_mdp_ctl *ctl, void *arg)
 	if (ctx->comp_cnt == 0)
 		return rc;
 
-	rc = wait_for_completion_timeout(&ctx->wb_comp,
+	rc = wait_for_completion_interruptible_timeout(&ctx->wb_comp,
 			KOFF_TIMEOUT);
-	if (rc == 0) {
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
-		dumpreg();
-		mdp5_dump_regs();
-		mdss_dsi_dump_power_clk(ctl->panel_data, 0);
-		mdss_mdp_dump_power_clk();
-		panic("writeback kickoff timed out");
-#else
-		WARN(1, "writeback kickoff timed out (%d) ctl=%d\n", rc, ctl->num);
-#endif
-
-	} else {
-		rc = 0;
-	}
+	WARN(rc <= 0, "writeback kickoff timed out (%d) ctl=%d\n",
+							rc, ctl->num);
 
 	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false); /* clock off */
 

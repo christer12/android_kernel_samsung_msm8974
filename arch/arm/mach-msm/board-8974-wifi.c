@@ -54,8 +54,7 @@ void *wlan_static_scan_buf0;
 void *wlan_static_scan_buf1;
 void *wlan_static_dhd_info_buf;
 
-#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_SEC_VIENNA_PROJECT) && !defined(CONFIG_SEC_LT03_PROJECT)\
-	&& !defined(CONFIG_MACH_MELIUSCASKT) && !defined(CONFIG_MACH_MELIUSCAKTT) && !defined(CONFIG_MACH_MELIUSCALGT) && !defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_MONTBLANC_PROJECT) && !defined(CONFIG_SEC_VIENNA_PROJECT)
 /* GPIO Expander GPIO mapping */
 enum {
     FPGA_VSIL_A_1P2_EN = 0,
@@ -160,12 +159,10 @@ static int brcm_init_wlan_mem(void)
 #endif /* CONFIG_BROADCOM_WIFI_RESERVED_MEM */
 
 /* MSM8974 WLAN_EN GPIO Number */
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT) || defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT)
 #define GPIO_WL_REG_ON 53
 #elif defined CONFIG_SEC_MONTBLANC_PROJECT
 #define GPIO_WL_REG_ON 53
-#elif defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT)
-#define GPIO_WL_REG_ON 100
 #endif /* defined CONFIG_SEC_H_PROJECT */
 
 /* MSM8974 WLAN_HOST_WAKE GPIO Number */
@@ -174,8 +171,7 @@ static int brcm_init_wlan_mem(void)
 extern int ice_gpiox_get(int num);
 extern int ice_gpiox_set(int num, int val);
 
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)\
-	|| defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT) || defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT)
 static unsigned config_gpio_wl_reg_on[] = {
 	GPIO_CFG(GPIO_WL_REG_ON, 0, GPIO_CFG_OUTPUT,
 		GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA) };
@@ -195,8 +191,7 @@ int __init brcm_wifi_init_gpio(void)
 	unsigned gpio_cfg = GPIO_CFG(get_gpio_wl_host_wake(), 0, GPIO_CFG_INPUT,
 		GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA);
 
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)\
-	|| defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT) || defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT)
 	if (gpio_tlmm_config(config_gpio_wl_reg_on[0], GPIO_CFG_ENABLE))
 		printk(KERN_ERR "%s: Failed to configure GPIO"
 			" - WL_REG_ON\n", __func__);
@@ -235,8 +230,7 @@ static int brcm_wlan_power(int onoff)
 			printk("Failed to request for WL_REG_ON\n");
 		}
 		*/
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)\
-	|| defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT) || defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT)
 		if (gpio_direction_output(GPIO_WL_REG_ON, 1)) {
 			printk(KERN_ERR "%s: check WL_REG_ON pin for H\n", __func__);
 #else
@@ -247,8 +241,7 @@ static int brcm_wlan_power(int onoff)
 			return -EIO;
 		}
 
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)\
-	|| defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT) || defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT)
 		if(gpio_get_value(GPIO_WL_REG_ON)){
 			printk("[%s] gpio ok!!!\n",__func__);
 		}
@@ -271,8 +264,7 @@ static int brcm_wlan_power(int onoff)
 			printk("Failed to request for WL_REG_ON\n");
 		}
 		*/
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT) || defined(CONFIG_SEC_LT03_PROJECT)\
-	|| defined(CONFIG_MACH_MELIUSCASKT) || defined(CONFIG_MACH_MELIUSCAKTT) || defined(CONFIG_MACH_MELIUSCALGT) || defined(CONFIG_SEC_JS_PROJECT) || defined(CONFIG_SEC_F_PROJECT)
+#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_MONTBLANC_PROJECT) || defined(CONFIG_SEC_VIENNA_PROJECT)
 		if (gpio_direction_output(GPIO_WL_REG_ON, 0)) {
 #else
 		if (ice_gpiox_set(FPGA_GPIO_WLAN_EN, 0)) {		// yhcha-patch

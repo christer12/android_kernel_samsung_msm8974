@@ -11,8 +11,8 @@
  */
 
  / {
-	i2c@7 {
-		cell-index = <7>;
+	i2c@99 {
+		cell-index = <99>;
 		compatible = "i2c-gpio";
 		gpios = <&msmgpio 51 0 /* sda */
 		&msmgpio 52 0 /* scl */
@@ -29,9 +29,7 @@
 			interrupt-parent = <&msmgpio>;
 			interrupts = <31 0x1>;
 			sii8240,gpio_mhl_reset = <&msmgpio 60 0x00>;/*&msmgpio 60 0x00*/
-			sii8240,gpio_mhl_reset_type = "msmgpio";
 			sii8240,gpio_mhl_en = <&pm8941_gpios 14 0x00>;
-			sii8240,gpio_mhl_en_type = "pm8941_gpios";
 			sii8240,swing_level = <0x2D>;
 			sii8240,gpio_mhl_irq = <&msmgpio 31 0x00>;
 			sii8240,gpio_mhl_wakeup = <&msmgpio 96 0x00>;

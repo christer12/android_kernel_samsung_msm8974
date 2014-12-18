@@ -425,17 +425,6 @@ config PID_IN_CONTEXTIDR
 	  additional instructions during context switch. Say Y here only if you
 	  are planning to use hardware trace tools with this kernel.
 
-config DEBUG_SET_MODULE_RONX
-	bool "Set loadable kernel module data as NX and text as RO"
-	depends on MODULES
-	---help---
-	  This option helps catch unintended modifications to loadable
-	  kernel module's text and read-only data. It also prevents execution
-	  of module data. Such protection may interfere with run-time code
-	  patching and dynamic kernel tracing - and they might also protect
-	  against certain classes of kernel exploits.
-	  If in doubt, say "N".
-
 config SEC_DEBUG_LMK_MEMINFO
 	bool "Show Meminfo when lmk invoked"
 	default n
@@ -471,28 +460,6 @@ config SEC_DEBUG_LIST_PANIC
 	  Sometimes list corruptions are reported.
 	  But it reports only with WARN level.
 	  This will immediately stop the system.
-
-comment "PowerManagement Feature"
-menuconfig SEC_PM
-	bool "Samsung TN PowerManagement Feature"
-	default y
-	help
-	  Samsung TN PowerManagement Feature.
-
-if SEC_PM
-config SEC_PM_DEBUG
-	bool "Samsung TN PowerManagement Debug Feature"
-	default n
-	help
-	  Samsung TN PowerManagement Debug Feature.
-
-endif
-
-config SEC_FACTORY
-	bool "Samsung TN Factory Test Debug Feature"
-	default n
-	help
-	  Samsung TN Factory Test Debug Feature.
 
 comment "Samsung Rooting Restriction Feature"
 config SEC_RESTRICT_ROOTING

@@ -58,10 +58,6 @@ pmd_t *top_pmd;
 #define RX_AREA_START           _text
 #define RX_AREA_END             __start_rodata
 
-#ifdef CONFIG_TIMA_TEST_INFRA_MODULE
-#define SEC_TO_PGT_MEM_ADDR     0x07b00000
-#endif/*CONFIG_TIMA_TEST_INFRA_MODULE*/
-
 static unsigned int cachepolicy __initdata = CPOLICY_WRITEBACK;
 static unsigned int ecc_mask __initdata = 0;
 pgprot_t pgprot_user;
@@ -311,11 +307,7 @@ static struct mem_type mem_types[] = {
 		.domain    = DOMAIN_KERNEL,
 	},
 	[MT_MEMORY_DMA_READY] = {
-#ifndef CONFIG_TIMA_RKP
 		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY,
-#else
-		.prot_pte  = L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_DIRTY | L_PTE_XN,
-#endif
 		.prot_l1   = PMD_TYPE_TABLE,
 		.domain    = DOMAIN_KERNEL,
 	},
@@ -333,44 +325,6 @@ const struct mem_type *get_mem_type(unsigned int type)
 	return type < ARRAY_SIZE(mem_types) ? &mem_types[type] : NULL;
 }
 EXPORT_SYMBOL(get_mem_type);
-
-#define PTE_SET_FN(_name, pteop) \
-static int pte_set_##_name(pte_t *ptep, pgtable_t token, unsigned long addr, \
-			void *data) \
-{ \
-	pte_t pte = pteop(*ptep); \
-\
-	set_pte_ext(ptep, pte, 0); \
-	return 0; \
-} \
-
-#define SET_MEMORY_FN(_name, callback) \
-int set_memory_##_name(unsigned long addr, int numpages) \
-{ \
-	unsigned long start = addr; \
-	unsigned long size = PAGE_SIZE*numpages; \
-	unsigned end = start + size; \
-\
-	if (start < MODULES_VADDR || start >= MODULES_END) \
-		return -EINVAL;\
-\
-	if (end < MODULES_VADDR || end >= MODULES_END) \
-		return -EINVAL; \
-\
-	apply_to_page_range(&init_mm, start, size, callback, NULL); \
-	flush_tlb_kernel_range(start, end); \
-	return 0;\
-}
-
-PTE_SET_FN(ro, pte_wrprotect)
-PTE_SET_FN(rw, pte_mkwrite)
-PTE_SET_FN(x, pte_mkexec)
-PTE_SET_FN(nx, pte_mknexec)
-
-SET_MEMORY_FN(ro, pte_set_ro)
-SET_MEMORY_FN(rw, pte_set_rw)
-SET_MEMORY_FN(x, pte_set_x)
-SET_MEMORY_FN(nx, pte_set_nx)
 
 /*
  * Adjust the PMD section entries according to the CPU in use.
@@ -1446,16 +1400,7 @@ static void __init map_lowmem(void)
 		create_mapping(&map);
 	}
 }
-#ifdef CONFIG_TIMA_TEST_INFRA_MODULE
-unsigned long *l2_mmap_ptr = NULL;
-EXPORT_SYMBOL(l2_mmap_ptr);
-void tts_debug_func_mod(void)
-{
-	/*function is never called*/
-	return;
-}
-EXPORT_SYMBOL(tts_debug_func_mod);
-#endif/*CONFIG_TIMA_TEST_INFRA_MODULE*/
+
 /*
  * paging_init() sets up the page tables, initialises the zone memory
  * maps, and sets up the zero page, bad page and bad page tables.
@@ -1463,18 +1408,6 @@ EXPORT_SYMBOL(tts_debug_func_mod);
 void __init paging_init(struct machine_desc *mdesc)
 {
 	void *zero_page;
-#ifdef CONFIG_TIMA_TEST_INFRA_MODULE
-	unsigned long* l2_mmap_pmd;
-#endif/*CONFIG_TIMA_TEST_INFRA_MODULE*/
-
-#ifdef CONFIG_TIMA_RKP
-#if 0
-	#ifdef CONFIG_TIMA_RKP_DEBUG
-
-		unsigned long* l2_mmap_pmd;
-	#endif
-#endif
-#endif
 
 	memblock_set_current_limit(arm_lowmem_limit);
 
@@ -1489,30 +1422,7 @@ void __init paging_init(struct machine_desc *mdesc)
 
 	/* allocate the zero page. */
 	zero_page = early_alloc(PAGE_SIZE);
-#ifdef CONFIG_TIMA_TEST_INFRA_MODULE
-        /* Allocate 2MB as this is a section
-                 */
-    l2_mmap_ptr = early_alloc(0x200000);
-    l2_mmap_pmd = (unsigned long*) pmd_off_k((unsigned long)l2_mmap_ptr);
-                /* Point pmd to (sect_to_pgt_start + flags)
-                 */
-    l2_mmap_pmd[0] = (unsigned long)(SEC_TO_PGT_MEM_ADDR + 0x0001940e);
-	
-#endif/*CONFIG_TIMA_TEST_INFRA_MODULE*/
 
-#ifdef CONFIG_TIMA_RKP
-#if 0
-	#ifdef CONFIG_TIMA_RKP_DEBUG
-		/* Allocate 2MB as this is a section
-		 */ 
-		l2_mmap_ptr = early_alloc(0x200000);
-		l2_mmap_pmd = (unsigned long*) pmd_off_k((unsigned long)l2_mmap_ptr);
-		/* Point pmd to (sect_to_pgt_start + flags)
-		 */
-		l2_mmap_pmd[0] = (unsigned long)(SEC_TO_PGT_MEM_ADDR + 0x0001940e);
-	#endif 
-#endif
-#endif
 	bootmem_init();
 
 	empty_zero_page = virt_to_page(zero_page);

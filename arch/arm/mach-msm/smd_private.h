@@ -34,6 +34,37 @@
 #define VERSION_MODEM     9
 #define VERSION_DSPS      10
 
+#define SMD_HEAP_SIZE 512
+
+struct smem_heap_info {
+	unsigned initialized;
+	unsigned free_offset;
+	unsigned heap_remaining;
+	unsigned reserved;
+};
+
+struct smem_heap_entry {
+	unsigned allocated;
+	unsigned offset;
+	unsigned size;
+	unsigned reserved; /* bits 1:0 reserved, bits 31:2 aux smem base addr */
+};
+#define BASE_ADDR_MASK 0xfffffffc
+
+struct smem_proc_comm {
+	unsigned command;
+	unsigned status;
+	unsigned data1;
+	unsigned data2;
+};
+
+struct smem_shared {
+	struct smem_proc_comm proc_comm[4];
+	unsigned version[32];
+	struct smem_heap_info heap_info;
+	struct smem_heap_entry heap_toc[SMD_HEAP_SIZE];
+};
+
 #if defined(CONFIG_MSM_SMD_PKG4)
 struct smsm_interrupt_info {
 	uint32_t aArm_en_mask;
@@ -155,6 +186,27 @@ int is_word_access_ch(unsigned ch_type);
 
 struct smd_half_channel_access *get_half_ch_funcs(unsigned ch_type);
 
+struct smem_ram_ptn {
+	char name[16];
+	unsigned start;
+	unsigned size;
+
+	/* RAM Partition attribute: READ_ONLY, READWRITE etc.  */
+	unsigned attr;
+
+	/* RAM Partition category: EBI0, EBI1, IRAM, IMEM */
+	unsigned category;
+
+	/* RAM Partition domain: APPS, MODEM, APPS & MODEM (SHARED) etc. */
+	unsigned domain;
+
+	/* RAM Partition type: system, bootloader, appsboot, apps etc. */
+	unsigned type;
+
+	/* reserved for future expansion without changing version number */
+	unsigned reserved2, reserved3, reserved4, reserved5;
+} __attribute__ ((__packed__));
+
 struct smd_channel {
 	volatile void __iomem *send; /* some variant of smd_half_channel */
 	volatile void __iomem *recv; /* some variant of smd_half_channel */
@@ -196,6 +248,54 @@ struct smd_channel {
 	struct smd_half_channel_access *half_ch;
 };
 
+struct smem_ram_ptable {
+	#define _SMEM_RAM_PTABLE_MAGIC_1 0x9DA5E0A8
+	#define _SMEM_RAM_PTABLE_MAGIC_2 0xAF9EC4E2
+	unsigned magic[2];
+	unsigned version;
+	unsigned reserved1;
+	unsigned len;
+	struct smem_ram_ptn parts[32];
+	unsigned buf;
+} __attribute__ ((__packed__));
+
+/* SMEM RAM Partition */
+enum {
+	DEFAULT_ATTRB = ~0x0,
+	READ_ONLY = 0x0,
+	READWRITE,
+};
+
+enum {
+	DEFAULT_CATEGORY = ~0x0,
+	SMI = 0x0,
+	EBI1,
+	EBI2,
+	QDSP6,
+	IRAM,
+	IMEM,
+	EBI0_CS0,
+	EBI0_CS1,
+	EBI1_CS0,
+	EBI1_CS1,
+	SDRAM = 0xE,
+};
+
+enum {
+	DEFAULT_DOMAIN = 0x0,
+	APPS_DOMAIN,
+	MODEM_DOMAIN,
+	SHARED_DOMAIN,
+};
+
+enum {
+	SYS_MEMORY = 1,        /* system memory*/
+	BOOT_REGION_MEMORY1,   /* boot loader memory 1*/
+	BOOT_REGION_MEMORY2,   /* boot loader memory 2,reserved*/
+	APPSBL_MEMORY,         /* apps boot loader memory*/
+	APPS_MEMORY,           /* apps  usage memory*/
+};
+
 extern spinlock_t smem_lock;
 
 
@@ -213,4 +313,7 @@ struct interrupt_stat {
 	uint32_t smsm_interrupt_id;
 };
 extern struct interrupt_stat interrupt_stats[NUM_SMD_SUBSYSTEMS];
+
+/* used for unit testing spinlocks */
+remote_spinlock_t *smem_get_remote_spinlock(void);
 #endif

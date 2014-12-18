@@ -163,7 +163,7 @@ void __init msm8974_init(void)
 
 	msm_8974_init_gpiomux();
 	regulator_has_full_constraints();
-	board_dt_populate(adata);
+	of_platform_populate(NULL, of_default_bus_match_table, adata, NULL);
 	msm8974_add_drivers();
 }
 

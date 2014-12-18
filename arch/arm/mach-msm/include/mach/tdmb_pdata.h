@@ -36,17 +36,5 @@ struct tdmb_platform_data {
 	unsigned int	irq_ant_det;
 #endif
 };
-struct tdmb_dt_platform_data {
-	int tdmb_irq;
-	int tdmb_en;
-	int tdmb_rst;
-	int tdmb_spi_mosi;
-	int tdmb_spi_miso;
-	int tdmb_spi_cs;
-	int tdmb_spi_clk;
-#ifdef CONFIG_TDMB_ANT_DET
-	int tdmb_ant_irq;
-#endif
-};
 #endif
 #endif

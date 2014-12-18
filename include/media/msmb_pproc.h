@@ -143,12 +143,6 @@ struct cpp_hw_info {
 #define VIDIOC_MSM_CPP_DEQUEUE_STREAM_BUFF_INFO \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 7, struct msm_camera_v4l2_ioctl_t)
 
-#define VIDIOC_MSM_CPP_APPEND_STREAM_BUFF_INFO \
-	_IOWR('V', BASE_VIDIOC_PRIVATE + 15, struct msm_camera_v4l2_ioctl_t)
-
-#define VIDIOC_MSM_CPP_SET_CLOCK \
-	_IOWR('V', BASE_VIDIOC_PRIVATE + 16, struct msm_camera_v4l2_ioctl_t)	
-	
 #define V4L2_EVENT_CPP_FRAME_DONE  (V4L2_EVENT_PRIVATE_START + 0)
 
 struct msm_camera_v4l2_ioctl_t {

@@ -14,7 +14,7 @@
 /include/ "msm8974-camera-sensor-vienna-r00.dtsi"
 /include/ "msm8974-sii8240_mhl-v1lte-r00.dtsi"
 
-&soc {
+/ {
 	serial@f991e000 {
 		status = "ok";
 	};
@@ -32,20 +32,15 @@
 	};
 
 	mdss_edp: qcom,mdss_edp@fd923400 {
-		qcom,cont-splash-enabled = <1>;
 		gpio-panel-pwm = <&pm8941_gpios 36 0>;
 		qcom,panel-pwm-period = <630>; /* 1.6Khz */
 		gpio-panel-en = <&pm8941_gpios 14 0>;
 		status = "ok";
-		interrupts = <0 102 0>;
-		gpio-panel-hpd = <&msmgpio 102 0>;
-		i2c_vreg-supply = <&pm8941_l22>;
 	};
 
 	mdss_mdp: qcom,mdss_mdp@fd900000 {
 		mdss_fb0: qcom,mdss_fb_primary {
 			qcom,memory-reservation-size = <0x1F40000>;	/* 32 MB allocaed for fb0 */
-			qcom,memory-alt-reservation-size = <0x1F40000>;	 /* Framebuffer reservation only for LPM or recovery boot mode */
 		};
 	};
 
@@ -58,9 +53,6 @@
 	};
 
 	i2c@f9924000 {
-		qcom,scl-gpio = <&msmgpio 7 0>;
-		qcom,sda-gpio = <&msmgpio 6 0>;
-
 		atmel_mxt_1664s@4a {
 			compatible = "atmel,mxts-ts";
 			reg = <0x4a>;
@@ -72,8 +64,6 @@
 			mxts,irq-gpio = <&pm8941_gpios 30 0x1>;
 			mxts,rst = <&pm8941_gpios 9 0x1>;
 			mxts,i2c-pull-up = <1>;
-			mxts,tsp_coord = <27 15 4096 4096>;
-			mxts,pname = "P905";
 		};
 	};
 
@@ -111,8 +101,27 @@
 			compatible = "sec-fuelgauge,i2c";
 			reg = <0x36>;
 			fuelgauge,fuel_int = <&pm8941_gpios 26 0x1>;
+			fuelgauge,capacity_max = <1000>;
+			fuelgauge,capacity_max_margin = <50>;
+			fuelgauge,capacity_min = <0>;
+			fuelgauge,capacity_calculation_type = <7>;
+			fuelgauge,fuel_alert_soc = <2>;
 			fuelgauge,jig_gpio = <76>;
 			fuelgauge,bat_int = <&pm8941_gpios 29 0x1>;
+
+			fuelgauge,Capacity = <0x4766>;
+			fuelgauge,low_battery_comp_voltage = <3600>;
+			fuelgauge,low_battery_table =
+				<0xFFFFEC78 0 0>,/*-5000 0 0*/
+				<0xFFFFFB1E 0 3320>,/*-1250 0 3320*/
+				<0xFFFFFD12 97 3451>,/*-750 97 3451*/
+				<0xFFFFFF9C 96 3461>,/*-100 96 3461*/
+				<0 0 3456>;/*0 0 3456*/
+			fuelgauge,temp_adjust_table =
+				<47000 122	8950>,
+				<60000 200	51000>,
+				<100000 0	0>;
+			fuelgauge,type_str = "SDI";
 		};
 
 		sec-charger@6B {
@@ -167,7 +176,6 @@
 
 	i2c@24 { cell-index = <24>; 
 		compatible = "i2c-gpio";
-		i2c-gpio,delay-us = <2>;
 		gpios = <&msmgpio 95 0 /* sda */
 		&msmgpio 96 0 /* scl */
 		>;
@@ -189,24 +197,14 @@
 		};
 	};
 
-	actuator0: qcom,actuator@18 {
-		compatible = "qcom,actuator";
-		cell-index = <0>;			
-		reg = <0x18>;
-		qcom,cci-master = <0>;
-	};
-
-	actuator1: qcom,actuator@18 {
+	actuator1: qcom,actuator@36 {
 		compatible = "qcom,actuator";
 		cell-index = <1>;			
-		reg = <0x18>;
+		reg = <0x36>;
 		qcom,cci-master = <0>;
 	};
 
 	i2c@f9928000 {
-		qcom,scl-gpio = <&msmgpio 30 0>;
-		qcom,sda-gpio = <&msmgpio 29 0>; 
-
 		wacom_g5sp_i2c@56 {
 			compatible = "wacom,wacom_i2c-ts";
 			reg = <0x56>;
@@ -216,11 +214,11 @@
 			wacom,pen_fwe1-gpio = <&msmgpio 44 0x00>;
 			wacom,pen_pdct-gpio = <&msmgpio 145 0x00>;
 			wacom,sense-gpio = <&pm8941_gpios 20 0x1>;
+			wacom,scl-gpio = <&msmgpio 30 0x00>;
+			wacom,sda-gpio = <&msmgpio 29 0x00>;
 			wacom,irq-gpio = <&msmgpio 144 0x00>;
 			wacom,panel-coords = <0 0 0 26266 0 16416 0 0 1023>;
 			wacom,i2c-pull-up = <1>;
-			wacom,basic_model = "SM-P905";
-			wacom,irq_flags = <0x1>;			
 		};
 	};
 
@@ -278,7 +276,7 @@
 			label = "home_key";
 			gpios = <&pm8941_gpios 3 0x1>;
 			linux,input-type = <1>;
-			linux,code = <172>;
+			linux,code = <102>;
 			gpio-key,wakeup;
 			debounce-interval = <15>;
 		};
@@ -311,6 +309,12 @@
 		};		
 	};
 
+	hall_flip{
+		compatible = "hall_flip";
+		interrupt-parent = <&pm8941_gpios>;
+		interrupts = <17 0>;
+		hall,irq-gpio = <&msmgpio 17 0x00>;
+	};
 	bcmsdh_sdmmc{
 		compatible = "bcmsdh_sdmmc";
 		interrupt-parent = <&msmgpio>;
@@ -414,12 +418,12 @@
 		qcom,earjack-sendend-gpio = <&msmgpio 77 0>;
 
 		det-zones-list = <&det_zones 3 10000 10 0>,
-						<&det_zones 910 10000 10 0>,
-						<&det_zones 1679 10000 10 1>,
-						<&det_zones 9999 10000 10 1>;
-		but-zones-list = <&but_zones 0 0 155>, 
-						<&but_zones 1 156 320>, 
-						<&but_zones 2 321 700>;
+						 <&det_zones 745 10000 10 0>,
+						 <&det_zones 1679 10000 10 1>,
+						 <&det_zones 9999 10000 10 1>;
+		but-zones-list = <&but_zones 0 0 100>,
+						 <&but_zones 1 101 400>,
+						 <&but_zones 2 401 545>;
 	};
 
 	usb2_otg_sw: regulator-tpd4s214 {
@@ -470,7 +474,7 @@
 				<85 512 40000 160000>,
 				<85 512 40000 320000>,
 				<85 512 40000 480000>,
-				<85 512 40000 800000>;
+				<85 512 40000 640000>;
 	}; */
 
 	bluetooth_hostwake{
@@ -505,11 +509,11 @@
 &spmi_bus {
 	qcom,pm8941@1 {
 		pwm@b800 {
-			qcom,period = <630>;
+			qcom,period = <6000000>;
 			qcom,mode-select = <0>; 
 			status = "okay"; 
 			qcom,pwm { 
-				qcom,duty = <140>;
+				qcom,duty = <5000000>;
 				label = "pwm"; 
 			};
 		};
@@ -588,11 +592,12 @@
 	//cd-gpios = <&msmgpio 62 0x1>;
 	wp-gpios = <&pm8941_gpios 29 0x1>;
 
-	vdd-supply = <&pm8941_l6>;
+	vdd-supply = <&pm8941_l21>;
 	vdd-io-supply = <&pm8941_l6>;
 
-	qcom,vdd-voltage-level = <1800000 1800000>;
+	qcom,vdd-voltage-level = <2950000 2950000>;
 	qcom,vdd-current-level = <2000 16000>;
+
 	qcom,vdd-io-voltage-level = <1800000 1800000>;
 	qcom,vdd-io-current-level = <2000 16000>;
 
@@ -769,7 +774,6 @@
 
 &pm8941_gpios {
 	gpio@c000 { /* GPIO 1 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@c100 { /* GPIO 2 */
@@ -788,7 +792,7 @@
 
 	gpio@c300 { /* GPIO 4 */
 		qcom,mode = <0>;
-		qcom,pull = <5>;		/* QPNP_PIN_PULL_NO */
+		qcom,pull = <0>;
 		qcom,vin-sel = <2>;
 		qcom,src-sel = <0>;
 	};
@@ -801,16 +805,12 @@
 	};
 
 	gpio@c500 { /* GPIO 6 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@c600 { /* GPIO 7 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
-		qcom,pull = <5>;		/* QPNP_PIN_PULL_NO */
 	};
 
 	gpio@c700 { /* GPIO 8 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@c800 { /* GPIO 9 */
@@ -821,15 +821,12 @@
 	};
 
 	gpio@c900 { /* GPIO 10 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@ca00 { /* GPIO 11 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@cb00 { /* GPIO 12 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@cc00 { /* GPIO 13 */
@@ -840,7 +837,6 @@
 	};
 
 	gpio@cd00 { /* GPIO 14 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@ce00 { /* GPIO 15 */
@@ -848,7 +844,7 @@
 		qcom,output-type = <0>;
 		qcom,pull = <5>;
 		qcom,vin-sel = <2>;
-		qcom,out-strength = <1>;
+		qcom,out-strength = <3>;
 		qcom,src-sel = <2>;
 		qcom,master-en = <1>;
 	};
@@ -906,7 +902,6 @@
 	};
 
 	gpio@d400 { /* GPIO 21 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@d500 { /* GPIO 22 */
@@ -918,11 +913,9 @@
 	};
 
 	gpio@d600 { /* GPIO 23 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@d700 { /* GPIO 24 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@d800 { /* GPIO 25 */
@@ -951,7 +944,6 @@
 	};
 
 	gpio@db00 { /* GPIO 28 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@dc00 { /* GPIO 29 */
@@ -975,11 +967,9 @@
 	};
 
 	gpio@de00 { /* GPIO 31 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@df00 { /* GPIO 32 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@e000 { /* GPIO 33 */
@@ -1005,13 +995,11 @@
 	};
 
 	gpio@e200 { /* GPIO 35 */
-		qcom,vin-sel = <2>;		/* PM8941 S3 = 1.8 V */
 	};
 
 	gpio@e300 { /* GPIO 36 */
 		qcom,mode = <1>; /* QPNP_PIN_MODE_DIG_OUT */ 
 		qcom,output-type = <0>; /* QPNP_PIN_OUT_BUF_CMOS */ 
-		qcom,invert = <0>; /* QPNP_PIN_INVERT_DISABLE */
 		qcom,pull = <5>; /* QPNP_PIN_PULL_NO */ 
 		qcom,vin-sel = <2>; /* QPNP_PIN_VIN2 */ 
 		qcom,out-strength = <3>; /* QPNP_PIN_OUT_STRENGTH_HIGH */ 
@@ -1148,8 +1136,4 @@
 
 		qcom,cdc-on-demand-supplies = "cdc-vdd-spkdrv";
 	};
-};
-
-&pm8941_l22 {
-	regulator-min-microvolt = <2500000>;
 };

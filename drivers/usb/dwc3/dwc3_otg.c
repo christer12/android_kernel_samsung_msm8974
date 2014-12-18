@@ -13,7 +13,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/usb/hcd.h>
 #include <linux/platform_device.h>
@@ -24,10 +23,6 @@
 #include "io.h"
 #include "xhci.h"
 
-#define MAX_INVALID_CHRGR_RETRY 3
-static int max_chgr_retry_count = MAX_INVALID_CHRGR_RETRY;
-module_param(max_chgr_retry_count, int, S_IRUGO | S_IWUSR);
-MODULE_PARM_DESC(max_chgr_retry_count, "Max invalid charger retry count");
 static void dwc3_otg_reset(struct dwc3_otg *dotg);
 
 static void dwc3_otg_notify_host_mode(struct usb_otg *otg, int host_mode);
@@ -271,9 +266,7 @@ static int dwc3_otg_set_host(struct usb_otg *otg, struct usb_bus *host)
  */
 
 #ifdef CONFIG_SEC_LOCALE_KOR
-#ifndef CONFIG_SEC_LT03_PROJECT
 extern int is_usb_locked;
-#endif
 #endif
 
 static int dwc3_otg_start_peripheral(struct usb_otg *otg, int on)
@@ -285,16 +278,14 @@ static int dwc3_otg_start_peripheral(struct usb_otg *otg, int on)
 		return -EINVAL;
 
 #ifdef CONFIG_SEC_LOCALE_KOR
-#ifndef CONFIG_SEC_LT03_PROJECT
 	if (is_usb_locked) {
 		usb_gadget_vbus_disconnect(otg->gadget);
 		return 0;
 	}
 #endif
-#endif
 
 	if (on) {
-		pr_info("usb:: [%s] turn on gadget %s\n",
+		dev_dbg(otg->phy->dev, "%s: turn on gadget %s\n",
 					__func__, otg->gadget->name);
 
 		/* Core reset is not required during start peripheral. Only
@@ -306,7 +297,7 @@ static int dwc3_otg_start_peripheral(struct usb_otg *otg, int on)
 		dwc3_otg_set_peripheral_regs(dotg);
 		usb_gadget_vbus_connect(otg->gadget);
 	} else {
-		pr_info("usb:: [%s] turn off gadget %s\n",
+		dev_dbg(otg->phy->dev, "%s: turn off gadget %s\n",
 					__func__, otg->gadget->name);
 		usb_gadget_vbus_disconnect(otg->gadget);
 	}
@@ -498,9 +489,6 @@ static int dwc3_otg_set_power(struct usb_phy *phy, unsigned mA)
 	static int power_supply_type;
 	struct dwc3_otg *dotg = container_of(phy->otg, struct dwc3_otg, otg);
 
-#ifdef CONFIG_USB_ANDROID_SAMSUNG_COMPOSITE
-	return 0;
-#endif 
 
 	if (!dotg->psy || !dotg->charger) {
 		dev_err(phy->dev, "no usb power supply/charger registered\n");
@@ -675,8 +663,7 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 	bool work = 0;
 
 	pm_runtime_resume(phy->dev);
-	pr_info("usb:: [%s] %s state\n",
-				__func__, otg_state_string(phy->state));
+	dev_dbg(phy->dev, "%s state\n", otg_state_string(phy->state));
 
 	/* Check OTG state */
 	switch (phy->state) {
@@ -696,7 +683,7 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			phy->state = OTG_STATE_A_IDLE;
 			work = 1;
 		} else if (test_bit(B_SESS_VLD, &dotg->inputs)) {
-			pr_info("usb:: [%s] b_sess_vld\n", __func__);
+			dev_dbg(phy->dev, "b_sess_vld\n");
 			phy->state = OTG_STATE_B_IDLE;
 			work = 1;
 		} else {
@@ -711,7 +698,6 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			dev_dbg(phy->dev, "!id\n");
 			phy->state = OTG_STATE_A_IDLE;
 			work = 1;
-			dotg->charger_retry_count = 0;
 			if (charger) {
 				if (charger->chg_type == DWC3_INVALID_CHARGER)
 					charger->start_detection(dotg->charger,
@@ -721,7 +707,7 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 							DWC3_INVALID_CHARGER;
 			}
 		} else if (test_bit(B_SESS_VLD, &dotg->inputs)) {
-			pr_info("usb:: [%s] b_sess_vld\n", __func__);
+			dev_dbg(phy->dev, "b_sess_vld\n");
 			if (charger) {
 				/* Has charger been detected? If no detect it */
 				switch (charger->chg_type) {
@@ -746,26 +732,6 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 					phy->state = OTG_STATE_B_PERIPHERAL;
 					work = 1;
 					break;
-				case DWC3_FLOATED_CHARGER:
-					dotg->charger_retry_count++;
-					/*
-					 * In case of floating charger, if
-					 * retry count equal to max retry count
-					 * notify PMIC about floating charger
-					 * and put Hw in low power mode. Else
-					 * perform charger detection again by
-					 * calling start_detection() with false
-					 * and then with true argument.
-					 */
-					if (dotg->charger_retry_count ==
-						max_chgr_retry_count) {
-						dwc3_otg_set_power(phy, 0);
-						pm_runtime_put_sync(phy->dev);
-						break;
-					}
-					charger->start_detection(dotg->charger,
-									false);
-
 				default:
 					dev_dbg(phy->dev, "chg_det started\n");
 					charger->start_detection(charger, true);
@@ -790,7 +756,6 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			if (charger)
 				charger->start_detection(dotg->charger, false);
 
-			dotg->charger_retry_count = 0;
 			dwc3_otg_set_power(phy, 0);
 			dev_dbg(phy->dev, "No device, trying to suspend\n");
 			pm_runtime_put_sync(phy->dev);
@@ -824,7 +789,7 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 				 */
 				dev_dbg(phy->dev, "enter lpm as\n"
 					"unable to start A-device\n");
-				phy->state = OTG_STATE_A_IDLE;
+				phy->state = OTG_STATE_UNDEFINED;
 				pm_runtime_put_sync(phy->dev);
 				return;
 			}

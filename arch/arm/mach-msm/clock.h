@@ -53,8 +53,6 @@ extern struct clock_init_data msm8610_clock_init_data;
 extern struct clock_init_data msm8610_rumi_clock_init_data;
 extern struct clock_init_data msm8226_clock_init_data;
 extern struct clock_init_data msm8226_rumi_clock_init_data;
-extern struct clock_init_data msm8084_clock_init_data;
-extern struct clock_init_data mpq8092_clock_init_data;
 
 int msm_clock_init(struct clock_init_data *data);
 int find_vdd_level(struct clk *clk, unsigned long rate);
@@ -70,14 +68,6 @@ static inline int clock_debug_register(struct clk_lookup *t, size_t s)
 	return 0;
 }
 static inline void clock_debug_print_enabled(void) { return; }
-#endif
-
-#if defined(CONFIG_SEC_PM)
-#undef PM_EMERGENCY_CXO_OFF
-#endif
-
-#ifdef PM_EMERGENCY_CXO_OFF
-void emergency_cxo_off(void);
 #endif
 
 #endif

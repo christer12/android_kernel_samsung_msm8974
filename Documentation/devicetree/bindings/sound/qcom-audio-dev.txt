@@ -131,9 +131,15 @@ Required properties:
 
 * msm-auxpcm
 
+[First Level Nodes]
+
 Required properties:
 
- - compatible :                           "qcom,msm-auxpcm-dev"
+ - compatible :                           "qcom,msm-auxpcm-resource"
+
+ - qcom,msm-cpudai-auxpcm-clk:            clock for auxpcm. The first value is
+                                          for 8khz mode, the second is for
+                                          16khz
 
  - qcom,msm-cpudai-auxpcm-mode:           mode information. The first value is
                                           for 8khz mode, the second is for
@@ -168,10 +174,16 @@ Required properties:
                                           first value is for 8khz mode, the
                                           second is for auxpcm
 
- - qcom,msm-auxpcm-interface:             name of AUXPCM interface "primary"
-                                          indicates primary AUXPCM interface
-                                          "secondary" indicates secondary
-                                          AUXPCM interface
+[Second Level Nodes]
+
+Required Properties:
+
+ - qcom,msm-auxpcm-dev-id:                This property specifies the device
+                                          port id.
+                                          For Rx device, the port id is 4106
+                                          and for Tx device, the port id is 4107
+
+ - compatible:                            "qcom,msm-auxpcm-dev"
 
 * msm-pcm-hostless
 
@@ -366,17 +378,37 @@ Example:
 		};
 	};
 
-	qcom,msm-pri-auxpcm {
-		qcom,msm-cpudai-auxpcm-mode = <1>, <1>;
-		qcom,msm-cpudai-auxpcm-sync = <1>, <1>;
-		qcom,msm-cpudai-auxpcm-frame = <5>, <4>;
-		qcom,msm-cpudai-auxpcm-quant = <2>, <2>;
-		qcom,msm-cpudai-auxpcm-slot = <1>, <1>;
-		qcom,msm-cpudai-auxpcm-data = <0>, <0>;
-		qcom,msm-cpudai-auxpcm-pcm-clk-rate = <2048000>, <2048000>;
-		qcom,msm-auxpcm-interface = "primary";
-		compatible = "qcom,msm-auxpcm-dev";
-	};
+        qcom,msm-auxpcm {
+                compatible = "qcom,msm-auxpcm-resource";
+                qcom,msm-cpudai-auxpcm-clk = "pcm_clk";
+                qcom,msm-cpudai-auxpcm-mode = <0>, <0>;
+                qcom,msm-cpudai-auxpcm-sync = <1>, <1>;
+                qcom,msm-cpudai-auxpcm-frame = <5>, <4>;
+                qcom,msm-cpudai-auxpcm-quant = <2>, <2>;
+                qcom,msm-cpudai-auxpcm-slot = <1>, <1>;
+                qcom,msm-cpudai-auxpcm-data = <0>, <0>;
+                qcom,msm-cpudai-auxpcm-pcm-clk-rate = <2048000>, <2048000>;
+
+                qcom,msm-prim-auxpcm-rx {
+                        qcom,msm-auxpcm-dev-id = <4106>;
+                        compatible = "qcom,msm-auxpcm-dev";
+                };
+
+                qcom,msm-prim-auxpcm-tx {
+                        qcom,msm-auxpcm-dev-id = <4107>;
+                        compatible = "qcom,msm-auxpcm-dev";
+                };
+
+		qcom,msm-sec-auxpcm-rx {
+			qcom,msm-auxpcm-dev-id = <4108>;
+			compatible = "qcom,msm-auxpcm-dev";
+		};
+
+		qcom,msm-sec-auxpcm-tx {
+			qcom,msm-auxpcm-dev-id = <4109>;
+			compatible = "qcom,msm-auxpcm-dev";
+		};
+        };
 
         qcom,msm-pcm-hostless {
                 compatible = "qcom,msm-pcm-hostless";
@@ -432,14 +464,6 @@ Optional properties:
 
 - qcom,ext-ult-lo-amp-gpio: GPIO to enable external ultrasound lineout
 			    amplifier.
-
-- qcom,headset-jack-type-NO: Adjust GPIO level based on the headset jack type.
-
-
-* APQ8074 ASoC Machine driver
-
-Required properties:
-- compatible : "qcom,apq8074-audio-taiko"
 
 Example:
 
@@ -642,37 +666,4 @@ Example:
 qcom,msm-audio-ion {
 	compatible = "qcom,msm-audio-ion;
 	qcom,smmu-enabled;
-};
-
-* MSM8226 ASoC Machine driver
-
-Required properties:
-- compatible : "qcom,msm8226-audio-tapan"
-- qcom,model : The user-visible name of this sound card.
-- qcom,tapan-mclk-clk-freq : Tapan mclk Freq in Hz. currently only 9600000Hz
-				is supported.
-- qcom,prim-auxpcm-gpio-clk  : GPIO on which Primary AUXPCM clk signal is coming.
-- qcom,prim-auxpcm-gpio-sync : GPIO on which Primary AUXPCM SYNC signal is coming.
-- qcom,prim-auxpcm-gpio-din  : GPIO on which Primary AUXPCM DIN signal is coming.
-- qcom,prim-auxpcm-gpio-dout : GPIO on which Primary AUXPCM DOUT signal is coming.
-- qcom,prim-auxpcm-gpio-set : set of GPIO lines used for Primary AUXPCM port
-		 Possible Values:
-		 prim-gpio-prim : Primary AUXPCM shares GPIOs with Primary MI2S
-		 prim-gpio-tert : Primary AUXPCM shares GPIOs with Tertiary MI2S
-
-Optional Properties:
-- qcom,us-euro-gpios : GPIO on which gnd/mic swap signal is coming.
-
-Example:
-
-sound {
-	compatible = "qcom,msm8226-audio-tapan";
-	qcom,model = "msm8226-tapan-snd-card";
-	qcom,tapan-mclk-clk-freq = <9600000>;
-	qcom,prim-auxpcm-gpio-clk  = <&msmgpio 63 0>;
-	qcom,prim-auxpcm-gpio-sync = <&msmgpio 64 0>;
-	qcom,prim-auxpcm-gpio-din  = <&msmgpio 65 0>;
-	qcom,prim-auxpcm-gpio-dout = <&msmgpio 66 0>;
-	qcom,prim-auxpcm-gpio-set = "prim-gpio-prim";
-	qcom,cdc-us-euro-gpios = <&msmgpio 69 0>;
 };

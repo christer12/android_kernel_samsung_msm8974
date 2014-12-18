@@ -32,14 +32,16 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-#include <linux/i2c.h>
-#include <linux/i2c-dev.h>
 #include <asm/uaccess.h>
 #include "tuner_drv.h"
+#include "tuner.h"
 
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 
+extern struct i2c_client *i2c_main1_client;
+extern struct i2c_client *i2c_main2_client;
+extern struct i2c_client *i2c_sub_client;
 
 /* #define USER_DEBUG_LOG */
 
@@ -48,6 +50,9 @@
  ******************************************************************************/
 int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
                          unsigned short param_len );
+                         
+int i2c_transfer_wrap( struct i2c_adapter *adap, 
+					   struct i2c_msg *msgs, int num );
 
 /******************************************************************************
  * code area
@@ -89,14 +94,6 @@ int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
         return -EINVAL;
     }
 
-    /* get i2c adapter */
-    adap = i2c_get_adapter( TUNER_CONFIG_I2C_BUSNUM );
-    if( adap == NULL )
-    {
-        TRACE();
-        return -EINVAL;
-    }
-
     /* initialize */
     memset( msgs, 0x00, sizeof(struct i2c_msg) * 2 );
     ena_data = 0x00;
@@ -122,7 +119,6 @@ int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
                 buf[ 1 ] = (unsigned char)data[ loop_cnt ].param;
                 break;
             default:
-                i2c_put_adapter( adap );
                 return -EINVAL;
         }
 
@@ -158,11 +154,10 @@ int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
                     msgs[ 1 ].len   = TUNER_R_MSGLEN;
                     msgs[ 1 ].buf   = &read_data;
 
-                    ret = i2c_transfer( adap, msgs, TUNER_R_MSGNUM );
+                    ret = i2c_transfer_wrap( adap, msgs, TUNER_R_MSGNUM );
                     if( ret < 0 )
                     {
                         TRACE();
-                        i2c_put_adapter( adap );
                         return -EINVAL;
                     }
 
@@ -190,11 +185,10 @@ int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
             msgs[ 0 ].buf   = buf;
 
 
-            ret = i2c_transfer( adap, msgs, TUNER_W_MSGNUM );
+            ret = i2c_transfer_wrap( adap, msgs, TUNER_W_MSGNUM );
             if( ret < 0 )
             {
                 TRACE();
-                i2c_put_adapter( adap );
                 return -EINVAL;
             }
         } else {
@@ -212,11 +206,10 @@ int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
             DEBUG_PRINT("ioctl(read(Pre)) slv:0x%02x adr:0x%02x (single)",
 								addr, buf[ 0 ]);
 #endif /* USER_DEBUG_LOG */
-            ret = i2c_transfer( adap, msgs, TUNER_R_MSGNUM );
+            ret = i2c_transfer_wrap( adap, msgs, TUNER_R_MSGNUM );
             if( ret < 0 )
             {
                 TRACE();
-                i2c_put_adapter( adap );
                 return -EINVAL;
             }
 
@@ -231,6 +224,72 @@ int tuner_drv_hw_access( unsigned int uCommand, TUNER_DATA_RW *data,
         }
     }
 
-    i2c_put_adapter( adap );
     return 0;
+}
+
+int i2c_transfer_wrap( struct i2c_adapter *adap, struct i2c_msg *msgs, int num )
+{
+    int                ret = 0;
+	int                i;
+    struct i2c_adapter *i2c_adap;
+	
+	ret = 0;
+	
+	for (i = 0; i < num; i++) {
+		switch (msgs[i].addr) {
+		case TUNER_SLAVE_ADR_M1:
+			i2c_adap = i2c_main1_client->adapter;
+#ifdef USER_DEBUG_LOG
+			DEBUG_PRINT("i2c_transfer_wrap loop = %d main1 = %x addr = %x",
+						i, 
+						TUNER_SLAVE_ADR_M1, 
+						msgs[i].addr);
+#endif /* USER_DEBUG_LOG */
+			if (i2c_adap == NULL) {
+				ERROR_PRINT("i2c_main1_client is NULL");
+				ret =  -EIO;
+				goto err;
+			}
+			break;
+		case TUNER_SLAVE_ADR_M2:
+			i2c_adap = i2c_main2_client->adapter;
+#ifdef USER_DEBUG_LOG
+			DEBUG_PRINT("i2c_transfer_wrap loop = %d main2 = %x addr = %x", 
+						i, 
+						TUNER_SLAVE_ADR_M2 , 
+						msgs[i].addr);
+#endif /* USER_DEBUG_LOG */
+			if (i2c_adap == NULL) {
+				ERROR_PRINT("i2c_main2_client is NULL");
+				ret = -EIO;
+				goto err;
+			}
+			break;
+		case TUNER_SLAVE_ADR_S:
+			i2c_adap = i2c_sub_client->adapter;
+#ifdef USER_DEBUG_LOG
+			DEBUG_PRINT("i2c_transfer_wrap loop = %d sub = %x addr = %x", 
+						i, 
+						TUNER_SLAVE_ADR_S , 
+						msgs[i].addr);
+#endif /* USER_DEBUG_LOG */
+			if (i2c_adap == NULL) {
+				ERROR_PRINT("i2c_sub_client is NULL");
+				ret =  -EIO;
+				goto err;
+			}
+			break;
+		default:
+			ERROR_PRINT("slave address setting error");
+			ret = -EINVAL;
+			goto err;
+		}
+		ret = i2c_transfer( i2c_adap, &msgs[i], 1 );
+		if (ret < 0) {
+			ERROR_PRINT("i2c_transfer error ret = [%d]", ret);
+			goto err;
+		}
+	}
+err:
+	return ret;
 }

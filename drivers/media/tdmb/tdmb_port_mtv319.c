@@ -68,8 +68,6 @@ static void __print_ensemble_info(struct ensemble_info_type *e_info)
 		DPRINTK("tmid(0x%x)\n", e_info->sub_ch[i].tmid);
 		DPRINTK("svc_type(0x%x)\n", e_info->sub_ch[i].svc_type);
 		DPRINTK("svc_label(%s)\n", e_info->sub_ch[i].svc_label);
-		DPRINTK("scids(0x%x)\n", e_info->sub_ch[i].scids);
-		DPRINTK("ecc(0x%x)\n", e_info->sub_ch[i].ecc);
 	}
 }
 #endif
@@ -195,7 +193,7 @@ static bool mtv319_scan_ch(struct ensemble_info_type *e_info
 
 			rtvFICDEC_Init(); /* FIC parser Init */
 
-			for (i = 0; i < 30; i++) {
+			for (i = 0; i < 40; i++) {
 				ret_size = rtvTDMB_ReadFIC(fic_buf);
 				if (ret_size > 0) {
 					dc = rtvFICDEC_Decode(fic_buf, 384);

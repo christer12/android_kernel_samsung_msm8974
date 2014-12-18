@@ -133,8 +133,6 @@ static int audio_open(struct inode *inode, struct file *file)
 		goto fail;
 	}
 	rc = audio_aio_open(audio, file);
-	if(rc < 0)
-		return rc;
 
 #ifdef CONFIG_DEBUG_FS
 	snprintf(name, sizeof name, "msm_qcelp_%04x", audio->ac->session);

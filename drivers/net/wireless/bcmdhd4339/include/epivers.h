@@ -30,26 +30,26 @@
 
 #define	EPI_MINOR_VERSION	88
 
-#define	EPI_RC_NUMBER		41
+#define	EPI_RC_NUMBER		20
 
-#define	EPI_INCREMENTAL_NUMBER	13
+#define	EPI_INCREMENTAL_NUMBER	0
 
 #define	EPI_BUILD_NUMBER	0
 
-#define	EPI_VERSION		1, 88, 41, 13
+#define	EPI_VERSION		1, 88, 20, 0
 
-#define	EPI_VERSION_NUM		0x0158290d
+#define	EPI_VERSION_NUM		0x01581400
 
-#define EPI_VERSION_DEV		1.88.41
+#define EPI_VERSION_DEV		1.88.20
 
 /* Driver Version String, ASCII, 32 chars max */
 #ifdef BCMINTERNAL
-#define	EPI_VERSION_STR		"1.88.41.13 (r BCMINT)"
+#define	EPI_VERSION_STR		"1.88.20 (r BCMINT)"
 #else
 #ifdef WLTEST
-#define	EPI_VERSION_STR		"1.88.41.13 (r WLTEST)"
+#define	EPI_VERSION_STR		"1.88.20 (r WLTEST)"
 #else
-#define	EPI_VERSION_STR		"1.88.41.13 (r)"
+#define	EPI_VERSION_STR		"1.88.20 (r)"
 #endif
 #endif /* BCMINTERNAL */
 

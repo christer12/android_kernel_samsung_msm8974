@@ -603,11 +603,16 @@ static int ufshcd_compose_upiu(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 	case UTP_CMD_TYPE_SCSI:
 	case UTP_CMD_TYPE_DEV_MANAGE:
 		ufshcd_prepare_req_desc(lrbp, &upiu_flags);
-		if (lrbp->command_type == UTP_CMD_TYPE_SCSI)
+		if (lrbp->cmd && lrbp->command_type == UTP_CMD_TYPE_SCSI)
 			ufshcd_prepare_utp_scsi_cmd_upiu(lrbp, upiu_flags);
-		else
+		else if (lrbp->cmd)
 			ufshcd_prepare_utp_query_req_upiu(hba, lrbp,
 								upiu_flags);
+		else {
+			dev_err(hba->dev, "%s: Invalid UPIU request\n",
+				__func__);
+			ret = -EINVAL;
+		}
 		break;
 	case UTP_CMD_TYPE_UFS:
 		/* For UFS native command implementation */
@@ -720,7 +725,8 @@ int ufshcd_query_request(struct ufs_hba *hba,
 	bool sdev_lookup = true;
 
 	if (!hba || !query || !response) {
-		pr_err("%s: NULL pointer hba = %p, query = %p response = %p\n",
+		dev_err(hba->dev,
+			"%s: NULL pointer hba = %p, query = %p response = %p\n",
 			__func__, hba, query, response);
 		return -EINVAL;
 	}
@@ -1378,17 +1384,17 @@ ufshcd_transfer_rsp_status(struct ufs_hba *hba, struct ufshcd_lrb *lrbp)
 			 *  The result is saved with the response so that
 			 *  the ufs_core layer will handle it.
 			 */
-			result = DID_OK << 16;
+			result |= DID_OK << 16;
 			ufshcd_copy_query_response(hba, lrbp);
 			break;
 		case UPIU_TRANSACTION_REJECT_UPIU:
 			/* TODO: handle Reject UPIU Response */
-			result = DID_ERROR << 16;
+			result |= DID_ERROR << 16;
 			dev_err(hba->dev,
 				"Reject UPIU not fully implemented\n");
 			break;
 		default:
-			result = DID_ERROR << 16;
+			result |= DID_ERROR << 16;
 			dev_err(hba->dev,
 				"Unexpected request response code = %x\n",
 				result);

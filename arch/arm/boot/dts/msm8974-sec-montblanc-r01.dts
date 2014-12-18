@@ -12,16 +12,14 @@
 
 /dts-v1/;
 
-/include/ "msm8974-v2.0-1-sec.dtsi"
+/include/ "msm8974-v2-sec.dtsi"
 /include/ "msm8974-sec-montblanc-r01.dtsi"
 
 / {
 	model = "Samsung MONTBLANC rev0.1";
 	compatible = "qcom,msm8974-cdp", "qcom,msm8974", "qcom,cdp";
 	/* qcom,msm-id = <126 1 0>; */
-	qcom,msm-id = <0x7E01FF01 1 0>,
-				<0xB901FF01 1 0>,
-				<0xBA01FF01 1 0>;
+	qcom,msm-id = <0x7E01FF01 1 0>;
 	/* [31:24] chip-id, [23:16] platform-id, [15:8] national code, [7:0] operator
 		revision, reserved */
 };

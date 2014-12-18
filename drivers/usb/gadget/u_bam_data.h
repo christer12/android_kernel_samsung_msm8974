@@ -23,7 +23,6 @@ enum function_type {
 
 struct data_port {
 	struct usb_composite_dev	*cdev;
-	struct usb_function		*func;
 	struct usb_ep			*in;
 	struct usb_ep			*out;
 };

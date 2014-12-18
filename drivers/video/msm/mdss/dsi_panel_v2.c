@@ -104,14 +104,8 @@ void dsi_panel_deinit(void)
 
 	kfree(panel_private->on_cmds);
 	kfree(panel_private->off_cmds);
-
 	kfree(panel_private);
 	panel_private = NULL;
-
-	if (bl_led_trigger) {
-		led_trigger_unregister_simple(bl_led_trigger);
-		bl_led_trigger = NULL;
-	}
 }
 int dsi_panel_power(int enable)
 {

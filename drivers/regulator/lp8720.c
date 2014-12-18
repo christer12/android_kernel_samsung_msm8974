@@ -189,7 +189,7 @@ static int lp8720_ldo_list_voltage(struct regulator_dev *dev, unsigned index)
 	struct lp8720 *lp8720 = rdev_get_drvdata(dev);
 	int ldo = rdev_get_id(dev) - LP8720_LDO1;
 
-	if (ldo < 0 || ldo >= ARRAY_SIZE(ldo_voltage_map)) {
+	if (ldo < 0 || ldo > ARRAY_SIZE(ldo_voltage_map)) {
 		dev_err(lp8720->dev, "[ldo = %d] is out of range\n", ldo);
 		return -EINVAL;
 	}
@@ -421,11 +421,6 @@ static int __devinit lp8720_i2c_probe(struct i2c_client *i2c,
 #endif
 
 	lp8720_i2c_read(i2c, LP8720_ENABLE_REG, 1, &readbyte);
-#if defined(CONFIG_MACH_MONTBLANC)
-/* enable proximity sensor LDO for SSP */
-	lp8720_i2c_write(i2c, LP8720_ENABLE_REG, 1, readbyte | 0x01);
-	lp8720_i2c_write(i2c, LP8720_LDO1_SETTINGS_REG, 1, 0x0C);
-#endif
 	printk(KERN_DEBUG "%s, [%s] - ENABLE_REG : 0x%2x\n",
 			__func__, pdata->name, readbyte);
 
@@ -470,14 +465,8 @@ static struct i2c_driver lp8720_i2c_driver = {
 	.id_table = lp8720_i2c_id,
 };
 
-extern int get_lcd_attached(void);
 static int __init lp8720_module_init(void)
 {
-	if (get_lcd_attached() == 0)
-	{ 
-		printk(KERN_ERR"lp8720_module_init skip, get_lcd_attached(0)");
-		return -ENODEV;
-	}
 	return i2c_add_driver(&lp8720_i2c_driver);
 }
 subsys_initcall(lp8720_module_init);

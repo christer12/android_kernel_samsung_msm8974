@@ -79,7 +79,7 @@
 #define clear_bit_pos(x, y)  (atomic_set(&x, (atomic_read(&x) & (~(1 << y)))))
 #define test_bit_pos(x, y) ((atomic_read(&x)) & (1 << y))
 
-static int enable_ocmem_audio_voice = 0;
+static int enable_ocmem_audio_voice = 1;
 module_param(enable_ocmem_audio_voice, int,
 			S_IRUGO | S_IWUSR | S_IWGRP);
 MODULE_PARM_DESC(enable_ocmem_audio_voice, "control OCMEM usage for audio/voice");
@@ -896,7 +896,6 @@ static int ocmem_audio_client_probe(struct platform_device *pdev)
 	if (!audio_ocmem_lcl.voice_ocmem_workqueue) {
 		pr_err("%s: Failed to create ocmem voice work queue\n",
 			__func__);
-		destroy_workqueue(audio_ocmem_lcl.audio_ocmem_workqueue);
 		return -ENOMEM;
 	}
 
@@ -914,8 +913,6 @@ static int ocmem_audio_client_probe(struct platform_device *pdev)
 	if (ret) {
 		dev_err(&pdev->dev, "%s: failed to populate platform data, rc = %d\n",
 						__func__, ret);
-		destroy_workqueue(audio_ocmem_lcl.audio_ocmem_workqueue);
-		destroy_workqueue(audio_ocmem_lcl.voice_ocmem_workqueue);
 		return -ENODEV;
 	}
 	audio_ocmem_bus_scale_pdata = dev_get_drvdata(&pdev->dev);
@@ -926,8 +923,6 @@ static int ocmem_audio_client_probe(struct platform_device *pdev)
 	if (!audio_ocmem_lcl.audio_ocmem_bus_client) {
 		pr_err("%s: msm_bus_scale_register_client() failed\n",
 		__func__);
-		destroy_workqueue(audio_ocmem_lcl.audio_ocmem_workqueue);
-		destroy_workqueue(audio_ocmem_lcl.voice_ocmem_workqueue);
 		return -EFAULT;
 	}
 	audio_ocmem_lcl.audio_hdl = ocmem_notifier_register(OCMEM_LP_AUDIO,

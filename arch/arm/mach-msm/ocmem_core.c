@@ -66,7 +66,7 @@ static void *ocmem_base;
 #define NUM_PORTS_SHIFT (0)
 #define GFX_MPU_SHIFT (12)
 
-#define NUM_MACROS_MASK (0x3F << 8)
+#define NUM_MACROS_MASK (0xF << 8)
 #define NUM_MACROS_SHIFT (8)
 
 #define INTERLEAVING_MASK (0x1 << 17)
@@ -759,7 +759,7 @@ unlock_fail:
 	return -EINVAL;
 }
 
-#if defined(CONFIG_MSM_OCMEM_DEBUG_ALWAYS_ON)
+#if defined(CONFIG_MSM_OCMEM_POWER_DISABLE)
 static int ocmem_core_set_default_state(void)
 {
 	int rc = 0;
@@ -775,14 +775,7 @@ static int ocmem_core_set_default_state(void)
 
 	return 0;
 }
-#else
-static int ocmem_core_set_default_state(void)
-{
-	return 0;
-}
-#endif
 
-#if defined(CONFIG_MSM_OCMEM_POWER_DISABLE)
 /* Initializes a region to be turned ON in wide mode */
 static int ocmem_region_set_default_state(unsigned int r_num)
 {
@@ -807,9 +800,15 @@ static int ocmem_region_set_default_state(unsigned int region_num)
 {
 	return 0;
 }
+
+static int ocmem_core_set_default_state(void)
+{
+	return 0;
+}
 #endif
 
 #if defined(CONFIG_MSM_OCMEM_POWER_DEBUG)
+
 static int read_hw_region_state(unsigned region_num)
 {
 	int state;

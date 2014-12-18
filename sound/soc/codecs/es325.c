@@ -48,7 +48,6 @@
 #include <sound/initval.h>
 #include <sound/tlv.h>
 #include <linux/kthread.h>
-#include <asm/system_info.h>
 
 #ifdef ES325_SLEEP
 #include <linux/device.h>
@@ -139,6 +138,13 @@ struct es325_slim_ch {
 	u16	ch_h;
 	u16	grph;
 };
+
+#if defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT)\
+|| defined(CONFIG_MACH_KS01LGT)
+#define FIRMWARE_NAME "audience-es325-fw-kor.bin"
+#else
+#define FIRMWARE_NAME "audience-es325-fw.bin"
+#endif
 
 #define		ID(id)		(id)
 
@@ -288,24 +294,17 @@ static u8 es325_internal_route_2mic_handset_WB[10] = {
 	0xff		/* terminate */
 };
 
-/* 1-mic 1-output for Loopback (CT SW bypss) */
-static u8 es325_internal_route_rcv_loopback[10] = {
-	0x90, 0x31, 0x00, 0x03, /* 1 Mic 1 FEOUT */
-	0x90, 0x31, 0x00, 0x83, /* Algo Preset: 1-mic CT WB */
-	0xff		/* terminate */
-};
-
-/* 1-mic 1-output for Loopback (FT SW bypss) */
-static u8 es325_internal_route_spk_loopback[10] = {
-	0x90, 0x31, 0x00, 0x03, /* 1 Mic 1 FEOUT */
-	0x90, 0x31, 0x00, 0x83, /* Algo Preset: 1-mic FT WB */
+/* 1-mic 1-output for Loopback (SW bypss) */
+static u8 es325_internal_route_1mic_1out_loopback[10] = {
+	0x90, 0x31, 0x00, 0x0c, /* 1 Mic 1 FEOUT */
+	0x90, 0x31, 0x00, 0x82, /* Algo Preset: 1-mic CT NB */
 	0xff		/* terminate */
 };
 
 /* 1-mic 2-output for Loopback (SW bypss) */
-static u8 es325_internal_route_headset_loopback[10] = {
+static u8 es325_internal_route_1mic_2out_loopback[10] = {
 	0x90, 0x31, 0x00, 0x01, /* 1 Mic 2 FEOUT MD */
-	0x90, 0x31, 0x00, 0x85, /* Algo Preset: 1-mic WB */
+	0x90, 0x31, 0x00, 0x84, /* Algo Preset: 1-mic CT NB */
 	0xff		/* terminate */
 };
 
@@ -318,7 +317,7 @@ static u8 es325_internal_route_2mic_ASR[10] = {
 
 /* TTY HCO - Rx:Handset(1ch), Tx: Main mic(1ch)(SW bypass)*/
 static u8 es325_internal_route_TTY_HCO[10] = {
-	0x90, 0x31, 0x00, 0x0d, /* 1 Mic 1 FEOUT */
+	0x90, 0x31, 0x00, 0x0c, /* 1 Mic 1 FEOUT */
 	0x90, 0x31, 0x00, 0x84, /* Algo Preset: 1-mic CT NB */
 	0xff		/* terminate */
 };
@@ -368,9 +367,9 @@ static u8* es325_internal_route_configs[ES325_INTERNAL_ROUTE_MAX] = {
 	dummy, /* [14]: TBD */
 	dummy, /* [15]: TBD */
 	dummy, /* [16]: TBD */
-	es325_internal_route_rcv_loopback,/* [17]: 1-mic 1-output for Loopback (CT SW bypss) */
-	es325_internal_route_spk_loopback,/* [18]: 1-mic 1-output for Loopback (FT SW bypss) */
-	es325_internal_route_headset_loopback,/* [19]: 1-mic 2-output for Loopback (SW bypss) */
+	dummy, /* [17]: TBD */
+	es325_internal_route_1mic_1out_loopback,/* [18]: 1-mic 1-output for Loopback (SW bypss) */
+	es325_internal_route_1mic_2out_loopback,/* [19]: 1-mic 2-output for Loopback (SW bypss) */
 	dummy, /* [20]: TBD */
 	es325_internal_route_1mic_headset_WB, 	/* [21]: 1-mic Headset WB (SW bypss) */
 	es325_internal_route_2mic_speaker_WB,	/* [22]: 2-mic Speaker WB (2-mic FT)(NS on) */
@@ -481,7 +480,6 @@ static int es325_close_slim_tx(struct slim_device *sbdev, unsigned int *ch_num,
 				unsigned int ch_cnt);
 static int es325_rx_ch_num_to_idx(int ch_num);
 static int es325_tx_ch_num_to_idx(int ch_num);
-static void es325_update_VEQ_enable(void);
 
 static struct platform_device msm_es325_mclk_dev = {
 	.name = "es325_mclk_dev_pdev",
@@ -503,6 +501,7 @@ static int es325_enable_ext_clk(int enable)
 	}
 
 	if (enable) {
+		clk_set_rate(es325_codec_clk, 9600000);
 		clk_prepare_enable(es325_codec_clk);
 	} else {
 		clk_disable_unprepare(es325_codec_clk);
@@ -1606,7 +1605,6 @@ static void es325_switch_route(void)
 	u8 msg[4];
 	u8 *msg_ptr;
 	int rc;
-	static int preRoute=0;
 
 	if (es325_network_type == WIDE_BAND) {
 		if (es325->new_internal_route_config >= 0 &&
@@ -1634,25 +1632,7 @@ static void es325_switch_route(void)
 	}
 
 	if (es325->internal_route_config != es325->new_internal_route_config) {
-		if ((preRoute != 5) && (es325->new_internal_route_config != 5)) {
-			dev_info(&sbdev->dev, "=[ES325]=%s(): final es325_internal_route_num = %ld\n",
-				__func__, es325_internal_route_num);
-
-			msg_ptr = &es325_internal_route_configs[5][0];
-			while (*msg_ptr != 0xff) {
-				memcpy(msg, msg_ptr, 4);
-				rc = ES325_BUS_WRITE(es325, ES325_WRITE_VE_OFFSET, ES325_WRITE_VE_WIDTH, msg, 4, 1);
-				if (rc < 0)
-					dev_err(&sbdev->dev, "=[ES325]=%s: slim write fail, rc=%d\n",
-						__func__, rc);
-				msg_ptr += 4;
-			}
-			msleep(5);
-		}
 		es325_internal_route_num = es325->new_internal_route_config;
-
-		preRoute=es325_internal_route_num;
-
 		dev_info(&sbdev->dev, "=[ES325]=%s(): final es325_internal_route_num = %ld\n",
 			__func__, es325_internal_route_num);
 		msg_ptr = &es325_internal_route_configs[es325_internal_route_num][0];
@@ -2059,7 +2039,7 @@ static ssize_t es325_firmware_store(struct device *dev, struct device_attribute 
 {
 	unsigned long val;
 	int rc;
-	const char *name = CONFIG_EXTRA_FIRMWARE;
+	const char *name = FIRMWARE_NAME;
 
 	rc = kstrtoul(buf, 10, &val);
 	if (rc) {
@@ -2244,45 +2224,6 @@ static int es325_wakeup(struct es325_priv *es325)
 	                        combines with SYNC request / response delay
 	                        es325 will be ready in time range 1 to 30 ms
 	   4.    Send sync command */
-
-#ifdef CONFIG_ES325_UART_WORKAROUND
-#if defined(CONFIG_MACH_HLTESPR) && !defined(CONFIG_ES325_UART_WORKAROUND_ENG_ONLY)
-  	if (system_rev == 4) {
-		pr_info("%s : [ES325] ES325_UART_WORKAROUND system rev = %d\n", __func__, system_rev);
-		gpio_tlmm_config(GPIO_CFG(4, 0, GPIO_CFG_INPUT,
-					GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		gpio_tlmm_config(GPIO_CFG(5, 0, GPIO_CFG_INPUT,
-					GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		gpio_set_value(4, 1);
-		gpio_set_value(5, 1);
-		usleep_range(10000, 10000);
-	}
-#elif defined(CONFIG_MACH_HLTEUSC) && defined(CONFIG_ES325_UART_WORKAROUND_ENG_ONLY)
-  	if (system_rev == 4) {
-		pr_info("%s : [ES325] ES325_UART_WORKAROUND system rev = %d\n", __func__, system_rev);
-		gpio_tlmm_config(GPIO_CFG(4, 0, GPIO_CFG_INPUT,
-					GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		gpio_tlmm_config(GPIO_CFG(5, 0, GPIO_CFG_INPUT,
-					GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		gpio_set_value(4, 1);
-		gpio_set_value(5, 1);
-		usleep_range(10000, 10000);
-	}
-#elif (defined(CONFIG_MACH_HLTESKT) || defined(CONFIG_MACH_HLTEKTT)) && defined(CONFIG_ES325_UART_WORKAROUND_ENG_ONLY)
-	if (system_rev == 5) {
-		pr_info("%s : [ES325] ES325_UART_WORKAROUND system rev = %d\n", __func__, system_rev);
-		gpio_tlmm_config(GPIO_CFG(4, 0, GPIO_CFG_INPUT,
-					GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		gpio_tlmm_config(GPIO_CFG(5, 0, GPIO_CFG_INPUT,
-					GPIO_CFG_PULL_UP, GPIO_CFG_2MA), 1);
-		gpio_set_value(4, 1);
-		gpio_set_value(5, 1);
-		usleep_range(10000, 10000);
-	}
-#else
-#endif
-#endif /* CONFIG_ES325_UART_WORKAROUND */
-
 	/* Assert wakeup signal L->H. */
 	gpio_set_value(es325->pdata->wakeup_gpio, 0);
 	msleep(30);
@@ -2373,7 +2314,7 @@ static void es325_update_VEQ_enable(void)
 	char msg[8] = {0xb0, 0x17, 0x00, 0x09, 0x90, 0x18, 0x00, 0x00}; /*VEQ Disable */
 	int rc;
 
-	if (es325_VEQ_enable_new != 0)
+	if (es325_VEQ_enable == es325_VEQ_enable_new)
 		return;
 
 	if (es325_priv.wakeup_cnt) {
@@ -2406,7 +2347,7 @@ static int es325_put_VEQ_enable_control(struct snd_kcontrol *kcontrol,
 						struct snd_ctl_elem_value *ucontrol)
 {
 	es325_VEQ_enable_new = ucontrol->value.integer.value[0];
-//	es325_update_VEQ_enable();
+	es325_update_VEQ_enable();
 	return 0;
 }
 
@@ -2587,7 +2528,7 @@ static int es325_put_internal_route_config(struct snd_kcontrol *kcontrol,
 	dev_info(&sbdev->dev, "=[ES325]=%s(): route = %ld\n", __func__, ucontrol->value.integer.value[0]);
 	es325->new_internal_route_config = ucontrol->value.integer.value[0];
 
-	if(es325->new_internal_route_config == 5 && es325_priv.wakeup_cnt)
+	if(es325->new_internal_route_config == 5)
 		es325_switch_route();
 
 #else
@@ -2651,33 +2592,12 @@ int es325_set_VEQ_max_gain(int volume)
 	struct slim_device *sbdev = es325->gen0_client;
 	char msg[4];
 	static char cmd_str[8] = {0xb0, 0x17, 0x00, 0x00, 0x90, 0x18, 0x00, 0x00};
-#if defined(CONFIG_MACH_HLTEVZW) || defined(CONFIG_MACH_HLTEUSC)
-	/* 8 level Voice Rx volume for VZW */
-	static char VEQ_max_gain[8] = {3, 3, 3, 5, 7, 9, 7, 4}; /* index 0 means max volume */
-	static char VEQ_adj_gain[8] = {30, 2, 2, 2, 2, 2, 2, 2};
-#elif defined(CONFIG_MACH_HLTETMO)
-	static char VEQ_max_gain[6] = {3, 5, 7, 9, 7, 4}; /* index 0 means max volume */
-	static char VEQ_adj_gain[6] = {25, 2, 2, 2, 2, 2};
-#elif defined(CONFIG_MACH_HLTEATT) || defined(CONFIG_MACH_HLTEEUR) || defined(CONFIG_MACH_H3GDUOS)
-	static char VEQ_max_gain[6] = {3, 5, 7, 9, 7, 4}; /* index 0 means max volume */
-	static char VEQ_adj_gain[6] = {25, 2, 2, 2, 2, 2};
-#elif defined(CONFIG_MACH_HLTESPR)
-	static char VEQ_max_gain[6] = {5, 5, 7, 9, 7, 4}; /* index 0 means max volume */
-	static char VEQ_adj_gain[6] = {30, 2, 2, 2, 2, 2};	
-#else
-	static char VEQ_max_gain[6] = {3, 5, 7, 9, 7, 4}; /* index 0 means max volume */
-	static char VEQ_adj_gain[6] = {0, 0, 0, 0, 0, 0};
-#endif
+	static char VEQ_max_gain[6] = {3, 6, 9, 12, 9, 6}; /* index 0 means max volume */
+	static char VEQ_adj_gain[6] = {19, 2, 2, 2, 2, 2};
 
 	int rc;
 
-	dev_info(&sbdev->dev, "=[ES325]=%s: volume=%d, wakeup_cnt =%d\n", __func__,
-		volume, es325_priv.wakeup_cnt);
-
-	if (!es325_priv.wakeup_cnt) {
-		pr_info("%s: ES325 is sleep. Skip to set the volume.\n", __func__);
-		return 0;
-	}
+	dev_info(&sbdev->dev, "=[ES325]=%s: volume=%d\n", __func__, volume);
 
 	cmd_str[3] = 0x3d; /* VEQ Max Gain ID */
 	cmd_str[7] = VEQ_max_gain[volume];
@@ -3500,6 +3420,7 @@ err:
 static int es325_slim_probe(struct slim_device *sbdev)
 {
 	struct esxxx_platform_data *pdata = NULL;
+	const char *filename = FIRMWARE_NAME;
 	int rc;
 
 	dev_dbg(&sbdev->dev, "+[ES325]=%s()\n", __func__);
@@ -3515,7 +3436,6 @@ static int es325_slim_probe(struct slim_device *sbdev)
 			dev_info(&sbdev->dev, "=[ES325]=%s(): Error, parsing slim interface\n", __func__);
 			devm_kfree(&sbdev->dev, pdata);
 			rc = -EINVAL;
-			return rc;
 		}
 		sbdev->dev.platform_data = pdata;
 
@@ -3611,9 +3531,16 @@ static int es325_slim_probe(struct slim_device *sbdev)
 	es325_priv.internal_route_config =  ES325_INTERNAL_ROUTE_MAX;
 	es325_priv.new_internal_route_config = ES325_INTERNAL_ROUTE_MAX;
 #endif
+	rc = request_firmware((const struct firmware **)&es325_priv.fw,
+							filename, &sbdev->dev);
+	if (rc) {
+		dev_err(&sbdev->dev, "=[ES325]=%s(): request_firmware(%s) failed %d\n", __func__, filename, rc);
+		goto request_firmware_error;
+	}
 	dev_dbg(&sbdev->dev, "-[ES325]=%s()\n", __func__);
 	return 0;
 
+request_firmware_error:
 wakeup_gpio_direction_error:
 	gpio_free(pdata->wakeup_gpio);
 wakeup_gpio_request_error:
@@ -3832,18 +3759,13 @@ static int es325_slim_device_up(struct slim_device *sbdev)
 {
 	struct es325_priv *es325;
 	int rc;
-	const char *filename = CONFIG_EXTRA_FIRMWARE;
+
 	dev_info(&sbdev->dev, "+[ES325]=%s: name=%s\n", __func__, sbdev->name);
 	dev_info(&sbdev->dev, "=[ES325]=%s: laddr=%d\n", __func__, sbdev->laddr);
 
 	/* Start the firmware download in the workqueue context. */
 	es325 = slim_get_devicedata(sbdev);
-	rc = request_firmware((const struct firmware **)&es325->fw,
-							filename, &sbdev->dev);
-	if (rc) {
-		dev_err(&sbdev->dev, "=[ES325]=%s(): request_firmware(%s) failed %d\n", __func__, filename, rc);
-		return -1;
-	}
+
 	dev_info(&sbdev->dev, "=[ES325]=%s: priv=%p\n", __func__, es325);
 
 	if (strcmp(sbdev->name, "es325-ifd") == 0)
@@ -3927,4 +3849,4 @@ MODULE_DESCRIPTION("ASoC ES325 driver");
 MODULE_AUTHOR("Greg Clemson <gclemson@audience.com>");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:es325-codec");
-MODULE_FIRMWARE(CONFIG_EXTRA_FIRMWARE);
+MODULE_FIRMWARE(FIRMWARE_NAME);

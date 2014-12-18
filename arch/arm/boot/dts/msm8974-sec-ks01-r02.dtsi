@@ -12,29 +12,9 @@
 
 /include/ "dsi_panel_samsung_octa_1080p_video.dtsi"
 /include/ "msm8974-leds.dtsi"
-/include/ "msm8974-camera-sensor-ks01lte.dtsi"
+/include/ "msm8974-camera-sensor-cdp-mtp.dtsi"
 /include/ "msm8974-sii8240_mhl.dtsi"
-/include/ "msm8974-tdmb-ks01-r00.dtsi"
-
-&soc {
-	qcom,ion {
-		qcom,ion-heap@16 { /* Camera*/
-			qcom,memory-reservation-size = <0x0>;
-		};
-
-		qcom,ion-heap@20 { /* Camera*/
-			qcom,memory-reservation-size = <0x0>;
-		};
-
-		qcom,ion-heap@24 { /* SF HEAP */
-			qcom,memory-reservation-size = <0x0>;
-		};
-
-		qcom,ion-heap@28 { /* AUDIO HEAP */
-			qcom,memory-reservation-size = <0x314000>;
-		};
-	};
-
+/ {
 	serial@f991e000 {
 		status = "ok";
 	};
@@ -107,8 +87,8 @@
 		};
 	};
 
-	i2c_10: i2c@f9927000 {
-		cell-index = <10>;
+	i2c_5: i2c@f9927000 {
+		cell-index = <5>;
 		compatible = "qcom,i2c-qup";
 		reg = <0xf9927000 0x1000>;
 		#address-cells = <1>;
@@ -118,7 +98,7 @@
 		interrupt-names = "qup_err_intr";
 		qcom,i2c-bus-freq = <100000>;
 		qcom,i2c-src-freq = <50000000>;
-		qcom,master-id = <86>;	
+		qcom,master-id = <86>;
 	};
 
 	i2c@f9927000 {
@@ -225,11 +205,41 @@
 			vdd-phy-supply = <&spi_eth_vreg>;
 		};
 	};
+	spi@f9925000 {
+		compatible = "qcom,spi-qup-v2";
+		cell-index = <2>;
+		reg = <0xf9925000 0x1000>;
+		interrupts = <0 97 0>;
+		spi-max-frequency = <19200000>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		gpios = <&msmgpio 11 0>, /* CLK  */
+			<&msmgpio 9 0>, /* MISO */
+			<&msmgpio 8 0>; /* MOSI */
+			cs-gpios = <&msmgpio 10 0>;
+
+		tdmb-spi@0 {
+			compatible = "tdmb_spi_comp";
+			reg = <0>;
+			spi-max-frequency = <5400000>;
+		};
+	};
+	tdmb_irq{
+		compatible = "tdmb_irq";
+		interrupt-parent = <&msmgpio>;
+		interrupts = <73 0>;
+		tdmb,irq-gpio = <&msmgpio 73 0x00>;
+	};
+	tdmb_ant_det{
+		compatible = "tdmb_ant_det_irq";
+		interrupt-parent = <&msmgpio>;
+		interrupts = <18 0>;
+		tdmb,irq-gpio = <&msmgpio 18 0x00>;
+	};
 
 	sound {
 		qcom,model = "msm8974-taiko-cdp-snd-card";
 		qcom,hdmi-audio-rx;
-		qcom,cdc-micbias2-headset-only;
 	};
 
 	usb2_otg_sw: regulator-tpd4s214 {
@@ -511,7 +521,7 @@
 		qcom,output-type = <0>;
 		qcom,pull = <5>;
 		qcom,vin-sel = <2>;
-		qcom,out-strength = <1>;
+		qcom,out-strength = <3>;
 		qcom,src-sel = <2>;
 		qcom,master-en = <1>;
 	};

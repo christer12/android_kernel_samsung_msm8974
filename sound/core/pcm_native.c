@@ -419,7 +419,6 @@ static int snd_pcm_hw_params(struct snd_pcm_substream *substream,
 	runtime->rate = params_rate(params);
 	runtime->period_size = params_period_size(params);
 	runtime->periods = params_periods(params);
-	printk("=%s==period_size=%d===periods=%d===\n",__func__,(int)runtime->period_size,(int)runtime->periods);
 	runtime->buffer_size = params_buffer_size(params);
 	runtime->info = params->info;
 	runtime->rate_num = params->rate_num;
@@ -2619,7 +2618,6 @@ static int snd_pcm_common_ioctl1(struct file *file,
 	case SNDRV_COMPRESS_GET_PARAMS:
 	case SNDRV_COMPRESS_TSTAMP:
 	case SNDRV_COMPRESS_DRAIN:
-	case SNDRV_COMPRESS_METADATA_MODE:
 		return snd_compressed_ioctl(substream, cmd, arg);
 	default:
 		if (((cmd >> 8) & 0xff) == 'U')

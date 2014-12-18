@@ -117,7 +117,7 @@ static struct ion_heap_desc ion_heap_meta[] = {
 	},
 	{
 		.id	= ION_CP_WB_HEAP_ID,
-		.type	= ION_HEAP_TYPE_CARVEOUT,
+		.type	= ION_HEAP_TYPE_CP,
 		.name	= ION_WB_HEAP_NAME,
 	},
 	{

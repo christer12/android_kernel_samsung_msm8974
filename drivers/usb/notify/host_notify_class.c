@@ -94,7 +94,7 @@ static ssize_t booster_show(struct device *dev, struct device_attribute *attr,
 		break;
 	}
 
-	pr_info("booster_show: %s\n", booster);
+	pr_info("booster: %s\n", booster);
 	return snprintf(buf,  sizeof(booster)+1, "%s\n", booster);
 }
 

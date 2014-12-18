@@ -11,6 +11,10 @@
  */
 
 /include/ "skeleton.dtsi"
+/include/ "msm9625-ion.dtsi"
+/include/ "msm9625-pm.dtsi"
+/include/ "msm9625-coresight.dtsi"
+/include/ "msm9625-smp2p.dtsi"
 
 / {
 	model = "Qualcomm MSM 9625";
@@ -20,19 +24,6 @@
 	aliases {
 		spi0 = &spi_0;
 	};
-
-	soc: soc { };
-};
-
-/include/ "msm9625-ion.dtsi"
-/include/ "msm9625-pm.dtsi"
-/include/ "msm9625-coresight.dtsi"
-/include/ "msm9625-smp2p.dtsi"
-
-&soc {
-	#address-cells = <1>;
-	#size-cells = <1>;
-	ranges;
 
 	intc: interrupt-controller@F9000000 {
 		compatible = "qcom,msm-qgic2";
@@ -165,7 +156,6 @@
 		qcom,hsusb-otg-lpm-on-dev-suspend;
 		qcom,hsusb-otg-clk-always-on-workaround;
 		qcom,hsusb-otg-delay-lpm-hndshk-on-disconnect;
-		qcom,hsusb-otg-delay-lpm;
 
 		qcom,msm-bus,name = "usb2";
 		qcom,msm-bus,num-cases = <2>;
@@ -191,8 +181,6 @@
 				<85 512 40000 640000>;
 		qcom,pool-64-bit-align;
 		qcom,enable-hbm;
-		hsic,consider-ipa-handshake;
-		qcom,ahb-async-bridge-bypass;
 	};
 
 	qcom,usbbam@f9a44000 {
@@ -257,8 +245,8 @@
 			qcom,peer-bam = <2>;
 			qcom,dst-bam-physical-address = <0xf9a04000>;
 			qcom,dst-bam-pipe-index = <3>;
-			qcom,data-fifo-size = <0xF800>;
-			qcom,descriptor-fifo-size = <0x3A58>;
+			qcom,data-fifo-size = <0xD480>;
+			qcom,descriptor-fifo-size = <0x1A80>;
 			qcom,reset-bam-on-connect;
 		};
 		qcom,pipe4 {
@@ -270,8 +258,8 @@
 			qcom,usb-bam-mem-type = <2>;
 			qcom,dst-bam-physical-address = <0xf9a04000>;
 			qcom,dst-bam-pipe-index = <4>;
-			qcom,data-fifo-size = <0xF800>;
-			qcom,descriptor-fifo-size = <0x3A58>;
+			qcom,data-fifo-size = <0xD480>;
+			qcom,descriptor-fifo-size = <0x1A80>;
 			qcom,reset-bam-on-connect;
 		};
 		qcom,pipe5 {
@@ -283,8 +271,8 @@
 			qcom,peer-bam = <2>;
 			qcom,dst-bam-physical-address = <0xf9a04000>;
 			qcom,dst-bam-pipe-index = <5>;
-			qcom,data-fifo-size = <0xF800>;
-			qcom,descriptor-fifo-size = <0x3A58>;
+			qcom,data-fifo-size = <0xD480>;
+			qcom,descriptor-fifo-size = <0x1A80>;
 			qcom,reset-bam-on-connect;
 		};
 		qcom,pipe6 {
@@ -296,8 +284,8 @@
 			qcom,peer-bam = <2>;
 			qcom,dst-bam-physical-address = <0xf9a04000>;
 			qcom,dst-bam-pipe-index = <6>;
-			qcom,data-fifo-size = <0xF800>;
-			qcom,descriptor-fifo-size = <0x3A58>;
+			qcom,data-fifo-size = <0xD480>;
+			qcom,descriptor-fifo-size = <0x1A80>;
 			qcom,reset-bam-on-connect;
 		};
 		qcom,pipe7 {
@@ -309,8 +297,8 @@
 			qcom,peer-bam = <2>;
 			qcom,src-bam-physical-address = <0xf9a04000>;
 			qcom,src-bam-pipe-index = <7>;
-			qcom,data-fifo-size = <0xDFE>;
-			qcom,descriptor-fifo-size = <0xB30>;
+			qcom,data-fifo-size = <0xD480>;
+			qcom,descriptor-fifo-size = <0x1A80>;
 			qcom,reset-bam-on-connect;
 		};
 	};
@@ -727,8 +715,9 @@
 		compatible = "qcom,msm-stub-codec";
 	};
 
-	qcom,msm-pri-auxpcm {
-		compatible = "qcom,msm-auxpcm-dev";
+	qcom,msm-auxpcm {
+		compatible = "qcom,msm-auxpcm-resource";
+		qcom,msm-cpudai-auxpcm-clk = "pcm_clk";
 		qcom,msm-cpudai-auxpcm-mode = <0>, <0>;
 		qcom,msm-cpudai-auxpcm-sync = <1>, <1>;
 		qcom,msm-cpudai-auxpcm-frame = <5>, <4>;
@@ -736,7 +725,16 @@
 		qcom,msm-cpudai-auxpcm-slot = <1>, <1>;
 		qcom,msm-cpudai-auxpcm-data = <0>, <0>;
 		qcom,msm-cpudai-auxpcm-pcm-clk-rate = <2048000>, <2048000>;
-		qcom,msm-auxpcm-interface = "primary";
+
+		qcom,msm-auxpcm-rx {
+			qcom,msm-auxpcm-dev-id = <4106>;
+			compatible = "qcom,msm-auxpcm-dev";
+		};
+
+		qcom,msm-auxpcm-tx {
+			qcom,msm-auxpcm-dev-id = <4107>;
+			compatible = "qcom,msm-auxpcm-dev";
+		};
 	};
 
 	qcom,msm-dai-mi2s {
@@ -756,13 +754,11 @@
 	qcom,mss {
 		compatible = "qcom,pil-q6v5-mss";
 		interrupts = <0 24 1>;
-		qcom,is-not-loadable;
 
 		/* GPIO inputs from mss */
 		qcom,gpio-err-fatal = <&smp2pgpio_ssr_smp2p_1_in 0 0>;
 		qcom,gpio-err-ready = <&smp2pgpio_ssr_smp2p_1_in 1 0>;
 		qcom,gpio-proxy-unvote = <&smp2pgpio_ssr_smp2p_1_in 2 0>;
-		qcom,gpio-stop-ack = <&smp2pgpio_ssr_smp2p_1_in 3 0>;
 
 		/* GPIO output to mss */
 		qcom,gpio-force-stop = <&smp2pgpio_ssr_smp2p_1_out 0 0>;
@@ -960,34 +956,5 @@
 		qcom,scale-function = <2>;
 		qcom,hw-settle-time = <2>;
 		qcom,fast-avg-setup = <0>;
-	};
-};
-
-&pm8019_adc_tm {
-	/* Channel Node */
-	chan@33 {
-		label = "pa_therm0";
-		reg = <0x33>;
-		qcom,decimation = <0>;
-		qcom,pre-div-channel-scaling = <0>;
-		qcom,calibration-type = "ratiometric";
-		qcom,scale-function = <2>;
-		qcom,hw-settle-time = <2>;
-		qcom,fast-avg-setup = <0>;
-		qcom,btm-channel-number = <0x48>;
-		qcom,thermal-node;
-	};
-
-	chan@34 {
-		label = "pa_therm1";
-		reg = <0x34>;
-		qcom,decimation = <0>;
-		qcom,pre-div-channel-scaling = <0>;
-		qcom,calibration-type = "ratiometric";
-		qcom,scale-function = <2>;
-		qcom,hw-settle-time = <2>;
-		qcom,fast-avg-setup = <0>;
-		qcom,btm-channel-number = <0x68>;
-		qcom,thermal-node;
 	};
 };

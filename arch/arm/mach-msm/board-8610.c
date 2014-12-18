@@ -125,7 +125,7 @@ void __init msm8610_init(void)
 		pr_err("%s: socinfo_init() failed\n", __func__);
 
 	msm8610_init_gpiomux();
-	board_dt_populate(adata);
+	of_platform_populate(NULL, of_default_bus_match_table, adata, NULL);
 	msm8610_add_drivers();
 }
 

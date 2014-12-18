@@ -33,7 +33,6 @@
 
 #define MXT_DEFAULT_FIRMWARE_NAME	"MXTS.fw"
 #define MXT_V_PROJECT_FIRMWARE_NAME	"mXT1664S_v.fw"
-#define MXT_N_PROJECT_FIRMWARE_NAME	"mXT1664S_n.fw"
 #define MXT_FIRMWARE_INKERNEL_PATH	"tsp_atmel/"
 #define MXT_MAX_FW_PATH				30
 #define MXT_FIRMWARE_UPDATE_TYPE	true
@@ -174,7 +173,6 @@ enum {
 #define MXT_TOUCH_XRANGE_MSB	19
 #define MXT_TOUCH_YRANGE_LSB	20
 #define MXT_TOUCH_YRANGE_MSB	21
-#define MXT_TOUCH_MOVFILTER2	36
 
 /* MXT_TOUCH_KEYARRAY_T15 Field */
 #define MXT_KEYARRY_CTRL	0
@@ -274,29 +272,19 @@ enum {
 #define MXT_REVISION_I	1	/* Support hovering */
 
 /************** Feature **************/
-#define TSP_PATCH				1
-#define TSP_BOOSTER				1
-#define MXT_TKEY_BOOSTER			1
+#define TSP_BOOSTER				0
 #define TSP_SEC_FACTORY			1
-#define TSP_INFORM_CHARGER		1
+#define TSP_INFORM_CHARGER		0
 #define TSP_USE_SHAPETOUCH		1
 #define ENABLE_TOUCH_KEY		1
+
 #define TSP_BRING_UP
-
-#define TSP_HOVER_WORKAROUND	0
-#define TSP_CHANGE_CONFIG_FOR_INPUT	1
-
-#ifdef CONFIG_SEC_FACTORY
-#define TSP_USE_PALM_FLAG		0
-#else
-#define TSP_USE_PALM_FLAG		1
-#endif
-
 #undef TSP_INIT_COMPLETE
 /* TODO TEMP_HOVER : Need to check and modify
  * it can be changed related potocol of hover So current
  * implementation is temporary code.
  */
+#define TSP_HOVER_WORKAROUND	0
 
 /* TSP_USE_ATMELDBG feature just for atmel tunning app
 * so it should be disabled after finishing tunning
@@ -311,7 +299,6 @@ enum {
 /************** Feature - **************/
 
 #if TSP_USE_SHAPETOUCH
-#define MXT_PALM_MAX	1
 #define MXT_COMPONENT_MAX	255
 #define MXT_SUMSIZE_MAX		(16 * 26)
 #endif
@@ -365,15 +352,14 @@ enum {
 };
 #endif
 
-#if TSP_BOOSTER || MXT_TKEY_BOOSTER
-#define DVFS_STAGE_TRIPLE		3
+#if TSP_BOOSTER
 #define DVFS_STAGE_DUAL		2
 #define DVFS_STAGE_SINGLE	1
 #define DVFS_STAGE_NONE		0
 #include <linux/cpufreq.h>
 
-#define TOUCH_BOOSTER_OFF_TIME	500
-#define TOUCH_BOOSTER_CHG_TIME	130
+#define TOUCH_BOOSTER_OFF_TIME	300
+#define TOUCH_BOOSTER_CHG_TIME	200
 #endif
 
 #if ENABLE_TOUCH_KEY
@@ -394,8 +380,6 @@ struct mxt_touchkey {
 	unsigned int xnode;
 	unsigned int ynode;
 	unsigned int deltaobj;
-	int key_skipped;
-	int key_pressed;
 };
 #endif
 
@@ -419,23 +403,13 @@ struct mxt_platform_data {
 	unsigned long irqflags;
 	unsigned char boot_address;
 	unsigned char revision;
-
-	int tsp_en;		/* enable LDO 3.3V */
-	int tsp_en1;		/* enable LDO 8.2V */
-	int tsp_int;		/* Interrupt GPIO */
-	int vdd_io_1p8;		/* enable Regulator 1.8V */
-	int tsp_rst;		/* reset GPIO */
-
 	const char *firmware_name;
 	const char *project_name;
-	const char *model_name;
 	const u8 **config;
-
 	int (*read_chg)(void);
 	int (*power_onoff) (bool);
 	int (*power_reset) (void);
 	void (*register_cb) (void *);
-
 #if ENABLE_TOUCH_KEY
 	unsigned int num_touchkey;
 	struct mxt_touchkey *touchkey;
@@ -539,33 +513,6 @@ struct mxt_fac_data {
 };
 #endif
 
-#if TSP_PATCH
-struct mxt_patch{
-	u8* patch;
-	u16* stage_addr;
-	u16* tline_addr;
-	u16* trigger_addr;
-	u16* event_addr;
-	u16* src_item;
-	u16* check_cnt;
-	u16 period;
-	u8 stage_cnt;
-	u8 tline_cnt;
-	u8 trigger_cnt;
-	u8 event_cnt;
-	u8 option;
-	u8 debug;
-	u8 timer_id;
-	u8 cur_stage;
-	u8 cur_stage_opt;
-	u8 run_stage;
-	u8 start;
-	u8 finger_cnt;
-	u8 start_stage; //0904
-	u8 skip_test;	//0908
-};
-#endif
-
 struct mxt_data {
 	struct i2c_client *client;
 	struct i2c_client *client_boot;
@@ -595,16 +542,6 @@ struct mxt_data {
 	int dvfs_boost_mode;
 	int dvfs_freq;
 #endif
-#if MXT_TKEY_BOOSTER
-	struct delayed_work	work_tkey_dvfs_off;
-	struct delayed_work	work_tkey_dvfs_chg;
-	struct mutex		tkey_dvfs_lock;
-	bool tkey_dvfs_lock_status;
-	int tkey_dvfs_old_stauts;
-	int tkey_dvfs_boost_mode;
-	int tkey_dvfs_freq;
-#endif
-
 #if TSP_USE_ATMELDBG
 	struct atmel_dbg atmeldbg;
 #endif
@@ -612,15 +549,12 @@ struct mxt_data {
 	struct mxt_fac_data *fdata;
 #endif
 #if TSP_USE_SHAPETOUCH
-	bool palm;
 	u16 sumsize;
 #endif
 #if TSP_INFORM_CHARGER
-	void (*register_cb) (struct mxt_callbacks *);
 	struct mxt_callbacks callbacks;
 	struct delayed_work noti_dwork;
 	bool charging_mode;
-	u8 chargin_status;
 #endif
 #if TSP_HOVER_WORKAROUND
 /* TODO HOVER : Current firmware need to current calibration for hover manually
@@ -630,29 +564,12 @@ struct mxt_data {
 #endif
 #if ENABLE_TOUCH_KEY
 	u16 tsp_keystatus;
-	bool report_dummy_key;
-	bool ignore_menu_key;
-	bool ignore_back_key;
-	bool ignore_menu_key_by_back;
-	bool ignore_back_key_by_menu;
-	bool threshold_cmd_reversed;
-	int setdata;
-#endif
-#ifdef TSP_CHECK_ATCH
-	struct mxt_atch	atch;
 #endif
 #ifndef TSP_INIT_COMPLETE
 	struct delayed_work work_init_power_on;
 #endif
-#if TSP_PATCH
-	struct mxt_patch patch;
-#endif
-#if TSP_CHANGE_CONFIG_FOR_INPUT
-bool is_inputmethod;
-#endif
+
 };
-
-
 
 /**
  * struct mxt_fw_image - Represents a firmware file.
@@ -707,17 +624,11 @@ extern struct class *sec_class;
 int mxt_read_all_diagnostic_data(struct mxt_data *data, u8 dbg_mode);
 #endif
 
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-extern int poweroff_charging;
+#if TSP_BOOSTER
+void mxt_change_dvfs_lock(struct work_struct *work);
+void mxt_set_dvfs_off(struct work_struct *work);
+void mxt_set_dvfs_lock(struct mxt_data *data , int mode);
+int mxt_init_dvfs(struct mxt_data *data);
 #endif
 
-#if TSP_BOOSTER
-extern void mxt_set_dvfs_lock(struct mxt_data *data , int mode);
-extern void mxt_init_dvfs(struct mxt_data *data);
-#endif
-#if MXT_TKEY_BOOSTER
-extern void mxt_tkey_set_dvfs_lock(struct mxt_data *data , int mode);
-extern void mxt_tkey_init_dvfs(struct mxt_data *data);
-#endif
-bool set_threshold(void *device_data);
 #endif

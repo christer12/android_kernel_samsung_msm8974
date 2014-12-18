@@ -223,24 +223,25 @@ kgsl_gem_alloc_memory(struct drm_gem_object *obj)
 				priv->ion_handle = NULL;
 				return result;
 			}
-
+			
 			result = kgsl_mmu_get_gpuaddr(priv->pagetable,
 							&priv->memdesc);
 			if (result) {
 				DRM_ERROR(
 				"kgsl_mmu_get_gpuaddr failed. result = %d\n",
 				result);
+				kgsl_mmu_put_gpuaddr(priv->pagetable,
+							&priv->memdesc);
 				ion_free(kgsl_drm_ion_client,
 					priv->ion_handle);
 				priv->ion_handle = NULL;
 				return result;
 			}
+
 			result = kgsl_mmu_map(priv->pagetable, &priv->memdesc);
 			if (result) {
 				DRM_ERROR(
 				"kgsl_mmu_map failed.  result = %d\n", result);
-				kgsl_mmu_put_gpuaddr(priv->pagetable,
-							&priv->memdesc);
 				ion_free(kgsl_drm_ion_client,
 					priv->ion_handle);
 				priv->ion_handle = NULL;

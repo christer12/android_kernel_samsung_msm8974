@@ -41,19 +41,9 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
 #include <linux/ctype.h>
 #include <asm/div64.h>
 
-/* octa ldi id3 */
 #define EVT0_ID 0x00
 #define EVT0_SECOND_ID 0x01
-#define EVT1_ID 0x21
-#define EVT1_SECOND_ID 0x22
-#define EVT1_H_REV_I 0x23
-#define EVT1_H_REV_J 0x24
-
-/* youm ldi id3 */
-#define EVT0_F_REV_A 0x10
-#define EVT0_F_REV_E 0x11
-#define EVT0_F_REV_F 0x12
-#define EVT2_F_REV_G 0x32
+#define EVT1 0x10
 
 /*
 *	From 4.8 inch model use AID function
@@ -70,7 +60,7 @@ Copyright (C) 2012, Samsung Electronics. All rights reserved.
 
 
 #define MTP_START_ADDR 0xC8
-#define LUMINANCE_MAX 62
+#define LUMINANCE_MAX 59
 #define GAMMA_SET_MAX 33
 #define BIT_SHIFT 22
 /*

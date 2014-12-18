@@ -183,7 +183,7 @@ struct msm_gpio_set_tbl {
 };
 
 struct msm_camera_gpio_num_info {
-	uint16_t gpio_num[7];
+	uint16_t gpio_num[2];
 };
 
 struct msm_camera_gpio_conf {
@@ -610,12 +610,9 @@ void msm_map_msm8930_io(void);
 void msm_map_apq8064_io(void);
 void msm_map_msm7x30_io(void);
 void msm_map_fsm9xxx_io(void);
-void msm_map_fsm9900_io(void);
-void fsm9900_init_gpiomux(void);
 void msm_map_8974_io(void);
 void msm_map_8084_io(void);
 void msm_map_msmkrypton_io(void);
-void msm_map_msmsamarium_io(void);
 void msm_map_msm8625_io(void);
 void msm_map_msm9625_io(void);
 void msm_init_irq(void);
@@ -627,7 +624,6 @@ void msm_8974_init_gpiomux(void);
 void apq8084_init_gpiomux(void);
 void msm9625_init_gpiomux(void);
 void msmkrypton_init_gpiomux(void);
-void msmsamarium_init_gpiomux(void);
 void msm_map_mpq8092_io(void);
 void mpq8092_init_gpiomux(void);
 void msm_map_msm8226_io(void);

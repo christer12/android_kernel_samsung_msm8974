@@ -31,14 +31,11 @@
 #define DSS_REG_W(base, offset, data)	REG_W((data), (base) + (offset))
 #define DSS_REG_R(base, offset)		REG_R((base) + (offset))
 
-#define GDSC_PHYS		0xFD8C2300
-#define GDSC_SIZE		0x8
+#define GDSC_PHYS		0xFD8C2304
+#define GDSC_SIZE		0x4
 
 #define DSI_PHY_PHYS		0xFD922A00
 #define DSI_PHY_SIZE		0x000000D4
-
-#define EDP_PHY_PHYS		0xFD923A00
-#define EDP_PHY_SIZE		0x000000D4
 
 #define HDMI_PHY_PHYS		0xFD922500
 #define HDMI_PHY_SIZE		0x0000007C
@@ -155,33 +152,19 @@
 static long vco_cached_rate;
 static unsigned char *mdss_dsi_base;
 static unsigned char *gdsc_base;
-static struct clk *mdss_ahb_clk;
-static unsigned char *mdss_edp_base;
+static struct clk *mdss_dsi_ahb_clk;
 
 static void __iomem *hdmi_phy_base;
 static void __iomem *hdmi_phy_pll_base;
 static unsigned hdmi_pll_on;
 
-#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
-void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4);
-#endif
-
-static int mdss_gdsc_enabled(void)
-{
-	if (!gdsc_base)
-		return 0;
-
-	return (readl_relaxed(gdsc_base + 0x4) & BIT(31)) &&
-		(!(readl_relaxed(gdsc_base) & BIT(0)));
-}
-
 void hdmi_pll_disable(void)
 {
-	clk_enable(mdss_ahb_clk);
+	clk_enable(mdss_dsi_ahb_clk);
 	REG_W(0x0, hdmi_phy_pll_base + HDMI_UNI_PLL_GLB_CFG);
 	udelay(5);
 	REG_W(0x0, hdmi_phy_base + HDMI_PHY_GLB_CFG);
-	clk_disable(mdss_ahb_clk);
+	clk_disable(mdss_dsi_ahb_clk);
 
 	hdmi_pll_on = 0;
 } /* hdmi_pll_disable */
@@ -191,7 +174,7 @@ int hdmi_pll_enable(void)
 	u32 status;
 	u32 max_reads, timeout_us;
 
-	clk_enable(mdss_ahb_clk);
+	clk_enable(mdss_dsi_ahb_clk);
 	/* Global Enable */
 	REG_W(0x81, hdmi_phy_base + HDMI_PHY_GLB_CFG);
 	/* Power up power gen */
@@ -217,7 +200,7 @@ int hdmi_pll_enable(void)
 		pr_err("%s: hdmi phy pll status=%x failed to Lock\n",
 		       __func__, status);
 		hdmi_pll_disable();
-		clk_disable(mdss_ahb_clk);
+		clk_disable(mdss_dsi_ahb_clk);
 		return -EINVAL;
 	}
 	pr_debug("%s: hdmi phy pll is locked\n", __func__);
@@ -231,11 +214,11 @@ int hdmi_pll_enable(void)
 		pr_err("%s: hdmi phy status=%x failed to Lock\n",
 		       __func__, status);
 		hdmi_pll_disable();
-		clk_disable(mdss_ahb_clk);
+		clk_disable(mdss_dsi_ahb_clk);
 		return -EINVAL;
 	}
 	pr_debug("%s: hdmi phy is locked\n", __func__);
-	clk_disable(mdss_ahb_clk);
+	clk_disable(mdss_dsi_ahb_clk);
 
 	hdmi_pll_on = 1;
 
@@ -251,7 +234,7 @@ int hdmi_pll_set_rate(unsigned long rate)
 		set_power_dwn = 1;
 	}
 
-	clk_enable(mdss_ahb_clk);
+	clk_enable(mdss_dsi_ahb_clk);
 	pr_debug("%s: rate=%ld\n", __func__, rate);
 	switch (rate) {
 	case 0:
@@ -392,49 +375,7 @@ int hdmi_pll_set_rate(unsigned long rate)
 		REG_W(0x05, hdmi_phy_base + HDMI_PHY_TXCAL_CFG3);
 		udelay(200);
 	break;
-	case 65000000:
-		REG_W(0x81, hdmi_phy_base + HDMI_PHY_GLB_CFG);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_GLB_CFG);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_REFCLK_CFG);
-		REG_W(0x19, hdmi_phy_pll_base + HDMI_UNI_PLL_VCOLPF_CFG);
-		REG_W(0x0E, hdmi_phy_pll_base + HDMI_UNI_PLL_LPFR_CFG);
-		REG_W(0x20, hdmi_phy_pll_base + HDMI_UNI_PLL_LPFC1_CFG);
-		REG_W(0x0D, hdmi_phy_pll_base + HDMI_UNI_PLL_LPFC2_CFG);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG0);
-		REG_W(0x4F, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG1);
-		REG_W(0x55, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG2);
-		REG_W(0xED, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG3);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG4);
-		REG_W(0x10, hdmi_phy_pll_base + HDMI_UNI_PLL_LKDET_CFG0);
-		REG_W(0x1A, hdmi_phy_pll_base + HDMI_UNI_PLL_LKDET_CFG1);
-		REG_W(0x05, hdmi_phy_pll_base + HDMI_UNI_PLL_LKDET_CFG2);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_POSTDIV1_CFG);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_POSTDIV2_CFG);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_POSTDIV3_CFG);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG2);
-		REG_W(0x60, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG8);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG9);
-		REG_W(0x8A, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG10);
-		REG_W(0x02, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG11);
-		REG_W(0x1F, hdmi_phy_base + HDMI_PHY_PD_CTRL0);
-		udelay(50);
 
-		REG_W(0x0F, hdmi_phy_pll_base + HDMI_UNI_PLL_GLB_CFG);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_PD_CTRL1);
-		REG_W(0x10, hdmi_phy_base + HDMI_PHY_ANA_CFG2);
-		REG_W(0xDB, hdmi_phy_base + HDMI_PHY_ANA_CFG0);
-		REG_W(0x43, hdmi_phy_base + HDMI_PHY_ANA_CFG1);
-		REG_W(0x02, hdmi_phy_base + HDMI_PHY_ANA_CFG2);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_ANA_CFG3);
-		REG_W(0x04, hdmi_phy_pll_base + HDMI_UNI_PLL_VREG_CFG);
-		REG_W(0xD0, hdmi_phy_base + HDMI_PHY_DCC_CFG0);
-		REG_W(0x1A, hdmi_phy_base + HDMI_PHY_DCC_CFG1);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_TXCAL_CFG0);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_TXCAL_CFG1);
-		REG_W(0x02, hdmi_phy_base + HDMI_PHY_TXCAL_CFG2);
-		REG_W(0x05, hdmi_phy_base + HDMI_PHY_TXCAL_CFG3);
-		udelay(200);
-	break;
 	case 74250000:
 		/*
 		 * 720p60/720p50/1080i60/1080i50
@@ -463,50 +404,6 @@ int hdmi_pll_set_rate(unsigned long rate)
 		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG9);
 		REG_W(0xE6, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG10);
 		REG_W(0x02, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG11);
-		REG_W(0x1F, hdmi_phy_base + HDMI_PHY_PD_CTRL0);
-		udelay(50);
-
-		REG_W(0x0F, hdmi_phy_pll_base + HDMI_UNI_PLL_GLB_CFG);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_PD_CTRL1);
-		REG_W(0x10, hdmi_phy_base + HDMI_PHY_ANA_CFG2);
-		REG_W(0xDB, hdmi_phy_base + HDMI_PHY_ANA_CFG0);
-		REG_W(0x43, hdmi_phy_base + HDMI_PHY_ANA_CFG1);
-		REG_W(0x02, hdmi_phy_base + HDMI_PHY_ANA_CFG2);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_ANA_CFG3);
-		REG_W(0x04, hdmi_phy_pll_base + HDMI_UNI_PLL_VREG_CFG);
-		REG_W(0xD0, hdmi_phy_base + HDMI_PHY_DCC_CFG0);
-		REG_W(0x1A, hdmi_phy_base + HDMI_PHY_DCC_CFG1);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_TXCAL_CFG0);
-		REG_W(0x00, hdmi_phy_base + HDMI_PHY_TXCAL_CFG1);
-		REG_W(0x02, hdmi_phy_base + HDMI_PHY_TXCAL_CFG2);
-		REG_W(0x05, hdmi_phy_base + HDMI_PHY_TXCAL_CFG3);
-		udelay(200);
-	break;
-
-	case 108000000:
-		REG_W(0x81, hdmi_phy_base + HDMI_PHY_GLB_CFG);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_GLB_CFG);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_REFCLK_CFG);
-		REG_W(0x19, hdmi_phy_pll_base + HDMI_UNI_PLL_VCOLPF_CFG);
-		REG_W(0x0E, hdmi_phy_pll_base + HDMI_UNI_PLL_LPFR_CFG);
-		REG_W(0x20, hdmi_phy_pll_base + HDMI_UNI_PLL_LPFC1_CFG);
-		REG_W(0x0D, hdmi_phy_pll_base + HDMI_UNI_PLL_LPFC2_CFG);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG0);
-		REG_W(0x5B, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG1);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG2);
-		REG_W(0x20, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG3);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_SDM_CFG4);
-		REG_W(0x10, hdmi_phy_pll_base + HDMI_UNI_PLL_LKDET_CFG0);
-		REG_W(0x1A, hdmi_phy_pll_base + HDMI_UNI_PLL_LKDET_CFG1);
-		REG_W(0x05, hdmi_phy_pll_base + HDMI_UNI_PLL_LKDET_CFG2);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_POSTDIV1_CFG);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_POSTDIV2_CFG);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_POSTDIV3_CFG);
-		REG_W(0x01, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG2);
-		REG_W(0x60, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG8);
-		REG_W(0x00, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG9);
-		REG_W(0x38, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG10);
-		REG_W(0x04, hdmi_phy_pll_base + HDMI_UNI_PLL_CAL_CFG11);
 		REG_W(0x1F, hdmi_phy_base + HDMI_PHY_PD_CTRL0);
 		udelay(50);
 
@@ -666,7 +563,7 @@ int hdmi_pll_set_rate(unsigned long rate)
 	/* Make sure writes complete before disabling iface clock */
 	mb();
 
-	clk_disable(mdss_ahb_clk);
+	clk_disable(mdss_dsi_ahb_clk);
 
 	if (set_power_dwn)
 		hdmi_pll_enable();
@@ -675,25 +572,7 @@ int hdmi_pll_set_rate(unsigned long rate)
 } /* hdmi_pll_set_rate */
 
 /* Auto PLL calibaration */
-int mdss_ahb_clk_enable(int enable)
-{
-	int rc = 0;
-
-	/* todo: Ideally, we should enable/disable GDSC whenever we are
-	 * attempting to enable/disable MDSS AHB clock.
-	 * For now, just return error if  GDSC is not enabled.
-	 */
-	if (!mdss_gdsc_enabled())
-		return -EPERM;
-
-	if (enable)
-		rc = clk_prepare_enable(mdss_ahb_clk);
-	else
-		clk_disable_unprepare(mdss_ahb_clk);
-
-	return rc;
-}
-
+/* todo: check for error on enabling ahb clk */
 int set_byte_mux_sel(struct mux_clk *clk, int sel)
 {
 	pr_debug("%s: byte mux set to %s mode\n", __func__,
@@ -706,18 +585,12 @@ int set_byte_mux_sel(struct mux_clk *clk, int sel)
 int get_byte_mux_sel(struct mux_clk *clk)
 {
 	int mux_mode;
-
-	if (mdss_ahb_clk_enable(1)) {
-		pr_debug("%s: Failed to enable mdss ahb clock\n", __func__);
-		return 0;
-	}
-
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	mux_mode = DSS_REG_R(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_VREG_CFG)
 				& BIT(1);
 	pr_debug("%s: byte mux mode = %s", __func__,
 		mux_mode ? "indirect" : "direct");
-
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return !!mux_mode;
 }
 
@@ -743,13 +616,7 @@ int mux_prepare(struct clk *c)
 	struct mux_clk *mux = to_mux_clk(c);
 	int i, rc, sel = 0;
 
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	for (i = 0; i < mux->num_parents; i++)
 		if (mux->parents[i].src == c->parent) {
 			sel = mux->parents[i].sel;
@@ -757,109 +624,70 @@ int mux_prepare(struct clk *c)
 		}
 
 	if (i == mux->num_parents) {
-		rc = -EINVAL;
-		goto error;
+		clk_disable_unprepare(mdss_dsi_ahb_clk);
+		return -EINVAL;
 	}
 
 	/* Restore the mux source select value */
 	rc = mux->ops->set_mux_sel(mux, sel);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 
-error:
-	mdss_ahb_clk_enable(0);
 	return rc;
 }
 
 static int fixed_4div_set_div(struct div_clk *clk, int div)
 {
-	int rc = 0;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	DSS_REG_W(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_POSTDIV2_CFG,
 			(div - 1));
-
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return 0;
 }
 
 static int fixed_4div_get_div(struct div_clk *clk)
 {
 	int div = 0;
-
-	if (mdss_ahb_clk_enable(1)) {
-		pr_debug("%s: Failed to enable mdss ahb clock\n", __func__);
-		return 1;
-	}
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	div = DSS_REG_R(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_POSTDIV2_CFG);
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return div + 1;
 }
 
 static int digital_set_div(struct div_clk *clk, int div)
 {
-	int rc = 0;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	DSS_REG_W(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_POSTDIV3_CFG,
 			(div - 1));
-
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return 0;
 }
 
 static int digital_get_div(struct div_clk *clk)
 {
 	int div = 0;
-
-	if (mdss_ahb_clk_enable(1)) {
-		pr_debug("%s: Failed to enable mdss ahb clock\n", __func__);
-		return 1;
-	}
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	div = DSS_REG_R(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_POSTDIV3_CFG);
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return div + 1;
 }
 
 static int analog_set_div(struct div_clk *clk, int div)
 {
-	int rc = 0;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	DSS_REG_W(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_POSTDIV1_CFG,
 			div - 1);
-
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
+	pr_debug("%s: div = %d\n", __func__, div);
 	return 0;
 }
 
 static int analog_get_div(struct div_clk *clk)
 {
 	int div = 0;
-
-	if (mdss_ahb_clk_enable(1)) {
-		pr_debug("%s: Failed to enable mdss ahb clock\n", __func__);
-		return 1;
-	}
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 	div = DSS_REG_R(mdss_dsi_base,
 		DSI_0_PHY_PLL_UNIPHY_PLL_POSTDIV1_CFG) + 1;
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return div;
 }
 
@@ -880,10 +708,6 @@ static int dsi_pll_lock_status(void)
 	} else {
 		pll_locked = 1;
 	}
-#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
-	xlog(__func__, pll_locked, 0, 0, 0, 0x99999);
-#endif
-
 
 	return pll_locked;
 }
@@ -935,7 +759,7 @@ static int dsi_pll_enable_seq_m(void)
 	if (pll_locked)
 		pr_debug("%s: PLL Locked at attempt #%d\n", __func__, i);
 	else
-		pr_info("%s: PLL failed to lock after %d attempt(s)\n",
+		pr_debug("%s: PLL failed to lock after %d attempt(s)\n",
 			__func__, i);
 
 	return pll_locked ? 0 : -EINVAL;
@@ -1082,8 +906,8 @@ static int dsi_pll_enable_seq_8974(void)
 		udelay(500);
 		/* poll for PLL ready status */
 		max_reads = 5;
-		timeout_us = 500;
- 		if (readl_poll_timeout_noirq((mdss_dsi_base +
+		timeout_us = 100;
+		if (readl_poll_timeout_noirq((mdss_dsi_base +
 				DSI_0_PHY_PLL_UNIPHY_PLL_STATUS),
 				status,
 				((status & 0x01) == 1),
@@ -1117,14 +941,11 @@ static int dsi_pll_enable_seq_8974(void)
 	}
 
 	if ((status & 0x01) != 1) {
-		pr_info("%s: DSI PLL status=%x \n",
+		pr_debug("%s: DSI PLL status=%x failed to Lock\n",
 		       __func__, status);
 		rc = -EINVAL;
 		goto error;
 	}
-#if defined(CONFIG_FB_MSM_MDSS_DSI_DBG)
-	xlog(__func__, status & 0x01, 0, 0, 0, 0x99999);
-#endif
 
 	pr_debug("%s: DSI PLL Lock success\n", __func__);
 
@@ -1132,52 +953,34 @@ error:
 	return rc;
 }
 
-static int dsi_pll_enable(struct clk *c)
+static int vco_enable(struct clk *c)
 {
 	int i, rc = 0;
 	struct dsi_pll_vco_clk *vco = to_vco_clk(c);
 
-	rc = clk_enable(mdss_ahb_clk);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
-	/* Try all enable sequences until one succeeds */
+	clk_enable(mdss_dsi_ahb_clk);
+	/* clk_enable() of ahb clk */
 	for (i = 0; i < vco->pll_en_seq_cnt; i++) {
 		rc = vco->pll_enable_seqs[i]();
-		pr_debug("%s: DSI PLL %s after sequence #%d\n", __func__,
-			rc ? "unlocked" : "locked", i + 1);
+		pr_debug("%s: DSI PLL %s after sequence #%d", __func__,
+			rc ? "lock_failed" : "lock_successed", i + 1);
 		if (!rc)
 			break;
 	}
-	clk_disable(mdss_ahb_clk);
+	clk_disable(mdss_dsi_ahb_clk);
 
 	if (rc)
-		pr_err("%s: DSI PLL failed to lock\n", __func__);
+		pr_err("%s: after 3times iteration, Finally DSI PLL failed to lock ", __func__);
 
 	return rc;
 }
 
-static void dsi_pll_disable(struct clk *c)
+static void vco_disable(struct clk *c)
 {
-	int rc = 0;
-
-	if (!mdss_gdsc_enabled())
-		return;
-
-	rc = clk_enable(mdss_ahb_clk);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return;
-	}
-
+	clk_enable(mdss_dsi_ahb_clk);
 	DSS_REG_W(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_GLB_CFG, 0x00);
-
-	clk_disable(mdss_ahb_clk);
-	pr_debug("%s: DSI PLL Disabled\n", __func__);
+	clk_disable(mdss_dsi_ahb_clk);
+	pr_debug("%s: PLL Disabled\n", __func__);
 	return;
 }
 
@@ -1193,12 +996,7 @@ static int vco_set_rate(struct clk *c, unsigned long rate)
 	int i, rc = 0;
 	struct dsi_pll_vco_clk *vco = to_vco_clk(c);
 
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
+	clk_prepare_enable(mdss_dsi_ahb_clk);
 
 	/* Configure the Loop filter resistance */
 	for (i = 0; i < vco->lpfr_lut_size; i++)
@@ -1302,7 +1100,7 @@ static int vco_set_rate(struct clk *c, unsigned long rate)
 	DSS_REG_W(mdss_dsi_base, DSI_0_PHY_PLL_UNIPHY_PLL_EFUSE_CFG, 0x20);
 
 error:
-	mdss_ahb_clk_enable(0);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
 	return rc;
 }
 
@@ -1317,6 +1115,7 @@ static long vco_round_rate(struct clk *c, unsigned long rate)
 	if (rate > vco->max_rate)
 		rrate = vco->max_rate;
 
+	pr_debug("%s: rate = %lu, rrate = %lu\n", __func__, rate, rrate);
 	return rrate;
 }
 
@@ -1364,52 +1163,30 @@ static unsigned long vco_get_rate(struct clk *c)
 
 static enum handoff vco_handoff(struct clk *c)
 {
-	int rc = 0;
-	enum handoff ret = HANDOFF_DISABLED_CLK;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return ret;
-	}
-	if (dsi_pll_lock_status()) {
-		c->rate = vco_get_rate(c);
-		ret = HANDOFF_ENABLED_CLK;
-	}
-
-	mdss_ahb_clk_enable(0);
-	return ret;
+#if defined(CONFIG_MACH_MONTBLANC)
+	return HANDOFF_DISABLED_CLK; // LCD Bring-up, Temp code
+#endif
+	clk_prepare_enable(mdss_dsi_ahb_clk);
+	c->rate = vco_get_rate(c);
+	clk_disable_unprepare(mdss_dsi_ahb_clk);
+	return HANDOFF_ENABLED_CLK;
 }
 
 static int vco_prepare(struct clk *c)
 {
-	int rc = 0;
-
-	if (vco_cached_rate != 0) {
-		rc = vco_set_rate(c, vco_cached_rate);
-		if (rc) {
-			pr_err("%s: vco_set_rate failed. rc=%d\n",
-				__func__, rc);
-			goto error;
-		}
-	}
-
-	rc = dsi_pll_enable(c);
-
-error:
-	return rc;
+	return vco_set_rate(c, vco_cached_rate);
 }
 
 static void vco_unprepare(struct clk *c)
 {
 	vco_cached_rate = c->rate;
-	dsi_pll_disable(c);
 }
 
 /* Op structures */
 
 static struct clk_ops clk_ops_dsi_vco = {
+	.enable = vco_enable,
+	.disable = vco_disable,
 	.set_rate = vco_set_rate,
 	.round_rate = vco_round_rate,
 	.handoff = vco_handoff,
@@ -1448,10 +1225,9 @@ static struct clk_ops analog_potsdiv_clk_ops;
 /* Display clocks */
 
 struct dsi_pll_vco_clk dsi_vco_clk_8226 = {
-	.ref_clk_rate = 19200000,
 	.min_rate = 350000000,
 	.max_rate = 750000000,
-	.pll_en_seq_cnt = 6,
+	.pll_en_seq_cnt = 1,
 	.pll_enable_seqs[0] = dsi_pll_enable_seq_m,
 	.pll_enable_seqs[1] = dsi_pll_enable_seq_d,
 	.pll_enable_seqs[2] = dsi_pll_enable_seq_d,
@@ -1636,456 +1412,6 @@ struct div_clk byte_clk_src_8974 = {
 	},
 };
 
-static inline struct edp_pll_vco_clk *to_edp_vco_clk(struct clk *clk)
-{
-	return container_of(clk, struct edp_pll_vco_clk, c);
-}
-
-static int edp_vco_set_rate(struct clk *c, unsigned long vco_rate)
-{
-	struct edp_pll_vco_clk *vco = to_edp_vco_clk(c);
-	int rc = 0;
-
-	pr_info("%s: vco_rate=%d\n", __func__, (int)vco_rate);
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		rc =  -EINVAL;
-	}
-	if (vco_rate == 810000000) {
-		DSS_REG_W(mdss_edp_base, 0x0c, 0x18);
-		/* UNIPHY_PLL_LKDET_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x64, 0x05);
-		/* UNIPHY_PLL_REFCLK_CFG */
-		DSS_REG_W(mdss_edp_base, 0x00, 0x00);
-		/* UNIPHY_PLL_SDM_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x38, 0x36);
-		/* UNIPHY_PLL_SDM_CFG1 */
-		DSS_REG_W(mdss_edp_base, 0x3c, 0x69);
-		/* UNIPHY_PLL_SDM_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x40, 0xff);
-		/* UNIPHY_PLL_SDM_CFG3 */
-		DSS_REG_W(mdss_edp_base, 0x44, 0x2f);
-		/* UNIPHY_PLL_SDM_CFG4 */
-		DSS_REG_W(mdss_edp_base, 0x48, 0x00);
-		/* UNIPHY_PLL_SSC_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x4c, 0x80);
-		/* UNIPHY_PLL_SSC_CFG1 */
-		DSS_REG_W(mdss_edp_base, 0x50, 0x00);
-		/* UNIPHY_PLL_SSC_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x54, 0x00);
-		/* UNIPHY_PLL_SSC_CFG3 */
-		DSS_REG_W(mdss_edp_base, 0x58, 0x00);
-		/* UNIPHY_PLL_CAL_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x6c, 0x0a);
-		/* UNIPHY_PLL_CAL_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x74, 0x01);
-		/* UNIPHY_PLL_CAL_CFG6 */
-		DSS_REG_W(mdss_edp_base, 0x84, 0x5a);
-		/* UNIPHY_PLL_CAL_CFG7 */
-		DSS_REG_W(mdss_edp_base, 0x88, 0x0);
-		/* UNIPHY_PLL_CAL_CFG8 */
-		DSS_REG_W(mdss_edp_base, 0x8c, 0x60);
-		/* UNIPHY_PLL_CAL_CFG9 */
-		DSS_REG_W(mdss_edp_base, 0x90, 0x0);
-		/* UNIPHY_PLL_CAL_CFG10 */
-		DSS_REG_W(mdss_edp_base, 0x94, 0x2a);
-		/* UNIPHY_PLL_CAL_CFG11 */
-		DSS_REG_W(mdss_edp_base, 0x98, 0x3);
-		/* UNIPHY_PLL_LKDET_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x5c, 0x10);
-		/* UNIPHY_PLL_LKDET_CFG1 */
-		DSS_REG_W(mdss_edp_base, 0x60, 0x1a);
-		/* UNIPHY_PLL_POSTDIV1_CFG */
-		DSS_REG_W(mdss_edp_base, 0x04, 0x00);
-		/* UNIPHY_PLL_POSTDIV3_CFG */
-		DSS_REG_W(mdss_edp_base, 0x28, 0x00);
-	} else if (vco_rate == 1350000000) {
-		/* UNIPHY_PLL_LKDET_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x64, 0x05);
-		/* UNIPHY_PLL_REFCLK_CFG */
-		DSS_REG_W(mdss_edp_base, 0x00, 0x01);
-		/* UNIPHY_PLL_SDM_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x38, 0x36);
-		/* UNIPHY_PLL_SDM_CFG1 */
-		DSS_REG_W(mdss_edp_base, 0x3c, 0x62);
-		/* UNIPHY_PLL_SDM_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x40, 0x00);
-		/* UNIPHY_PLL_SDM_CFG3 */
-		DSS_REG_W(mdss_edp_base, 0x44, 0x28);
-		/* UNIPHY_PLL_SDM_CFG4 */
-		DSS_REG_W(mdss_edp_base, 0x48, 0x00);
-		/* UNIPHY_PLL_SSC_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x4c, 0x80);
-		/* UNIPHY_PLL_SSC_CFG1 */
-		DSS_REG_W(mdss_edp_base, 0x50, 0x00);
-		/* UNIPHY_PLL_SSC_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x54, 0x00);
-		/* UNIPHY_PLL_SSC_CFG3 */
-		DSS_REG_W(mdss_edp_base, 0x58, 0x00);
-		/* UNIPHY_PLL_CAL_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x6c, 0x0a);
-		/* UNIPHY_PLL_CAL_CFG2 */
-		DSS_REG_W(mdss_edp_base, 0x74, 0x01);
-		/* UNIPHY_PLL_CAL_CFG6 */
-		DSS_REG_W(mdss_edp_base, 0x84, 0x5a);
-		/* UNIPHY_PLL_CAL_CFG7 */
-		DSS_REG_W(mdss_edp_base, 0x88, 0x0);
-		/* UNIPHY_PLL_CAL_CFG8 */
-		DSS_REG_W(mdss_edp_base, 0x8c, 0x60);
-		/* UNIPHY_PLL_CAL_CFG9 */
-		DSS_REG_W(mdss_edp_base, 0x90, 0x0);
-		/* UNIPHY_PLL_CAL_CFG10 */
-		DSS_REG_W(mdss_edp_base, 0x94, 0x46);
-		/* UNIPHY_PLL_CAL_CFG11 */
-		DSS_REG_W(mdss_edp_base, 0x98, 0x5);
-		/* UNIPHY_PLL_LKDET_CFG0 */
-		DSS_REG_W(mdss_edp_base, 0x5c, 0x10);
-		/* UNIPHY_PLL_LKDET_CFG1 */
-		DSS_REG_W(mdss_edp_base, 0x60, 0x1a);
-		/* UNIPHY_PLL_POSTDIV1_CFG */
-		DSS_REG_W(mdss_edp_base, 0x04, 0x00);
-		/* UNIPHY_PLL_POSTDIV3_CFG */
-		DSS_REG_W(mdss_edp_base, 0x28, 0x00);
-	} else {
-		pr_err("%s: rate=%d is NOT supported\n", __func__,
-					(int)vco_rate);
-		vco_rate = 0;
-		rc =  -EINVAL;
-	}
-
-	DSS_REG_W(mdss_edp_base, 0x20, 0x01); /* UNIPHY_PLL_GLB_CFG */
-	udelay(100);
-	DSS_REG_W(mdss_edp_base, 0x20, 0x05); /* UNIPHY_PLL_GLB_CFG */
-	udelay(100);
-	DSS_REG_W(mdss_edp_base, 0x20, 0x07); /* UNIPHY_PLL_GLB_CFG */
-	udelay(100);
-	DSS_REG_W(mdss_edp_base, 0x20, 0x0f); /* UNIPHY_PLL_GLB_CFG */
-	udelay(100);
-	mdss_ahb_clk_enable(0);
-
-	vco->rate = vco_rate;
-
-	return rc;
-}
-
-static int edp_pll_ready_poll(void)
-{
-	int cnt;
-	u32 status;
-
-	/* ahb clock should be enabled by caller */
-	cnt = 100;
-	while (cnt--) {
-		udelay(100);
-		status = DSS_REG_R(mdss_edp_base, 0xc0);
-		status &= 0x01;
-		if (status)
-			break;
-	}
-	pr_info("%s: cnt=%d status=%d\n", __func__, cnt, (int)status);
-
-	if (status)
-		return 1;
-
-	pr_err("%s: PLL NOT ready\n", __func__);
-	return 0;
-}
-
-static int edp_vco_enable(struct clk *c)
-{
-	int i, ready;
-	int rc = 0;
-
-	if (!mdss_gdsc_enabled()) {
-		pr_err("%s: mdss GDSC is not enabled\n", __func__);
-		return -EPERM;
-	}
-
-	/* called from enable, irq disable. can not call clk_prepare */
-	rc = clk_enable(mdss_ahb_clk);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
-	for (i = 0; i < 3; i++) {
-		ready = edp_pll_ready_poll();
-		if (ready)
-			break;
-		DSS_REG_W(mdss_edp_base, 0x20, 0x01); /* UNIPHY_PLL_GLB_CFG */
-		udelay(100);
-		DSS_REG_W(mdss_edp_base, 0x20, 0x05); /* UNIPHY_PLL_GLB_CFG */
-		udelay(100);
-		DSS_REG_W(mdss_edp_base, 0x20, 0x07); /* UNIPHY_PLL_GLB_CFG */
-		udelay(100);
-		DSS_REG_W(mdss_edp_base, 0x20, 0x0f); /* UNIPHY_PLL_GLB_CFG */
-		udelay(100);
-	}
-	clk_disable(mdss_ahb_clk);
-
-	if (ready) {
-		pr_debug("%s: EDP PLL locked\n", __func__);
-		return 0;
-	}
-
-	pr_err("%s: EDP PLL failed to lock\n", __func__);
-	return  -EINVAL;
-}
-
-static void edp_vco_disable(struct clk *c)
-{
-	int rc = 0;
-
-	if (!mdss_gdsc_enabled()) {
-		pr_err("%s: mdss GDSC is not enabled\n", __func__);
-		return;
-	}
-
-	/* called from unprepare which is not atomic */
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return;
-	}
-
-	DSS_REG_W(mdss_edp_base, 0x20, 0x00);
-
-	mdss_ahb_clk_enable(0);
-
-	pr_debug("%s: EDP PLL Disabled\n", __func__);
-	return;
-}
-
-static unsigned long edp_vco_get_rate(struct clk *c)
-{
-	struct edp_pll_vco_clk *vco = to_edp_vco_clk(c);
-	u32 pll_status, div2;
-	int rc;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-	if (vco->rate == 0) {
-		pll_status = DSS_REG_R(mdss_edp_base, 0xc0);
-		if (pll_status & 0x01) {
-			div2 = DSS_REG_R(mdss_edp_base, 0x24);
-			if (div2 & 0x01)
-				vco->rate = 1350000000;
-			else
-				vco->rate = 810000000;
-		}
-	}
-	mdss_ahb_clk_enable(0);
-
-	pr_debug("%s: rate=%d\n", __func__, (int)vco->rate);
-
-	return vco->rate;
-}
-
-static long edp_vco_round_rate(struct clk *c, unsigned long rate)
-{
-	struct edp_pll_vco_clk *vco = to_edp_vco_clk(c);
-	unsigned long rrate = -ENOENT;
-	unsigned long *lp;
-
-	lp = vco->rate_list;
-	while (*lp) {
-		rrate = *lp;
-		if (rate <= rrate)
-			break;
-		lp++;
-	}
-
-	pr_info("%s: rrate=%d\n", __func__, (int)rrate);
-
-	return rrate;
-}
-
-static int edp_vco_prepare(struct clk *c)
-{
-	struct edp_pll_vco_clk *vco = to_edp_vco_clk(c);
-
-	pr_info("%s: rate=%d\n", __func__, (int)vco->rate);
-
-	return edp_vco_set_rate(c, vco->rate);
-}
-
-static void edp_vco_unprepare(struct clk *c)
-{
-	struct edp_pll_vco_clk *vco = to_edp_vco_clk(c);
-
-	pr_debug("%s: rate=%d\n", __func__, (int)vco->rate);
-
-	edp_vco_disable(c);
-}
-
-static int edp_pll_lock_status(void)
-{
-	u32 status;
-	int pll_locked = 0;
-	int rc;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-	/* poll for PLL ready status */
-	if (readl_poll_timeout_noirq((mdss_edp_base + 0xc0),
-			status, ((status & BIT(0)) == 1),
-			PLL_POLL_MAX_READS, PLL_POLL_TIMEOUT_US)) {
-		pr_debug("%s: EDP PLL status=%x failed to Lock\n",
-				__func__, status);
-		pll_locked = 0;
-	} else {
-		pll_locked = 1;
-	}
-	mdss_ahb_clk_enable(0);
-
-	return pll_locked;
-}
-
-static enum handoff edp_vco_handoff(struct clk *c)
-{
-	enum handoff ret = HANDOFF_DISABLED_CLK;
-
-	if (edp_pll_lock_status()) {
-		c->rate = edp_vco_get_rate(c);
-		ret = HANDOFF_ENABLED_CLK;
-	}
-
-	pr_debug("%s: done, ret=%d\n", __func__, ret);
-	return ret;
-}
-
-/* edp vco rate */
-static unsigned long edp_vco_rate_list[] = {
-		810000000, 1350000000, 0};
-
-struct clk_ops edp_vco_clk_ops = {
-	.enable = edp_vco_enable,
-	.set_rate = edp_vco_set_rate,
-	.get_rate = edp_vco_get_rate,
-	.round_rate = edp_vco_round_rate,
-	.prepare = edp_vco_prepare,
-	.unprepare = edp_vco_unprepare,
-	.handoff = edp_vco_handoff,
-};
-
-struct edp_pll_vco_clk edp_vco_clk = {
-	.ref_clk_rate = 19200000,
-	.rate = 0,
-	.rate_list = edp_vco_rate_list,
-	.c = {
-		.dbg_name = "edp_vco_clk",
-		.ops = &edp_vco_clk_ops,
-		CLK_INIT(edp_vco_clk.c),
-	},
-};
-
-static unsigned long edp_mainlink_get_rate(struct clk *c)
-{
-	struct div_clk *mclk = to_div_clk(c);
-	struct clk *pclk;
-	unsigned long rate = 0;
-
-	pclk = clk_get_parent(c);
-
-	if (pclk->ops->get_rate) {
-		rate = pclk->ops->get_rate(pclk);
-	rate /= mclk->div;
-	}
-
-pr_info("%s: rate=%d div=%d\n", __func__, (int)rate, mclk->div);
-
-	return rate;
-}
-
-static struct clk_ops edp_mainlink_clk_src_ops;
-static struct clk_div_ops fixed_5div_ops; /* null ops */
-
-struct div_clk edp_mainlink_clk_src = {
-	.ops = &fixed_5div_ops,
-	.div = 5,
-	.c = {
-		.parent = &edp_vco_clk.c,
-		.dbg_name = "edp_mainlink_clk_src",
-		.ops = &edp_mainlink_clk_src_ops,
-		.flags = CLKFLAG_NO_RATE_CACHE,
-		CLK_INIT(edp_mainlink_clk_src.c),
-	}
-};
-
-
-static struct clk_ops edp_pixel_clk_ops;
-
-/*
- * this rate is from pll to clock controller
- * output from pll to CC has two possibilities
- * 1: if mainlink rate is 270M, then 675M
- * 2: if mainlink rate is 162M, then 810M
- */
-static int edp_pixel_set_div(struct div_clk *clk, int div)
-{
-	int rc = 0;
-
-	rc = mdss_ahb_clk_enable(1);
-	if (rc) {
-		pr_err("%s: failed to enable mdss ahb clock. rc=%d\n",
-			__func__, rc);
-		return rc;
-	}
-
-pr_info("%s: div=%d\n", __func__, div);
-	DSS_REG_W(mdss_edp_base, 0x24, (div - 1)); /* UNIPHY_PLL_POSTDIV2_CFG */
-
-	mdss_ahb_clk_enable(0);
-	return 0;
-}
-
-static int edp_pixel_get_div(struct div_clk *clk)
-{
-	int div = 0;
-
-	if (mdss_ahb_clk_enable(1)) {
-		pr_debug("%s: Failed to enable mdss ahb clock\n", __func__);
-		return 1;
-	}
-	div = DSS_REG_R(mdss_edp_base, 0x24); /* UNIPHY_PLL_POSTDIV2_CFG */
-	div &= 0x01;
-pr_info("%s: div=%d\n", __func__, div);
-	mdss_ahb_clk_enable(0);
-	return div + 1;
-}
-
-static struct clk_div_ops edp_pixel_ops = {
-	.set_div = edp_pixel_set_div,
-	.get_div = edp_pixel_get_div,
-};
-
-struct div_clk edp_pixel_clk_src = {
-	.max_div = 2,
-	.min_div = 1,
-	.ops = &edp_pixel_ops,
-	.c = {
-		.parent = &edp_vco_clk.c,
-		.dbg_name = "edp_pixel_clk_src",
-		.ops = &edp_pixel_clk_ops,
-		.flags = CLKFLAG_NO_RATE_CACHE,
-		CLK_INIT(edp_pixel_clk_src.c),
-	},
-};
-
-
 void __init mdss_clk_ctrl_pre_init(struct clk *ahb_clk)
 {
 	BUG_ON(ahb_clk == NULL);
@@ -2098,7 +1424,7 @@ void __init mdss_clk_ctrl_pre_init(struct clk *ahb_clk)
 	if (!mdss_dsi_base)
 		pr_err("%s: unable to remap dsi base", __func__);
 
-	mdss_ahb_clk = ahb_clk;
+	mdss_dsi_ahb_clk = ahb_clk;
 
 	hdmi_phy_base = ioremap(HDMI_PHY_PHYS, HDMI_PHY_SIZE);
 	if (!hdmi_phy_base)
@@ -2107,10 +1433,6 @@ void __init mdss_clk_ctrl_pre_init(struct clk *ahb_clk)
 	hdmi_phy_pll_base = ioremap(HDMI_PHY_PLL_PHYS, HDMI_PHY_PLL_SIZE);
 	if (!hdmi_phy_pll_base)
 		pr_err("%s: unable to ioremap hdmi phy pll base", __func__);
-
-	mdss_edp_base = ioremap(EDP_PHY_PHYS, EDP_PHY_SIZE);
-	if (!mdss_edp_base)
-		pr_err("%s: unable to remap edp base", __func__);
 
 	pixel_clk_src_ops = clk_ops_slave_div;
 	pixel_clk_src_ops.prepare = div_prepare;
@@ -2123,13 +1445,5 @@ void __init mdss_clk_ctrl_pre_init(struct clk *ahb_clk)
 
 	byte_mux_clk_ops = clk_ops_gen_mux;
 	byte_mux_clk_ops.prepare = mux_prepare;
-
-	edp_mainlink_clk_src_ops = clk_ops_div;
-	edp_mainlink_clk_src_ops.get_parent = clk_get_parent;
-	edp_mainlink_clk_src_ops.get_rate = edp_mainlink_get_rate;
-
-	edp_pixel_clk_ops = clk_ops_slave_div;
-	edp_pixel_clk_ops.prepare = div_prepare;
-
 }
 

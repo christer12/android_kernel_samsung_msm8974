@@ -258,19 +258,8 @@ static int __die(const char *str, int err, struct thread_info *thread, struct pt
 		TASK_COMM_LEN, tsk->comm, task_pid_nr(tsk), thread + 1);
 
 	if (!user_mode(regs) || in_interrupt()) {
-#ifndef CONFIG_SEC_DEBUG
 		dump_mem(KERN_EMERG, "Stack: ", regs->ARM_sp,
 			 THREAD_SIZE + (unsigned long)task_stack_page(tsk));
-#else
-		if (THREAD_SIZE + (unsigned long)task_stack_page(tsk) - regs->ARM_sp
-			> THREAD_SIZE) {
-			dump_mem(KERN_EMERG, "Stack: ", regs->ARM_sp,
-					THREAD_SIZE/4 + regs->ARM_sp);
-		} else {
-			dump_mem(KERN_EMERG, "Stack: ", regs->ARM_sp,
-					THREAD_SIZE + (unsigned long)task_stack_page(tsk));
-		}
-#endif
 		dump_backtrace(regs, tsk);
 		dump_instr(KERN_EMERG, regs);
 	}

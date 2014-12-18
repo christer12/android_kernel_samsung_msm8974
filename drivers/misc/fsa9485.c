@@ -52,7 +52,6 @@ struct fsa9485_usbsw {
 
 	struct delayed_work	init_work;
 	struct delayed_work	audio_work;
-	struct work_struct	mhl_work;
 	struct mutex		mutex;
 
 	int	adc;
@@ -62,32 +61,16 @@ struct fsa9485_usbsw {
 
 	int	dock_attached;
 	int	dock_ready;
-	int	mhl_ready;
 	int	deskdock;
 	int	previous_key;
-
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-	bool	is_factory_start;
-#endif /* !CONFIG_MUIC_FSA9485_SUPORT_CAR_DOCK */
 };
 
 
 static struct fsa9485_usbsw *local_usbsw;
 
 #if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
-enum mhl_attached_type {
-	MHL_DETACHED = 0,
-	MHL_ATTACHED = 1,
-};
-
 #define MHL_DEVICE 2
 static int isDeskdockconnected;
-static int isMhlAttached = MHL_DETACHED;
-int mhl_connection_state(void)
-{
-	return	isMhlAttached;
-}
-EXPORT_SYMBOL(mhl_connection_state);
 #endif
 
 static void DisableFSA9485Interrupts(void)
@@ -435,52 +418,7 @@ static ssize_t fsa9485_reset(struct device *dev,
 	return count;
 }
 
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-static ssize_t fsa9485_show_apo_factory(struct device *dev,
-					   struct device_attribute *attr,
-					   char *buf)
-{
-	struct fsa9485_usbsw *usbsw = dev_get_drvdata(dev);
-	const char *mode;
 
-	/* true: Factory mode, false: not Factory mode */
-	if (usbsw->is_factory_start)
-		mode = "FACTORY_MODE";
-	else
-		mode = "NOT_FACTORY_MODE";
-
-	pr_info("%s apo factory=%s\n", __func__, mode);
-
-	return sprintf(buf, "%s\n", mode);
-}
-
-static int fsa9485_detect_dev(struct fsa9485_usbsw *usbsw);
-static ssize_t fsa9485_set_apo_factory(struct device *dev,
-					  struct device_attribute *attr,
-					  const char *buf, size_t count)
-{
-	struct fsa9485_usbsw *usbsw = dev_get_drvdata(dev);
-
-	pr_info("%s buf:%s\n", __func__, buf);
-
-	/* "FACTORY_START": factory mode */
-	if (!strncmp(buf, "FACTORY_START", 13)) {
-		usbsw->is_factory_start = true;
-		pr_info("%s FACTORY_MODE\n", __func__);
-		fsa9485_detect_dev(usbsw);
-	} else {
-		pr_warn("%s Wrong command\n", __func__);
-		return count;
-	}	
-
-	return count;
-}
-#endif /* !CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK */
-
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-static DEVICE_ATTR(apo_factory, 0664, fsa9485_show_apo_factory,
-		fsa9485_set_apo_factory);
-#endif /* !CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK */
 static DEVICE_ATTR(control, S_IRUGO, fsa9485_show_control, NULL);
 static DEVICE_ATTR(device_type, S_IRUGO, fsa9485_show_device_type, NULL);
 static DEVICE_ATTR(switch, S_IRUGO | S_IWUSR,
@@ -493,9 +431,6 @@ static struct attribute *fsa9485_attributes[] = {
 	&dev_attr_control.attr,
 	&dev_attr_device_type.attr,
 	&dev_attr_switch.attr,
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-	&dev_attr_apo_factory.attr,
-#endif /* !CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK */
 	NULL
 };
 
@@ -735,9 +670,8 @@ static int fsa9485_detect_dev(struct fsa9485_usbsw *usbsw)
 						FSA9485_REG_RESERVED_20, 0x08);
 #if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
 				DisableFSA9485Interrupts();
-
-				isMhlAttached = MHL_ATTACHED;
-				schedule_work(&usbsw->mhl_work);
+				if (pdata->mhl_cb)
+					pdata->mhl_cb(FSA9485_ATTACHED);	
 
 				EnableFSA9485Interrupts();
 #else
@@ -746,50 +680,29 @@ static int fsa9485_detect_dev(struct fsa9485_usbsw *usbsw)
 			}
 		/* Car Dock */
 		} else if (dev2 & DEV_JIG_UART_ON) {
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-			if (usbsw->is_factory_start) {
-#endif
-				dev_info(&client->dev, "car dock connect\n");
+			dev_info(&client->dev, "car dock connect\n");
 
-				if (pdata->dock_cb)
-					pdata->dock_cb(FSA9485_ATTACHED_CAR_DOCK);
-				ret = i2c_smbus_write_byte_data(client,
-						FSA9485_REG_MANSW1, SW_AUDIO);
+			if (pdata->dock_cb)
+				pdata->dock_cb(FSA9485_ATTACHED_CAR_DOCK);
+			ret = i2c_smbus_write_byte_data(client,
+					FSA9485_REG_MANSW1, SW_AUDIO);
 
-				if (ret < 0)
-					dev_err(&client->dev,
+			if (ret < 0)
+				dev_err(&client->dev,
 						"%s: err %d\n", __func__, ret);
 
-				ret = i2c_smbus_read_byte_data(client,
+			ret = i2c_smbus_read_byte_data(client,
 					FSA9485_REG_CTRL);
-				if (ret < 0)
-					dev_err(&client->dev,
+			if (ret < 0)
+				dev_err(&client->dev,
 						"%s: err %d\n", __func__, ret);
 
-				ret = i2c_smbus_write_byte_data(client,
+			ret = i2c_smbus_write_byte_data(client,
 					FSA9485_REG_CTRL, ret & ~CON_MANUAL_SW);
-				if (ret < 0)
-					dev_err(&client->dev,
+			if (ret < 0)
+				dev_err(&client->dev,
 						"%s: err %d\n", __func__, ret);
-				usbsw->dock_attached = FSA9485_ATTACHED;
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-			} else {
-				uart_connecting = 1;
-				dev_info(&client->dev, "uart connect\n");
-				i2c_smbus_write_byte_data(client,
-						FSA9485_REG_CTRL, 0x1E);
-				if (pdata->uart_cb)
-					pdata->uart_cb(FSA9485_ATTACHED);
-
-				if (usbsw->mansw) {
-					ret = i2c_smbus_write_byte_data(client,
-						FSA9485_REG_MANSW1, SW_UART);
-					if (ret < 0)
-						dev_err(&client->dev,
-							"%s: err %d\n", __func__, ret);
-				}
-			}
-#endif /* !CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK */
+			usbsw->dock_attached = FSA9485_ATTACHED;
 		/* SmartDock */
 		} else if (dev2 & DEV_SMARTDOCK) {
 			usbsw->adc = adc;
@@ -884,8 +797,8 @@ static int fsa9485_detect_dev(struct fsa9485_usbsw *usbsw)
 			if (isDeskdockconnected)
 				FSA9485_CheckAndHookAudioDock(0);
 
-			isMhlAttached = MHL_DETACHED;
-			schedule_work(&usbsw->mhl_work);
+			if (pdata->mhl_cb)
+				pdata->mhl_cb(FSA9485_DETACHED);
 
 			isDeskdockconnected = 0;
 #else
@@ -898,32 +811,21 @@ static int fsa9485_detect_dev(struct fsa9485_usbsw *usbsw)
 #endif
 		/* Car Dock */
 		} else if (usbsw->dev2 & DEV_JIG_UART_ON) {
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-			if (usbsw->is_factory_start) {
-#endif
-				if (pdata->dock_cb)
-					pdata->dock_cb(FSA9485_DETACHED_DOCK);
-					ret = i2c_smbus_read_byte_data(client,
+			if (pdata->dock_cb)
+				pdata->dock_cb(FSA9485_DETACHED_DOCK);
+				ret = i2c_smbus_read_byte_data(client,
 						FSA9485_REG_CTRL);
-					if (ret < 0)
-						dev_err(&client->dev,
-							"%s: err %d\n", __func__, ret);
+				if (ret < 0)
+					dev_err(&client->dev,
+						"%s: err %d\n", __func__, ret);
 
-					ret = i2c_smbus_write_byte_data(client,
+				ret = i2c_smbus_write_byte_data(client,
 						FSA9485_REG_CTRL,
 						ret | CON_MANUAL_SW);
-					if (ret < 0)
-						dev_err(&client->dev,
-							"%s: err %d\n", __func__, ret);
-					usbsw->dock_attached = FSA9485_DETACHED;
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-			} else {
-				if (pdata->uart_cb)
-					pdata->uart_cb(FSA9485_DETACHED);
-				uart_connecting = 0;
-				dev_info(&client->dev, "[FSA9485] uart disconnect\n");
-			}
-#endif /* !CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK */
+				if (ret < 0)
+					dev_err(&client->dev,
+						"%s: err %d\n", __func__, ret);
+				usbsw->dock_attached = FSA9485_DETACHED;
 		} else if (usbsw->adc == 0x10) {
 			dev_info(&client->dev, "smart dock disconnect\n");
 
@@ -1104,10 +1006,9 @@ static irqreturn_t fsa9485_irq_thread(int irq, void *data)
 	int intr, intr2, detect;
 
 	/* FSA9480 : Read interrupt -> Read Device
-	 * FSA9485 : Read Device -> Read interrupt */
+	 FSA9485 : Read Device -> Read interrupt */
 
 	dev_info(&usbsw->client->dev, "%s\n", __func__);
-
 	/* device detection */
 	mutex_lock(&usbsw->mutex);
 	detect = fsa9485_detect_dev(usbsw);
@@ -1210,38 +1111,11 @@ static void fsa9485_delayed_audio(struct work_struct *work)
 	dev_info(&usbsw->client->dev, "%s\n", __func__);
 
 	local_usbsw->dock_ready = 1;
-	local_usbsw->mhl_ready = 1;
 
 	mutex_lock(&usbsw->mutex);
 	fsa9485_detect_dev(usbsw);
 	mutex_unlock(&usbsw->mutex);
 }
-
-#if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
-static void fsa9485_mhl_detect(struct work_struct *work)
-{
-	struct fsa9485_usbsw *usbsw = container_of(work,
-			struct fsa9485_usbsw, mhl_work);
-	struct fsa9485_platform_data *pdata = usbsw->pdata;
-
-	if (local_usbsw->mhl_ready == 0) {
-		dev_info(&usbsw->client->dev, "%s: ignore mhl-detection in booting time\n", __func__);
-		return;
-	}
-
-	dev_info(&usbsw->client->dev, "%s(%d)\n", __func__, isMhlAttached);
-
-	if (isMhlAttached == MHL_ATTACHED) {
-		if (pdata->mhl_cb)
-			pdata->mhl_cb(FSA9485_ATTACHED);
-	} else if(isMhlAttached == MHL_DETACHED) {
-		if (pdata->mhl_cb)
-			pdata->mhl_cb(FSA9485_DETACHED);
-	} else {
-		dev_err(&usbsw->client->dev, "[ERROR] %s() mhl known state\n", __func__);
-	}
-}
-#endif
 
 #if 10
 static int fsa9485_parse_dt(struct device *dev,
@@ -1292,15 +1166,10 @@ static int __devinit fsa9485_probe(struct i2c_client *client,
 		return -EIO;
 
 	input = input_allocate_device();
-	if (!input) {
-		dev_err(&client->dev, "failed to allocate input device data\n");
-		return -ENOMEM;
-	}
-
 	usbsw = kzalloc(sizeof(struct fsa9485_usbsw), GFP_KERNEL);
-	if (!usbsw) {
+	if (!usbsw || !input) {
 		dev_err(&client->dev, "failed to allocate driver data\n");
-		input_free_device(input);
+		kfree(usbsw);
 		return -ENOMEM;
 	}
 
@@ -1335,9 +1204,6 @@ static int __devinit fsa9485_probe(struct i2c_client *client,
 	usbsw->pdata = pdata;
 	if (!usbsw->pdata)
 		goto fail1;
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-	usbsw->is_factory_start = false;
-#endif /* !CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK */
 
 	i2c_set_clientdata(client, usbsw);
 
@@ -1385,14 +1251,6 @@ static int __devinit fsa9485_probe(struct i2c_client *client,
 		goto err_create_file_reset_switch;
 	}
 
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-	ret = device_create_file(switch_dev, &dev_attr_apo_factory);
-	if (ret < 0) {
-		pr_err("[FSA9485] Failed to create file (apo_factory)!\n");
-		goto err_create_file_apo_factory;
-	}
-#endif
-
 	dev_set_drvdata(switch_dev, usbsw);
 	/* fsa9485 dock init*/
 	if (usbsw->pdata->dock_init)
@@ -1408,21 +1266,13 @@ static int __devinit fsa9485_probe(struct i2c_client *client,
 
 
 	local_usbsw->dock_ready = 0;
-	local_usbsw->mhl_ready = 0;
-
 	/* initial cable detection */
 	INIT_DELAYED_WORK(&usbsw->init_work, fsa9485_init_detect);
 	schedule_delayed_work(&usbsw->init_work, msecs_to_jiffies(2700));
 	INIT_DELAYED_WORK(&usbsw->audio_work, fsa9485_delayed_audio);
 	schedule_delayed_work(&usbsw->audio_work, msecs_to_jiffies(20000));
-#if defined(CONFIG_VIDEO_MHL_V1) || defined(CONFIG_VIDEO_MHL_V2)
-	INIT_WORK(&usbsw->mhl_work, fsa9485_mhl_detect);
-#endif
 	return 0;
-#if !defined(CONFIG_MUIC_FSA9485_SUPPORT_CAR_DOCK)
-err_create_file_apo_factory:
-	device_remove_file(switch_dev, &dev_attr_apo_factory);
-#endif
+
 err_create_file_reset_switch:
 	device_remove_file(switch_dev, &dev_attr_reset_switch);
 err_create_file_adc:
@@ -1436,7 +1286,6 @@ fail1:
 	input_unregister_device(input);
 	mutex_destroy(&usbsw->mutex);
 	i2c_set_clientdata(client, NULL);
-	input_free_device(input);
 	kfree(usbsw);
 	return ret;
 }

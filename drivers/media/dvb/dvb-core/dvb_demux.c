@@ -164,11 +164,6 @@ static inline u16 ts_pid(const u8 *buf)
 	return ((buf[1] & 0x1f) << 8) + buf[2];
 }
 
-static inline u16 ts_scrambling_ctrl(const u8 *buf)
-{
-	return (buf[3] >> 6) & 0x3;
-}
-
 static inline u8 payload(const u8 *tsp)
 {
 	if (!(tsp[3] & 0x10))	// no payload?
@@ -442,66 +437,6 @@ next_prefix_lookup:
 }
 EXPORT_SYMBOL(dvb_dmx_video_pattern_search);
 
-/**
- * dvb_dmx_notify_section_event() - Notify demux event for all filters of a
- * specified section feed.
- *
- * @feed:		dvb_demux_feed object
- * @event:		demux event to notify
- * @should_lock:	specifies whether the function should lock the demux
- *
- * Caller is responsible for locking the demux properly, either by doing the
- * locking itself and setting 'should_lock' to 0, or have the function do it
- * by setting 'should_lock' to 1.
- */
-int dvb_dmx_notify_section_event(struct dvb_demux_feed *feed,
-	struct dmx_data_ready *event, int should_lock)
-{
-	struct dvb_demux_filter *f;
-
-	if (feed == NULL || event == NULL || feed->type != DMX_TYPE_SEC)
-		return -EINVAL;
-
-	if (!should_lock && !spin_is_locked(&feed->demux->lock))
-		return -EINVAL;
-
-	if (should_lock)
-		spin_lock(&feed->demux->lock);
-
-	f = feed->filter;
-	while (f && feed->feed.sec.is_filtering) {
-		feed->data_ready_cb.sec(&f->filter, event);
-		f = f->next;
-	}
-
-	if (should_lock)
-		spin_unlock(&feed->demux->lock);
-
-	return 0;
-}
-EXPORT_SYMBOL(dvb_dmx_notify_section_event);
-
-static int dvb_dmx_check_pes_end(struct dvb_demux_feed *feed)
-{
-	struct dmx_data_ready data;
-
-	if (!feed->pusi_seen)
-		return 0;
-
-	data.status = DMX_OK_PES_END;
-	data.data_length = 0;
-	data.pes_end.start_gap = 0;
-	data.pes_end.actual_length = feed->peslen;
-	data.pes_end.disc_indicator_set = 0;
-	data.pes_end.pes_length_mismatch = 0;
-	data.pes_end.stc = 0;
-	data.pes_end.tei_counter = feed->pes_tei_counter;
-	data.pes_end.cont_err_counter = feed->pes_cont_err_counter;
-	data.pes_end.ts_packets_num = feed->pes_ts_packets_num;
-
-	return feed->data_ready_cb.ts(&feed->feed.ts, &data);
-}
-
 static inline int dvb_dmx_swfilter_payload(struct dvb_demux_feed *feed,
 					   const u8 *buf)
 {
@@ -509,6 +444,7 @@ static inline int dvb_dmx_swfilter_payload(struct dvb_demux_feed *feed,
 	int p;
 	int ccok;
 	u8 cc;
+	struct dmx_data_ready data;
 
 	if (count == 0)
 		return -1;
@@ -526,7 +462,24 @@ static inline int dvb_dmx_swfilter_payload(struct dvb_demux_feed *feed,
 
 	/* PUSI ? */
 	if (buf[1] & 0x40) {
-		dvb_dmx_check_pes_end(feed);
+		if (feed->pusi_seen) {
+			/* We had seen PUSI before, this means
+			 * that previous PES can be closed now.
+			 */
+			data.status = DMX_OK_PES_END;
+			data.data_length = 0;
+			data.pes_end.start_gap = 0;
+			data.pes_end.actual_length = feed->peslen;
+			data.pes_end.disc_indicator_set = 0;
+			data.pes_end.pes_length_mismatch = 0;
+			data.pes_end.stc = 0;
+			data.pes_end.tei_counter = feed->pes_tei_counter;
+			data.pes_end.cont_err_counter =
+				feed->pes_cont_err_counter;
+			data.pes_end.ts_packets_num = feed->pes_ts_packets_num;
+			feed->data_ready_cb.ts(&feed->feed.ts, &data);
+		}
+
 		feed->pusi_seen = 1;
 		feed->peslen = 0;
 		feed->pes_tei_counter = 0;
@@ -1331,31 +1284,6 @@ static inline int dvb_dmx_swfilter_buffer_check(
 static inline void dvb_dmx_swfilter_packet_type(struct dvb_demux_feed *feed,
 			const u8 *buf, const u8 timestamp[TIMESTAMP_LEN])
 {
-	u16 pid = ts_pid(buf);
-	u8 scrambling_bits = ts_scrambling_ctrl(buf);
-	struct dmx_data_ready dmx_data_ready;
-
-	/*
-	 * Notify on scrambling status change only when we move
-	 * from clear (0) to non-clear and vise-versa
-	 */
-	if ((scrambling_bits && !feed->scrambling_bits) ||
-		(!scrambling_bits && feed->scrambling_bits)) {
-		dmx_data_ready.status = DMX_OK_SCRAMBLING_STATUS;
-		dmx_data_ready.data_length = 0;
-		dmx_data_ready.scrambling_bits.pid = pid;
-		dmx_data_ready.scrambling_bits.old_value =
-			feed->scrambling_bits;
-		dmx_data_ready.scrambling_bits.new_value = scrambling_bits;
-
-		if (feed->type == DMX_TYPE_SEC)
-			dvb_dmx_notify_section_event(feed, &dmx_data_ready, 0);
-		else
-			feed->data_ready_cb.ts(&feed->feed.ts, &dmx_data_ready);
-	}
-
-	feed->scrambling_bits = scrambling_bits;
-
 	switch (feed->type) {
 	case DMX_TYPE_TS:
 		if (!feed->feed.ts.is_filtering)
@@ -1615,11 +1543,9 @@ static inline void _dvb_dmx_swfilter(struct dvb_demux *demux, const u8 *buf,
 
 		if (pktsize == 192) {
 			if (leadingbytes)
-				memcpy(timestamp, &demux->tsbuf[p],
-					TIMESTAMP_LEN);
+				memcpy(timestamp, &buf[p], TIMESTAMP_LEN);
 			else
-				memcpy(timestamp, &demux->tsbuf[188],
-					TIMESTAMP_LEN);
+				memcpy(timestamp, &buf[188], TIMESTAMP_LEN);
 		} else {
 			memset(timestamp, 0, TIMESTAMP_LEN);
 		}
@@ -2118,7 +2044,6 @@ static int dmx_ts_feed_start_filtering(struct dmx_ts_feed *ts_feed)
 	}
 
 	feed->first_cc = 1;
-	feed->scrambling_bits = 0;
 
 	if ((feed->ts_type & TS_PACKET) &&
 		!(feed->ts_type & TS_PAYLOAD_ONLY)) {
@@ -2325,9 +2250,7 @@ static int dvbdmx_ts_feed_oob_cmd(struct dmx_ts_feed *ts_feed,
 	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)ts_feed;
 	struct dmx_data_ready data;
 	struct dvb_demux *dvbdmx = feed->demux;
-	int ret = 0;
-	int secure_non_rec = feed->secure_mode.is_secured &&
-		!dvb_dmx_is_rec_feed(feed);
+	int ret;
 
 	mutex_lock(&dvbdmx->mutex);
 
@@ -2336,14 +2259,13 @@ static int dvbdmx_ts_feed_oob_cmd(struct dmx_ts_feed *ts_feed,
 		return -EINVAL;
 	}
 
-	/* Decoder & non-recording secure feeds are handled by plug-in */
-	if ((feed->ts_type & TS_DECODER) || secure_non_rec) {
+	/* Decoder feeds are handled by plug-in */
+	if (feed->ts_type & TS_DECODER) {
 		if (feed->demux->oob_command)
 			ret = feed->demux->oob_command(feed, cmd);
-	}
+		else
+			ret = 0;
 
-	if (!(feed->ts_type & (TS_PAYLOAD_ONLY | TS_PACKET)) ||
-		secure_non_rec) {
 		mutex_unlock(&dvbdmx->mutex);
 		return ret;
 	}
@@ -2352,9 +2274,44 @@ static int dvbdmx_ts_feed_oob_cmd(struct dmx_ts_feed *ts_feed,
 
 	switch (cmd->type) {
 	case DMX_OOB_CMD_EOS:
-		if (feed->ts_type & TS_PAYLOAD_ONLY)
-			dvb_dmx_check_pes_end(feed);
+		if (feed->ts_type & TS_PAYLOAD_ONLY) {
+			if (feed->secure_mode.is_secured) {
+				/* Secure feeds are handled by plug-in */
+				if (feed->demux->oob_command)
+					ret = feed->demux->oob_command(feed,
+						cmd);
+				else
+					ret = 0;
+				break;
+			}
 
+			/* Close last PES on non-secure feeds */
+			if (feed->pusi_seen) {
+				data.status = DMX_OK_PES_END;
+				data.pes_end.start_gap = 0;
+				data.pes_end.actual_length =
+					feed->peslen;
+				data.pes_end.disc_indicator_set = 0;
+				data.pes_end.pes_length_mismatch = 0;
+				data.pes_end.stc = 0;
+				data.pes_end.tei_counter =
+					feed->pes_tei_counter;
+				data.pes_end.cont_err_counter =
+					feed->pes_cont_err_counter;
+				data.pes_end.ts_packets_num =
+					feed->pes_ts_packets_num;
+
+				feed->peslen = 0;
+				feed->pes_tei_counter = 0;
+				feed->pes_ts_packets_num = 0;
+				feed->pes_cont_err_counter = 0;
+
+				ret = feed->data_ready_cb.ts(&feed->feed.ts,
+					&data);
+				if (ret)
+					break;
+			}
+		}
 		data.status = DMX_OK_EOS;
 		ret = feed->data_ready_cb.ts(&feed->feed.ts, &data);
 		break;
@@ -2372,25 +2329,6 @@ static int dvbdmx_ts_feed_oob_cmd(struct dmx_ts_feed *ts_feed,
 
 	mutex_unlock(&dvbdmx->mutex);
 	return ret;
-}
-
-static int dvbdmx_ts_get_scrambling_bits(struct dmx_ts_feed *ts_feed,
-			u8 *value)
-{
-	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)ts_feed;
-	struct dvb_demux *demux = feed->demux;
-
-	spin_lock(&demux->lock);
-
-	if (!ts_feed->is_filtering) {
-		spin_unlock(&demux->lock);
-		return -EINVAL;
-	}
-
-	*value = feed->scrambling_bits;
-	spin_unlock(&demux->lock);
-
-	return 0;
 }
 
 static int dvbdmx_ts_insertion_insert_buffer(struct dmx_ts_feed *ts_feed,
@@ -2482,7 +2420,6 @@ static int dvbdmx_allocate_ts_feed(struct dmx_demux *dmx,
 	(*ts_feed)->notify_data_read = NULL;
 	(*ts_feed)->set_secure_mode = dmx_ts_set_secure_mode;
 	(*ts_feed)->oob_command = dvbdmx_ts_feed_oob_cmd;
-	(*ts_feed)->get_scrambling_bits = dvbdmx_ts_get_scrambling_bits;
 	(*ts_feed)->ts_insertion_init = NULL;
 	(*ts_feed)->ts_insertion_terminate = NULL;
 	(*ts_feed)->ts_insertion_insert_buffer =
@@ -2649,7 +2586,6 @@ static int dmx_section_feed_start_filtering(struct dmx_section_feed *feed)
 	dvbdmxfeed->feed.sec.secbufp = 0;
 	dvbdmxfeed->feed.sec.seclen = 0;
 	dvbdmxfeed->first_cc = 1;
-	dvbdmxfeed->scrambling_bits = 0;
 
 	if (!dvbdmx->start_feed) {
 		mutex_unlock(&dvbdmx->mutex);
@@ -2773,7 +2709,7 @@ static int dvbdmx_section_feed_oob_cmd(struct dmx_section_feed *section_feed,
 	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)section_feed;
 	struct dvb_demux *dvbdmx = feed->demux;
 	struct dmx_data_ready data;
-	int ret = 0;
+	int ret;
 
 	data.data_length = 0;
 
@@ -2798,11 +2734,13 @@ static int dvbdmx_section_feed_oob_cmd(struct dmx_section_feed *section_feed,
 	switch (cmd->type) {
 	case DMX_OOB_CMD_EOS:
 		data.status = DMX_OK_EOS;
+		ret = feed->data_ready_cb.sec(&feed->filter->filter, &data);
 		break;
 
 	case DMX_OOB_CMD_MARKER:
 		data.status = DMX_OK_MARKER;
 		data.marker.id = cmd->params.marker.id;
+		ret = feed->data_ready_cb.sec(&feed->filter->filter, &data);
 		break;
 
 	default:
@@ -2810,30 +2748,8 @@ static int dvbdmx_section_feed_oob_cmd(struct dmx_section_feed *section_feed,
 		break;
 	}
 
-	if (!ret)
-		ret = dvb_dmx_notify_section_event(feed, &data, 1);
-
 	mutex_unlock(&dvbdmx->mutex);
 	return ret;
-}
-
-static int dvbdmx_section_get_scrambling_bits(
-	struct dmx_section_feed *section_feed, u8 *value)
-{
-	struct dvb_demux_feed *feed = (struct dvb_demux_feed *)section_feed;
-	struct dvb_demux *demux = feed->demux;
-
-	spin_lock(&demux->lock);
-
-	if (!section_feed->is_filtering) {
-		spin_unlock(&demux->lock);
-		return -EINVAL;
-	}
-
-	*value = feed->scrambling_bits;
-	spin_unlock(&demux->lock);
-
-	return 0;
 }
 
 static int dvbdmx_allocate_section_feed(struct dmx_demux *demux,
@@ -2876,7 +2792,6 @@ static int dvbdmx_allocate_section_feed(struct dmx_demux *demux,
 	(*feed)->notify_data_read = NULL;
 	(*feed)->set_secure_mode = dmx_section_set_secure_mode;
 	(*feed)->oob_command = dvbdmx_section_feed_oob_cmd;
-	(*feed)->get_scrambling_bits = dvbdmx_section_get_scrambling_bits;
 
 	mutex_unlock(&dvbdmx->mutex);
 	return 0;

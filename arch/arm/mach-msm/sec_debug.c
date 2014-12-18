@@ -58,6 +58,10 @@
    in sec_debug_init and share with restart functions */
 
 
+#ifdef CONFIG_SEC_DEBUG_DOUBLE_FREE
+#include <linux/circ_buf.h>
+#endif
+
 #ifdef CONFIG_USER_RESET_DEBUG
 enum sec_debug_reset_reason_t {
 	RR_S = 1,
@@ -69,7 +73,6 @@ enum sec_debug_reset_reason_t {
 	RR_R = 7,
 	RR_B = 8,
 	RR_N = 9,
-	RR_T = 10,
 };
 #endif
 
@@ -267,7 +270,373 @@ static int rwsem_debug_init;
 static spinlock_t rwsem_debug_lock;
 #endif	/* CONFIG_SEC_DEBUG_SEMAPHORE_LOG */
 
+static void __hexdump(void *mem, unsigned long size)
+{
+	#define WORDS_PER_LINE 4
+	#define WORD_SIZE 4
+	#define LINE_SIZE (WORDS_PER_LINE * WORD_SIZE)
+	#define LINE_BUF_SIZE (WORDS_PER_LINE * WORD_SIZE * 3 \
+		+ WORDS_PER_LINE + 4)
+	unsigned long addr;
+	char linebuf[LINE_BUF_SIZE];
+	int numline = size / LINE_SIZE;
+	int i;
+	for (i = 0; i < numline; i++) {
+		addr = (unsigned long)mem + i * LINE_SIZE;
+		hex_dump_to_buffer((const void *)addr,
+			LINE_SIZE, LINE_SIZE,
+			WORD_SIZE, linebuf, sizeof(linebuf), 1);
+		pr_info(" %lx : %s\n", addr, linebuf);
+	}
 
+}
+
+#ifdef CONFIG_SEC_DEBUG_DOUBLE_FREE
+
+/* Double free detector(dfd) can use lots of memory because
+ * it needs to hold on the freed slabs, otherwise
+ * the the freeing node will be put into the kmem cache
+ * of it's size and the slab allocator will soon re-allocate
+ * this slab when the slab of that size is requested.
+ * So to alleviate the pressure of the other shrinkers when
+ * there is a memory pressure, enable DFD_HAS_SHRINKER below.
+ */
+#define DFD_HAS_SHRINKER
+
+#ifdef DFD_HAS_SHRINKER
+/* Using DFD shrinker will keep the DFD buffer entries low
+ * but at a cost. The page allocator will often go into
+ * the slowpath and try to reclaim pages and eventually call
+ * the shrinker.
+ * If you want to  avoid this overhead, enable below feature
+ * to completely flush out the circular buffer and disable the
+ * DFD when there is a memory pressure */
+#define DFD_SHRINKER_DISABLE_DFD_ON_MEM_PRESSURE
+#endif
+
+#define KFREE_HOOK_BYPASS_MASK 0x1
+/* The average size of a slab object is about 256 bytes.
+ * 1<<5 number of slab objects take about 8MB to 10MB
+ * (This average was mesaured with a min slab size of 64) */
+#define KFREE_CIRC_BUF_SIZE (1<<15)
+#define KFREE_FREE_MAGIC 0xf4eef4ee
+
+static int dfd_disabled;
+
+static DEFINE_SPINLOCK(circ_buf_lock);
+struct kfree_info_entry {
+	void *addr;
+	void *caller;
+};
+
+struct kfree_circ_buf {
+	int head;
+	int tail;
+	struct kfree_info_entry entry[KFREE_CIRC_BUF_SIZE];
+};
+
+struct kfree_circ_buf kfree_circ_buf;
+
+/* the caller must hold the circ_buf_lock */
+static void *circ_buf_lookup(struct kfree_circ_buf *circ_buf, void *addr)
+{
+	int i;
+	for (i = circ_buf->tail; i != circ_buf->head ;
+		i = (i + 1) & (KFREE_CIRC_BUF_SIZE - 1)) {
+		if (circ_buf->entry[i].addr == addr)
+			return &circ_buf->entry[i];
+	}
+
+	return NULL;
+}
+
+/* the caller must hold the circ_buf_lock and must check
+ * for the buffer status before calling */
+static void *circ_buf_get(struct kfree_circ_buf *circ_buf)
+{
+	void *entry;
+	entry = &circ_buf->entry[circ_buf->tail];
+	smp_rmb();
+	circ_buf->tail = (circ_buf->tail + 1) &
+		(KFREE_CIRC_BUF_SIZE - 1);
+	return entry;
+}
+
+/* the caller must hold the circ_buf_lock and must check
+ * for the buffer status before calling */
+static void *circ_buf_put(struct kfree_circ_buf *circ_buf,
+				struct kfree_info_entry *entry)
+{
+	memcpy(&circ_buf->entry[circ_buf->head], entry, sizeof(*entry));
+	smp_wmb();
+	circ_buf->head = (circ_buf->head + 1) &
+		(KFREE_CIRC_BUF_SIZE - 1);
+	return entry;
+}
+
+static int dfd_flush(void)
+{
+	struct kfree_info_entry *pentry;
+	unsigned long cnt;
+	unsigned long flags;
+
+	spin_lock_irqsave(&circ_buf_lock, flags);
+	cnt = CIRC_CNT(kfree_circ_buf.head, kfree_circ_buf.tail,
+		KFREE_CIRC_BUF_SIZE);
+	spin_unlock_irqrestore(&circ_buf_lock, flags);
+	pr_debug("%s: cnt=%lu\n", __func__, cnt);
+
+do_flush:
+	while (cnt) {
+		pentry = NULL;
+		/* we want to keep the lock region as short as possible
+		 * so we will re-read the buf count every loop */
+		spin_lock_irqsave(&circ_buf_lock, flags);
+		cnt = CIRC_CNT(kfree_circ_buf.head, kfree_circ_buf.tail,
+			KFREE_CIRC_BUF_SIZE);
+		if (cnt == 0) {
+			spin_unlock_irqrestore(&circ_buf_lock, flags);
+			break;
+		}
+		pentry = circ_buf_get(&kfree_circ_buf);
+		spin_unlock_irqrestore(&circ_buf_lock, flags);
+		if (pentry)
+			kfree((void *)((unsigned long)pentry->addr |
+				KFREE_HOOK_BYPASS_MASK));
+		cnt--;
+	}
+
+	spin_lock_irqsave(&circ_buf_lock, flags);
+	cnt = CIRC_CNT(kfree_circ_buf.head, kfree_circ_buf.tail,
+		KFREE_CIRC_BUF_SIZE);
+	spin_unlock_irqrestore(&circ_buf_lock, flags);
+
+	if (!dfd_disabled)
+		goto out;
+
+	if (cnt)
+		goto do_flush;
+
+out:
+	return cnt;
+}
+
+static void dfd_disable(void)
+{
+	dfd_disabled = 1;
+	dfd_flush();
+	pr_info("%s: double free detection is disabled\n", __func__);
+}
+
+static void dfd_enable(void)
+{
+	dfd_disabled = 0;
+	pr_info("%s: double free detection is enabled\n", __func__);
+}
+
+#ifdef DFD_HAS_SHRINKER
+int dfd_shrink(struct shrinker *shrinker, struct shrink_control *sc)
+{
+#ifndef DFD_SHRINKER_DISABLE_DFD_ON_MEM_PRESSURE
+	struct kfree_info_entry *pentry;
+	unsigned long nr = sc->nr_to_scan;
+#endif
+	unsigned long flags;
+	unsigned long nr_objs;
+
+	spin_lock_irqsave(&circ_buf_lock, flags);
+	nr_objs = CIRC_CNT(kfree_circ_buf.head, kfree_circ_buf.tail,
+		KFREE_CIRC_BUF_SIZE);
+	spin_unlock_irqrestore(&circ_buf_lock, flags);
+
+	/* nothing to reclaim from here */
+	if (nr_objs == 0) {
+		nr_objs = -1;
+		goto out;
+	}
+
+#ifdef DFD_SHRINKER_DISABLE_DFD_ON_MEM_PRESSURE
+	/* disable double free detection. This will flush
+	 * the entire circular buffer out. */
+	dfd_disable();
+#else
+	/* return max slab objects freeable */
+	if (nr == 0)
+		return  nr_objs;
+
+	if (nr > nr_objs)
+		nr = nr_objs;
+
+	pr_debug("%s: nr_objs=%lu\n", __func__, nr_objs);
+	while (nr) {
+		unsigned long cnt;
+		pentry = NULL;
+		spin_lock_irqsave(&circ_buf_lock, flags);
+		cnt = CIRC_CNT(kfree_circ_buf.head, kfree_circ_buf.tail,
+			KFREE_CIRC_BUF_SIZE);
+		if (cnt > 0)
+			pentry = circ_buf_get(&kfree_circ_buf);
+		spin_unlock_irqrestore(&circ_buf_lock, flags);
+		if (pentry)
+			kfree((void *)((unsigned long)pentry->addr |
+				KFREE_HOOK_BYPASS_MASK));
+		nr--;
+	}
+#endif
+	spin_lock_irqsave(&circ_buf_lock, flags);
+	nr_objs = CIRC_CNT(kfree_circ_buf.head, kfree_circ_buf.tail,
+		KFREE_CIRC_BUF_SIZE);
+	spin_unlock_irqrestore(&circ_buf_lock, flags);
+	if (nr_objs == 0) {
+		pr_info("%s: nothing more to reclaim from here!\n", __func__);
+		nr_objs = -1;
+	}
+
+out:
+	return nr_objs;
+}
+
+static struct shrinker dfd_shrinker = {
+	.shrink = dfd_shrink,
+	.seeks = DEFAULT_SEEKS
+};
+
+static int __init dfd_shrinker_init(void)
+{
+	register_shrinker(&dfd_shrinker);
+	return 0;
+}
+
+static void __exit dfd_shrinker_exit(void)
+{
+	unregister_shrinker(&dfd_shrinker);
+}
+
+module_init(dfd_shrinker_init);
+module_exit(dfd_shrinker_exit);
+#endif
+
+static int __do_panic_for_dblfree(void)
+{
+	return (sec_dbg_level == KERNEL_SEC_DEBUG_LEVEL_MID ||
+		sec_dbg_level == KERNEL_SEC_DEBUG_LEVEL_HIGH);
+}
+
+static inline int __dblfree_check_magic_any(void *addr)
+{
+	return (((unsigned int *)addr)[0] == KFREE_FREE_MAGIC ||
+		((unsigned int *)addr)[1] == KFREE_FREE_MAGIC);
+}
+static inline int __dblfree_check_magic_all(void *addr)
+{
+	return (((unsigned int *)addr)[0] == KFREE_FREE_MAGIC &&
+		((unsigned int *)addr)[1] == KFREE_FREE_MAGIC);
+}
+static inline void __dblfree_set_magic(void *addr)
+{
+	BUILD_BUG_ON(KMALLOC_MIN_SIZE < 8);
+	((unsigned long *)addr)[0] = KFREE_FREE_MAGIC;
+	((unsigned long *)addr)[1] = KFREE_FREE_MAGIC;
+}
+static inline void __dblfree_clear_magic(void *addr)
+{
+	BUILD_BUG_ON(KMALLOC_MIN_SIZE < 8);
+	((unsigned long *)addr)[0] = 0;
+	((unsigned long *)addr)[1] = 0;
+}
+void *kfree_hook(void *p, void *caller)
+{
+	unsigned long flags;
+	struct kfree_info_entry *match = NULL;
+	void *tofree = NULL;
+	unsigned long addr = (unsigned long)p;
+	struct kfree_info_entry entry;
+	struct kfree_info_entry *pentry;
+
+	if (!virt_addr_valid(addr)) {
+		/* there are too many NULL pointers so don't print for NULL */
+		if (addr)
+			pr_debug("%s: trying to free an invalid addr %lx "\
+				"from %pS\n", __func__, addr, caller);
+		return NULL;
+	}
+
+	if (addr & KFREE_HOOK_BYPASS_MASK || dfd_disabled) {
+		/* return original address to free */
+		return (void *)(addr&~(KFREE_HOOK_BYPASS_MASK));
+	}
+
+	spin_lock_irqsave(&circ_buf_lock, flags);
+
+	if (kfree_circ_buf.head == 0)
+		pr_debug("%s: circular buffer head rounded to zero.", __func__);
+
+	/* We can detect all the double free in the circular buffer time frame
+	 * if we scan the whole circular buffer all the time, but to minimize
+	 * the performance degradation we will just check for the magic values
+	 * (the number of magic values can be up to KMALLOC_MIN_SIZE/4) */
+	if (__dblfree_check_magic_any(p)) {
+		/* memory that is to be freed may originally have had magic
+		 * value, so search the whole circ buf for an actual match */
+		match = circ_buf_lookup(&kfree_circ_buf, p);
+		if (!match) {
+			pr_debug("%s: magic set but not in circ buf\n", __func__);
+		}
+	}
+
+	if (match) {
+		pr_err("%s: 0x%08lx was already freed by %pS()\n",
+			__func__, (unsigned long)p, match->caller);
+		spin_unlock_irqrestore(&circ_buf_lock, flags);
+		if (__do_panic_for_dblfree())
+			panic("double free detected!");
+		/* if we don't panic we just return without adding this entry
+		 * to the circular buffer. This means that this kfree is ommited
+		 * and we are just forgiving the double free */
+		dump_stack();
+		return NULL;
+	}
+
+	/* mark free magic on the freeing node */
+	__dblfree_set_magic(p);
+
+	/* do an actual kfree for the oldest entry
+	 * if the circular buffer is full */
+	if (CIRC_SPACE(kfree_circ_buf.head, kfree_circ_buf.tail,
+		KFREE_CIRC_BUF_SIZE) == 0) {
+		pentry = circ_buf_get(&kfree_circ_buf);
+		if (pentry)
+			tofree = pentry->addr;
+	}
+
+	/* add the new entry to the circular buffer */
+	entry.addr = p;
+	entry.caller = caller;
+	circ_buf_put(&kfree_circ_buf, &entry);
+	if (tofree) {
+		if (unlikely(!__dblfree_check_magic_all(tofree))) {
+			pr_err("\n%s: There has been a dangling reference on"\
+				" the node %lx which was freed by %pS."\
+				"\nThis could be fatal because if the second"\
+				" free is called after all the free magic has"\
+				" been corrupted,\nwe won't detect it has a"\
+				" double free.\n",
+				__func__, (unsigned long)tofree,
+				pentry->caller);
+			__hexdump((void *)tofree, KMALLOC_MIN_SIZE);
+			pr_err("\n");
+		}
+		__dblfree_clear_magic(tofree);
+		spin_unlock_irqrestore(&circ_buf_lock, flags);
+		/* do the real kfree */
+		kfree((void *)((unsigned long)tofree | KFREE_HOOK_BYPASS_MASK));
+		return NULL;
+	}
+
+	spin_unlock_irqrestore(&circ_buf_lock, flags);
+	return NULL;
+}
+#endif
 
 /* onlyjazz.ed26 : make the restart_reason global to enable it early
    in sec_debug_init and share with restart functions */
@@ -324,6 +693,12 @@ static int force_error(const char *val, struct kernel_param *kp)
 		*ptr++ = 4;
 		*ptr = 2;
 		panic("MEMORY CORRUPTION");
+#ifdef CONFIG_SEC_DEBUG_DOUBLE_FREE
+	} else if (!strncmp(val, "dfdenable", 9)) {
+		dfd_enable();
+	} else if (!strncmp(val, "dfddisable", 10)) {
+		dfd_disable();
+#endif
 	} else {
 		pr_emerg("No such error defined for now!\n");
 	}
@@ -615,24 +990,6 @@ void sec_debug_hw_reset(void)
 		;
 }
 EXPORT_SYMBOL(sec_debug_hw_reset);
-
-#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
-void sec_peripheral_secure_check_fail(void)
-{
-	sec_debug_set_qc_dload_magic(0);
-	sec_debug_set_upload_magic(0x77665507);
-        printk("sec_periphe\n");
-        pr_emerg("(%s) %s\n", __func__, sec_build_info);
-        pr_emerg("(%s) rebooting...\n", __func__);
-        flush_cache_all();
-        outer_flush_all();
-        msm_restart(0, "peripheral_hw_reset");
-
-        while (1)
-                ;
-}
-EXPORT_SYMBOL(sec_peripheral_secure_check_fail);
-#endif
 
 #ifdef CONFIG_SEC_DEBUG_LOW_LOG
 unsigned sec_debug_get_reset_reason(void)
@@ -1072,20 +1429,6 @@ int sec_debug_subsys_init(void)
 }
 late_initcall(sec_debug_subsys_init);
 #endif
-
-#ifdef CONFIG_USER_RESET_DEBUG
-// SEC_CP_CRASH_LOG
-int sec_debug_get_cp_crash_log(char *str)
-{
-    struct sec_debug_subsys_data_modem *modem = (struct sec_debug_subsys_data_modem *)&secdbg_subsys->priv.modem;
-
-//  if(!strcmp(modem->state, "Init"))
-//      return strcpy(str, "There is no cp crash log);
-
-    return sprintf(str, "%s, %s, %s, %d, %s",
-        modem->excp.type, modem->excp.task, modem->excp.file, modem->excp.line, modem->excp.msg);
-}
-#endif /* CONFIG_USER_RESET_DEBUG */
 
 int __init sec_debug_init(void)
 {
@@ -1556,8 +1899,6 @@ static int set_reset_reason_proc_show(struct seq_file *m, void *v)
 		seq_printf(m, "RPON\n");
 	else if (reset_reason == RR_B)
 		seq_printf(m, "BPON\n");
-	else if (reset_reason == RR_T)
-		seq_printf(m, "TPON\n");
 	else
 		seq_printf(m, "NPON\n");
 
@@ -1627,43 +1968,3 @@ void sec_debug_fuelgauge_log(unsigned int voltage, unsigned short soc,
 	secdbg_log->fg_log[i].charging_status = charging_status;
 }
 #endif
-
-#ifdef CONFIG_USER_RESET_DEBUG
-// SEC_CP_CRASH_LOG
-static int sec_cp_crash_log_proc_show(struct seq_file *m, void *v)
-{
-    char log_msg[512];
-
-    sec_debug_get_cp_crash_log(log_msg);
-
-    seq_printf(m, log_msg);
-
-    return 0;
-}
-
-static int sec_cp_crash_log_proc_open(struct inode *inode, struct file *file)
-{
-    return single_open(file, sec_cp_crash_log_proc_show, NULL);
-}
-
-static const struct file_operations sec_cp_crash_log_proc_fops = {
-    .open       = sec_cp_crash_log_proc_open,
-    .read       = seq_read,
-    .llseek     = seq_lseek,
-    .release    = single_release,
-};
-
-static int __init sec_debug_cp_crash_log_init(void)
-{
-    struct proc_dir_entry *entry;
-
-    entry = proc_create("cp_crash_log", S_IRUGO, NULL,
-                            &sec_cp_crash_log_proc_fops);
-    if (!entry)
-        return -ENOMEM;
-
-    return 0;
-}
-
-device_initcall(sec_debug_cp_crash_log_init);
-#endif /* CONFIG_USER_RESET_DEBUG */

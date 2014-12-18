@@ -6,7 +6,6 @@
  Description : fci i2c driver
 *******************************************************************************/
 #include <linux/delay.h>
-#include <linux/mutex.h>
 
 #include "fci_types.h"
 #include "fci_oal.h"
@@ -39,7 +38,6 @@
 #define  FC8150_FREQ_XTAL  BBM_XTAL_FREQ
 
 /* static OAL_SEMAPHORE hBbmMutex; */
-static DEFINE_MUTEX(fci_i2c_lock);
 
 static int WaitForXfer(HANDLE hDevice)
 {
@@ -200,12 +198,8 @@ int fci_i2c_read(HANDLE hDevice, u8 chip, u8 addr, u8 alen, u8 *data, u8 len)
 {
 	int ret;
 
-	mutex_lock(&fci_i2c_lock);
-
 	ret = fci_i2c_transfer(hDevice, I2C_READ, chip << 1, &addr
 		, alen, data, len);
-
-	mutex_unlock(&fci_i2c_lock);
 
 	if (ret != I2C_OK) {
 		PRINTF(hDevice, "fci_i2c_read() result=%d, addr = %x, data=%x\n"
@@ -221,12 +215,8 @@ int fci_i2c_write(HANDLE hDevice, u8 chip, u8 addr, u8 alen, u8 *data, u8 len)
 	int ret;
 	u8 *paddr = &addr;
 
-	mutex_lock(&fci_i2c_lock);
-
 	ret = fci_i2c_transfer(hDevice, I2C_WRITE, chip << 1
 		, paddr, alen, data, len);
-
-	mutex_unlock(&fci_i2c_lock);
 
 	if (ret != I2C_OK)
 		PRINTF(hDevice, "fci_i2c_write() result=%d, addr= %x, data=%x\n"

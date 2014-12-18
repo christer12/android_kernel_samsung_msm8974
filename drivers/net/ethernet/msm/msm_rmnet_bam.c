@@ -898,7 +898,6 @@ static int __init rmnet_init(void)
 		if (ret) {
 			pr_err("%s: unable to register netdev"
 				   " %d rc=%d\n", __func__, n, ret);
-			netdevs[n] = NULL;
 			free_netdev(dev);
 			return ret;
 		}
@@ -922,11 +921,8 @@ static int __init rmnet_init(void)
 		bam_rmnet_drivers[n].probe = bam_rmnet_probe;
 		bam_rmnet_drivers[n].remove = bam_rmnet_remove;
 		tempname = kmalloc(BAM_DMUX_CH_NAME_MAX_LEN, GFP_KERNEL);
-		if (tempname == NULL) {
-			netdevs[n] = NULL;
-			ret = -ENOMEM;
-			goto error;
-		}
+		if (tempname == NULL)
+			return -ENOMEM;
 		scnprintf(tempname, BAM_DMUX_CH_NAME_MAX_LEN, "bam_dmux_ch_%d",
 									n);
 		bam_rmnet_drivers[n].driver.name = tempname;
@@ -935,8 +931,7 @@ static int __init rmnet_init(void)
 		if (ret) {
 			pr_err("%s: registration failed n=%d rc=%d\n",
 					__func__, n, ret);
-			netdevs[n] = NULL;
-			goto error;
+			return ret;
 		}
 	}
 	/*Support for new rmnet ports */
@@ -965,7 +960,6 @@ static int __init rmnet_init(void)
 		if (ret) {
 			pr_err("%s: unable to register rev netdev %d rc=%d\n",
 							__func__, n, ret);
-			netdevs_rev[n] = NULL;
 			free_netdev(dev);
 			return ret;
 		}
@@ -974,11 +968,8 @@ static int __init rmnet_init(void)
 		bam_rmnet_rev_drivers[n].probe = bam_rmnet_rev_probe;
 		bam_rmnet_rev_drivers[n].remove = bam_rmnet_rev_remove;
 		tempname = kmalloc(BAM_DMUX_CH_NAME_MAX_LEN, GFP_KERNEL);
-		if (tempname == NULL) {
-			netdevs_rev[n] = NULL;
-			ret = -ENOMEM;
-			goto error;
-		}
+		if (tempname == NULL)
+			return -ENOMEM;
 		scnprintf(tempname, BAM_DMUX_CH_NAME_MAX_LEN, "bam_dmux_ch_%d",
 					(n+BAM_DMUX_DATA_REV_RMNET_0));
 		bam_rmnet_rev_drivers[n].driver.name = tempname;
@@ -987,16 +978,10 @@ static int __init rmnet_init(void)
 		if (ret) {
 			pr_err("%s: new rev driver registration failed n=%d rc=%d\n",
 					__func__, n, ret);
-			netdevs_rev[n] = NULL;
-			goto error;
+			return ret;
 		}
 	}
 	return 0;
-
-error:
-	unregister_netdev(dev);
-	free_netdev(dev);
-	return ret;
 }
 
 module_init(rmnet_init);

@@ -2321,7 +2321,7 @@ static int a3xx_create_gmem_shadow(struct adreno_device *adreno_dev,
 	tmp_ctx.gmem_base = adreno_dev->gmem_base;
 
 	result = kgsl_allocate(&drawctxt->context_gmem_shadow.gmemshadow,
-		drawctxt->base.pagetable, drawctxt->context_gmem_shadow.size);
+		drawctxt->pagetable, drawctxt->context_gmem_shadow.size);
 
 	if (result)
 		return result;
@@ -2355,13 +2355,12 @@ static int a3xx_drawctxt_create(struct adreno_device *adreno_dev,
 	 */
 
 	ret = kgsl_allocate(&drawctxt->gpustate,
-		drawctxt->base.pagetable, CONTEXT_SIZE);
+		drawctxt->pagetable, CONTEXT_SIZE);
 
 	if (ret)
 		return ret;
 
-	kgsl_sharedmem_set(&adreno_dev->dev, &drawctxt->gpustate, 0, 0,
-			CONTEXT_SIZE);
+	kgsl_sharedmem_set(&drawctxt->gpustate, 0, 0, CONTEXT_SIZE);
 	tmp_ctx.cmd = drawctxt->gpustate.hostptr + CMD_OFFSET;
 
 	if (!(drawctxt->flags & CTXT_FLAGS_PREAMBLE)) {
@@ -2420,7 +2419,7 @@ static void a3xx_drawctxt_save(struct adreno_device *adreno_dev,
 		 * already be saved.)
 		 */
 
-		kgsl_cffdump_syncmem(context->base.device,
+		kgsl_cffdump_syncmem(NULL,
 			&context->gpustate,
 			context->context_gmem_shadow.gmem_save[1],
 			context->context_gmem_shadow.gmem_save[2] << 2, true);
@@ -2441,17 +2440,8 @@ static void a3xx_drawctxt_restore(struct adreno_device *adreno_dev,
 
 	if (context == NULL) {
 		/* No context - set the default pagetable and thats it */
-		unsigned int id;
-		/*
-		 * If there isn't a current context, the kgsl_mmu_setstate
-		 * will use the CPU path so we don't need to give
-		 * it a valid context id.
-		 */
-		id = (adreno_dev->drawctxt_active != NULL)
-			? adreno_dev->drawctxt_active->base.id
-			: KGSL_CONTEXT_INVALID;
 		kgsl_mmu_setstate(&device->mmu, device->mmu.defaultpagetable,
-				  id);
+				adreno_dev->drawctxt_active->id);
 		return;
 	}
 
@@ -2460,11 +2450,10 @@ static void a3xx_drawctxt_restore(struct adreno_device *adreno_dev,
 	cmds[2] = cp_type3_packet(CP_MEM_WRITE, 2);
 	cmds[3] = device->memstore.gpuaddr +
 		KGSL_MEMSTORE_OFFSET(KGSL_MEMSTORE_GLOBAL, current_context);
-	cmds[4] = context->base.id;
+	cmds[4] = context->id;
 	adreno_ringbuffer_issuecmds(device, context, KGSL_CMD_FLAGS_NONE,
 					cmds, 5);
-	kgsl_mmu_setstate(&device->mmu, context->base.pagetable,
-			context->base.id);
+	kgsl_mmu_setstate(&device->mmu, context->pagetable, context->id);
 
 	/*
 	 * Restore GMEM.  (note: changes shader.
@@ -2472,7 +2461,7 @@ static void a3xx_drawctxt_restore(struct adreno_device *adreno_dev,
 	 */
 
 	if (context->flags & CTXT_FLAGS_GMEM_RESTORE) {
-		kgsl_cffdump_syncmem(context->base.device,
+		kgsl_cffdump_syncmem(NULL,
 			&context->gpustate,
 			context->context_gmem_shadow.gmem_restore[1],
 			context->context_gmem_shadow.gmem_restore[2] << 2,
@@ -2995,26 +2984,25 @@ static int a3xx_rb_init(struct adreno_device *adreno_dev,
 
 	cmds_gpu = rb->buffer_desc.gpuaddr + sizeof(uint) * (rb->wptr - 18);
 
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu,
-			cp_type3_packet(CP_ME_INIT, 17));
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x000003f7);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000080);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000100);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000180);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00006600);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000150);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x0000014e);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000154);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000001);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, cp_type3_packet(CP_ME_INIT, 17));
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x000003f7);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000080);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000100);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000180);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00006600);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000150);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x0000014e);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000154);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000001);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
 	/* Protected mode control - turned off for A3XX */
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
-	GSL_RB_WRITE(rb->device, cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
+	GSL_RB_WRITE(cmds, cmds_gpu, 0x00000000);
 
 	adreno_ringbuffer_submit(rb);
 
@@ -3220,9 +3208,6 @@ static void a3xx_perfcounter_enable_pwr(struct kgsl_device *device,
 {
 	unsigned int in, out;
 
-	if (countable > 1)
-		return;
-
 	adreno_regread(device, A3XX_RBBM_RBBM_CTL, &in);
 
 	if (countable == 0)
@@ -3278,9 +3263,6 @@ static void a3xx_perfcounter_enable_vbif_pwr(struct kgsl_device *device,
 {
 	unsigned int in, out, bit;
 
-	if (countable > 2)
-		return;
-
 	adreno_regread(device, A3XX_VBIF_PERF_CNT_EN, &in);
 	if (countable == 0)
 		bit = VBIF_PERF_PWR_CNT_0;
@@ -3314,6 +3296,12 @@ static void a3xx_perfcounter_enable(struct adreno_device *adreno_dev,
 	unsigned int val = 0;
 	struct a3xx_perfcounter_register *reg;
 
+	if (group >= ARRAY_SIZE(a3xx_perfcounter_reglist))
+		return;
+
+	if (counter >= a3xx_perfcounter_reglist[group].count)
+		return;
+
 	/* Special cases */
 	if (group == KGSL_PERFCOUNTER_GROUP_PWR)
 		return a3xx_perfcounter_enable_pwr(device, countable);
@@ -3321,12 +3309,6 @@ static void a3xx_perfcounter_enable(struct adreno_device *adreno_dev,
 		return a3xx_perfcounter_enable_vbif(device, counter, countable);
 	else if (group == KGSL_PERFCOUNTER_GROUP_VBIF_PWR)
 		return a3xx_perfcounter_enable_vbif_pwr(device, countable);
-
-	if (group >= ARRAY_SIZE(a3xx_perfcounter_reglist))
-		return;
-
-	if (counter >= a3xx_perfcounter_reglist[group].count)
-		return;
 
 	reg = &(a3xx_perfcounter_reglist[group].regs[counter]);
 
@@ -3728,108 +3710,6 @@ static void a3xx_start(struct adreno_device *adreno_dev)
 	adreno_dev->gpu_cycles = 0;
 }
 
-/**
- * a3xx_coresight_enable() - Enables debugging through coresight
- * debug bus for adreno a3xx devices.
- * @device: Pointer to GPU device structure
- */
-int a3xx_coresight_enable(struct kgsl_device *device)
-{
-	mutex_lock(&device->mutex);
-	if (!kgsl_active_count_get(device)) {
-		adreno_regwrite(device, A3XX_RBBM_DEBUG_BUS_CTL, 0x0001093F);
-		adreno_regwrite(device, A3XX_RBBM_DEBUG_BUS_STB_CTL0,
-				0x00000000);
-		adreno_regwrite(device, A3XX_RBBM_DEBUG_BUS_STB_CTL1,
-				0xFFFFFFFE);
-		adreno_regwrite(device, A3XX_RBBM_INT_TRACE_BUS_CTL,
-				0x00201111);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_BUS_CTL,
-				0x89100010);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_STOP_CNT,
-				0x00017fff);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_START_CNT,
-				0x0001000f);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_PERIOD_CNT ,
-				0x0001ffff);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_CMD,
-				0x00000001);
-		kgsl_active_count_put(device);
-	}
-	mutex_unlock(&device->mutex);
-	return 0;
-}
-
-/**
- * a3xx_coresight_disable() - Disables debugging through coresight
- * debug bus for adreno a3xx devices.
- * @device: Pointer to GPU device structure
- */
-void a3xx_coresight_disable(struct kgsl_device *device)
-{
-	mutex_lock(&device->mutex);
-	if (!kgsl_active_count_get(device)) {
-		adreno_regwrite(device, A3XX_RBBM_DEBUG_BUS_CTL, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_DEBUG_BUS_STB_CTL0, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_DEBUG_BUS_STB_CTL1, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_INT_TRACE_BUS_CTL, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_BUS_CTL, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_STOP_CNT, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_START_CNT, 0x0);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_PERIOD_CNT , 0x0);
-		adreno_regwrite(device, A3XX_RBBM_EXT_TRACE_CMD, 0x0);
-		kgsl_active_count_put(device);
-	}
-	mutex_unlock(&device->mutex);
-}
-
-static void a3xx_coresight_write_reg(struct kgsl_device *device,
-		unsigned int wordoffset, unsigned int val)
-{
-	mutex_lock(&device->mutex);
-	if (!kgsl_active_count_get(device)) {
-		adreno_regwrite(device, wordoffset, val);
-		kgsl_active_count_put(device);
-	}
-	mutex_unlock(&device->mutex);
-}
-
-void a3xx_coresight_config_debug_reg(struct kgsl_device *device,
-		int debug_reg, unsigned int val)
-{
-	switch (debug_reg) {
-
-	case DEBUG_BUS_CTL:
-		a3xx_coresight_write_reg(device, A3XX_RBBM_DEBUG_BUS_CTL, val);
-		break;
-
-	case TRACE_STOP_CNT:
-		a3xx_coresight_write_reg(device, A3XX_RBBM_EXT_TRACE_STOP_CNT,
-				val);
-		break;
-
-	case TRACE_START_CNT:
-		a3xx_coresight_write_reg(device, A3XX_RBBM_EXT_TRACE_START_CNT,
-				val);
-		break;
-
-	case TRACE_PERIOD_CNT:
-		a3xx_coresight_write_reg(device, A3XX_RBBM_EXT_TRACE_PERIOD_CNT,
-				val);
-		break;
-
-	case TRACE_CMD:
-		a3xx_coresight_write_reg(device, A3XX_RBBM_EXT_TRACE_CMD, val);
-		break;
-
-	case TRACE_BUS_CTL:
-		a3xx_coresight_write_reg(device, A3XX_RBBM_EXT_TRACE_BUS_CTL,
-				val);
-		break;
-	}
-
-}
-
 /*
  * Define the available perfcounter groups - these get used by
  * adreno_perfcounter_get and adreno_perfcounter_put
@@ -3952,30 +3832,6 @@ static struct adreno_perfcounters a3xx_perfcounters = {
 	ARRAY_SIZE(a3xx_perfcounter_groups),
 };
 
-/*
- * a3xx_soft_reset() - Soft reset GPU
- * @adreno_dev: Pointer to adreno device
- *
- * Soft reset the GPU by doing a AHB write of value 1 to RBBM_SW_RESET
- * register. This is used when we want to reset the GPU without
- * turning off GFX power rail. The reset when asserted resets
- * all the HW logic, restores GPU registers to default state and
- * flushes out pending VBIF transactions.
- */
-static void a3xx_soft_reset(struct adreno_device *adreno_dev)
-{
-	struct kgsl_device *device = &adreno_dev->dev;
-	unsigned int reg;
-
-	adreno_regwrite(device, A3XX_RBBM_SW_RESET_CMD, 1);
-	/*
-	 * Do a dummy read to get a brief read cycle delay for the reset to take
-	 * effect
-	 */
-	adreno_regread(device, A3XX_RBBM_SW_RESET_CMD, &reg);
-	adreno_regwrite(device, A3XX_RBBM_SW_RESET_CMD, 0);
-}
-
 /* Defined in adreno_a3xx_snapshot.c */
 void *a3xx_snapshot(struct adreno_device *adreno_dev, void *snapshot,
 	int *remain, int hang);
@@ -4000,8 +3856,4 @@ struct adreno_gpudev adreno_a3xx_gpudev = {
 	.snapshot = a3xx_snapshot,
 	.perfcounter_enable = a3xx_perfcounter_enable,
 	.perfcounter_read = a3xx_perfcounter_read,
-	.coresight_enable = a3xx_coresight_enable,
-	.coresight_disable = a3xx_coresight_disable,
-	.coresight_config_debug_reg = a3xx_coresight_config_debug_reg,
-	.soft_reset = a3xx_soft_reset,
 };

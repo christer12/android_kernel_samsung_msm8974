@@ -51,6 +51,10 @@ config AD525X_DPOT_SPI
 	  To compile this driver as a module, choose M here: the
 	  module will be called ad525x_dpot-spi.
 
+config ANDROID_PMEM
+	bool "Android pmem allocator"
+	default y
+
 config ATMEL_PWM
 	tristate "Atmel AT32/AT91 PWM support"
 	depends on HAVE_CLK
@@ -386,15 +390,6 @@ config SAMSUNG_JACK
 	 To samsung jack is reviewed and supported in all the
 	 samsung devices.
 
-config MUIC_DET_JACK
-	bool "Earjack detection driver using MUIC"
-	default n
-	help
-	 This is Earjack detection driver using MUIC.
-	 MUIC can recognize earjack device type and earkey using ADC values.
-	 Some project use muic earjack instead of 3.5phi earjack.
-	 Max77693 muic also support earjack detection.
-
 config HMC6352
 	tristate "Honeywell HMC6352 compass"
 	depends on I2C
@@ -531,12 +526,6 @@ config USB_SWITCH_FSA9485
 	  stereo and mono audio, video, microphone and UART data to use
 	  a common connector port.
 
-config MUIC_FSA9485_SUPPORT_CAR_DOCK
-	tristate "FSA9485 Support Car Dock"
-	depends on I2C
-	help
-	  The FSA9485 is a USB port accessory detector and switch.
-	  This Config can config for supporting Car Dock or not.
 config USB_SWITCH_TSU6721
 	tristate "TSU6721 USB Switch"
 	depends on I2C
@@ -749,15 +738,6 @@ config NFC_PN547
 	  It is used by many services. NFC is fully controlled using I2C
 	  to communicate the AP chip.
 
-config NFC_PN547_8941_CLOCK_REQUEST
-	bool "NXP PN547 NFC Controller Driver"
-	depends on I2C
-	default n
-	help
-	  PM8941 Clock request for NXP PN547 Near Field
-	  Communication controller support.
-	  This option enables d1 clock for NFC.
-
 config TI_DRV2667
 	tristate "TI's DRV2667 haptic controller support"
 	depends on I2C
@@ -769,6 +749,12 @@ config TI_DRV2667
 	  To compile this driver as a module, choose M here: the
 	  module will be called ti_drv2667.
 
+config TIMA_LOG
+	tristate "Support for dumping TIMA log"
+	default m
+	help
+	  This option enables support for dumping TIMA log
+	  
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"

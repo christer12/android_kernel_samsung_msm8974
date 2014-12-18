@@ -16,6 +16,68 @@ DEFINE_MSM_MUTEX(s5k6b2yx_mut);
 
 static struct msm_sensor_ctrl_t s5k6b2yx_s_ctrl;
 
+static struct msm_sensor_power_setting s5k6b2yx_power_setting[] = {
+#ifdef CONFIG_MACH_VIENNAEUR
+	/* 2M_CAM_1.8V */
+	{
+		.seq_type = SENSOR_VREG,
+		.seq_val = CAM_VDIG,
+		.config_val = 0,
+		.delay = 1,
+	},
+	/* 2M_CAM_A2.8V */
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_EXT_VANA_POWER,
+		.config_val = GPIO_OUT_HIGH,
+		.delay = 1,
+	},
+#else
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_EXT_VANA_POWER,
+		.config_val = GPIO_OUT_HIGH,
+		.delay = 1,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_EXT_VIO_POWER,
+		.config_val = GPIO_OUT_HIGH,
+		.delay = 1,
+	},
+#endif
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_RESET,
+		.config_val = GPIO_OUT_LOW,
+		.delay = 1,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_STANDBY,
+		.config_val = GPIO_OUT_LOW,
+		.delay = 1,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_RESET,
+		.config_val = GPIO_OUT_HIGH,
+		.delay = 2,
+	},
+	{
+		.seq_type = SENSOR_CLK,
+		.seq_val = SENSOR_CAM_MCLK,
+		.config_val = 0,
+		.delay = 1,
+	},
+	{
+		.seq_type = SENSOR_I2C_MUX,
+		.seq_val = 0,
+		.config_val = 0,
+		.delay = 0,
+	},
+};
+
 static struct v4l2_subdev_info s5k6b2yx_subdev_info[] = {
 	{
 		.code   = V4L2_MBUS_FMT_SBGGR10_1X10,
@@ -30,14 +92,9 @@ static const struct i2c_device_id s5k6b2yx_i2c_id[] = {
 	{ }
 };
 
-static int32_t msm_s5k6b2yx_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
-{
-	return msm_sensor_i2c_probe(client, id, &s5k6b2yx_s_ctrl);
-}
 static struct i2c_driver s5k6b2yx_i2c_driver = {
 	.id_table = s5k6b2yx_i2c_id,
-	.probe  = msm_s5k6b2yx_i2c_probe,
+	.probe  = msm_sensor_i2c_probe,
 	.driver = {
 		.name = S5K6B2YX_SENSOR_NAME,
 	},
@@ -96,6 +153,8 @@ static void __exit s5k6b2yx_exit_module(void)
 
 static struct msm_sensor_ctrl_t s5k6b2yx_s_ctrl = {
 	.sensor_i2c_client = &s5k6b2yx_sensor_i2c_client,
+	.power_setting_array.power_setting = s5k6b2yx_power_setting,
+	.power_setting_array.size = ARRAY_SIZE(s5k6b2yx_power_setting),
 	.msm_sensor_mutex = &s5k6b2yx_mut,
 	.sensor_v4l2_subdev_info = s5k6b2yx_subdev_info,
 	.sensor_v4l2_subdev_info_size = ARRAY_SIZE(s5k6b2yx_subdev_info),

@@ -17,6 +17,62 @@ DEFINE_MSM_MUTEX(ov9724_mut);
 
 static struct msm_sensor_ctrl_t ov9724_s_ctrl;
 
+static struct msm_sensor_power_setting ov9724_power_setting[] = {
+	{
+		.seq_type = SENSOR_VREG,
+		.seq_val = CAM_VANA,
+		.config_val = 0,
+		.delay = 0,
+	},
+	{
+		.seq_type = SENSOR_VREG,
+		.seq_val = CAM_VIO,
+		.config_val = 0,
+		.delay = 0,
+	},
+	{
+		.seq_type = SENSOR_VREG,
+		.seq_val = CAM_VDIG,
+		.config_val = 0,
+		.delay = 0,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_RESET,
+		.config_val = GPIO_OUT_LOW,
+		.delay = 5,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_RESET,
+		.config_val = GPIO_OUT_HIGH,
+		.delay = 30,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_STANDBY,
+		.config_val = GPIO_OUT_LOW,
+		.delay = 5,
+	},
+	{
+		.seq_type = SENSOR_GPIO,
+		.seq_val = SENSOR_GPIO_STANDBY,
+		.config_val = GPIO_OUT_HIGH,
+		.delay = 30,
+	},
+	{
+		.seq_type = SENSOR_CLK,
+		.seq_val = SENSOR_CAM_MCLK,
+		.config_val = 24000000,
+		.delay = 5,
+	},
+	{
+		.seq_type = SENSOR_I2C_MUX,
+		.seq_val = 0,
+		.config_val = 0,
+		.delay = 0,
+	},
+};
 
 static struct v4l2_subdev_info ov9724_subdev_info[] = {
 	{
@@ -27,11 +83,6 @@ static struct v4l2_subdev_info ov9724_subdev_info[] = {
 	},
 };
 
-static int32_t msm_ov9724_i2c_probe(struct i2c_client *client,
-	const struct i2c_device_id *id)
-{
-	return msm_sensor_i2c_probe(client, id, &ov9724_s_ctrl);
-}
 static const struct i2c_device_id ov9724_i2c_id[] = {
 	{OV9724_SENSOR_NAME, (kernel_ulong_t)&ov9724_s_ctrl},
 	{ }
@@ -39,7 +90,7 @@ static const struct i2c_device_id ov9724_i2c_id[] = {
 
 static struct i2c_driver ov9724_i2c_driver = {
 	.id_table = ov9724_i2c_id,
-	.probe  = msm_ov9724_i2c_probe,
+	.probe  = msm_sensor_i2c_probe,
 	.driver = {
 		.name = OV9724_SENSOR_NAME,
 	},
@@ -51,6 +102,8 @@ static struct msm_camera_i2c_client ov9724_sensor_i2c_client = {
 
 static struct msm_sensor_ctrl_t ov9724_s_ctrl = {
 	.sensor_i2c_client = &ov9724_sensor_i2c_client,
+	.power_setting_array.power_setting = ov9724_power_setting,
+	.power_setting_array.size = ARRAY_SIZE(ov9724_power_setting),
 	.msm_sensor_mutex = &ov9724_mut,
 	.sensor_v4l2_subdev_info = ov9724_subdev_info,
 	.sensor_v4l2_subdev_info_size = ARRAY_SIZE(ov9724_subdev_info),
@@ -87,8 +140,7 @@ static int __init ov9724_init_module(void)
 
 	rc = platform_driver_probe(&ov9724_platform_driver,
 		ov9724_platform_probe);
-	if (!rc) {
-		pr_info("%s: probe success\n", __func__);
+	if (!rc)
 		return rc;
 	return i2c_add_driver(&ov9724_i2c_driver);
 }

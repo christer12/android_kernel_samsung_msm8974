@@ -1,6 +1,6 @@
 /* Qualcomm Crypto Engine driver API
  *
- * Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2010-2012, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,8 +31,6 @@
 /* SHA digest size  in bytes */
 #define SHA256_DIGESTSIZE		32
 #define SHA1_DIGESTSIZE			20
-
-#define AES_CE_BLOCK_SIZE		16
 
 /* key size in bytes */
 #define HMAC_KEY_SIZE			(SHA1_DIGESTSIZE)    /* hmac-sha1 */
@@ -116,7 +114,6 @@ struct ce_hw_support {
 	bool aligned_only;
 	bool bam;
 	bool is_shared;
-	bool hw_key;
 };
 
 /* Sha operation parameters */
@@ -132,7 +129,6 @@ struct qce_sha_req {
 	bool last_blk;			/* last block indicator */
 	unsigned int size;		/* data length in bytes */
 	void *areq;
-	unsigned int  flags;
 };
 
 struct qce_req {
@@ -156,7 +152,6 @@ struct qce_req {
 	unsigned int cryptlen;		/* data length */
 	unsigned int use_pmem;		/* is source of data PMEM allocated? */
 	struct qcedev_pmem_info *pmem;	/* pointer to pmem_info structure*/
-	unsigned int  flags;
 };
 
 void *qce_open(struct platform_device *pdev, int *rc);

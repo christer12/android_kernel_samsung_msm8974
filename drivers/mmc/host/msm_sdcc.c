@@ -1626,9 +1626,7 @@ static void msmsdcc_sg_consumed(struct msmsdcc_host *host,
 {
 	struct msmsdcc_pio_data *pio = &host->pio;
 
-	WARN_ON(!host->curr.data);
-
-	if (host->curr.data && host->curr.data->flags & MMC_DATA_READ) {
+	if (host->curr.data->flags & MMC_DATA_READ) {
 		if (length > pio->sg_miter.consumed)
 			/*
 			 * consumed 4 bytes, but sgl
@@ -2270,10 +2268,8 @@ msmsdcc_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	 */
 	if (host->tuning_needed && !host->tuning_in_progress &&
 	    !host->tuning_done) {
-//		pr_debug("%s: %s: execute_tuning for timing mode = %d\n",
-//			 mmc_hostname(mmc), __func__, host->mmc->ios.timing);
-		printk("%s: %s: execute_tuning for timing mode = %d\n",
-			 mmc_hostname(mmc), __func__, host->mmc->ios.timing);		//add debug
+		pr_debug("%s: %s: execute_tuning for timing mode = %d\n",
+			 mmc_hostname(mmc), __func__, host->mmc->ios.timing);
 		if (host->mmc->ios.timing == MMC_TIMING_UHS_SDR104)
 			msmsdcc_execute_tuning(mmc,
 					       MMC_SEND_TUNING_BLOCK);
@@ -3464,7 +3460,7 @@ msmsdcc_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	else
 		clk |= MCI_CLK_WIDEBUS_1;
 
-	if (msmsdcc_is_pwrsave(host) && mmc_host_may_gate_card(host->mmc->card))
+	if (msmsdcc_is_pwrsave(host))
 		clk |= MCI_CLK_PWRSAVE;
 
 	clk |= MCI_CLK_FLOWENA;
@@ -3779,7 +3775,6 @@ static int msmsdcc_switch_io_voltage(struct mmc_host *mmc,
 {
 	struct msmsdcc_host *host = mmc_priv(mmc);
 	unsigned long flags;
-	bool prev_pwrsave, curr_pwrsave;
 	int rc = 0;
 
 	switch (ios->signal_voltage) {
@@ -3812,9 +3807,7 @@ static int msmsdcc_switch_io_voltage(struct mmc_host *mmc,
 	 * low voltage is required
 	 */
 	spin_lock_irqsave(&host->lock, flags);
-	prev_pwrsave = !!(readl_relaxed(host->base + MMCICLOCK) &
-			MCI_CLK_PWRSAVE);
-	curr_pwrsave = prev_pwrsave;
+
 	/*
 	 * Poll on MCIDATIN_3_0 and MCICMDIN bits of MCI_TEST_INPUT
 	 * register until they become all zeros.
@@ -3827,12 +3820,9 @@ static int msmsdcc_switch_io_voltage(struct mmc_host *mmc,
 	}
 
 	/* Stop SD CLK output. */
-	if (!prev_pwrsave) {
-		writel_relaxed((readl_relaxed(host->base + MMCICLOCK) |
-				MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
-		msmsdcc_sync_reg_wr(host);
-		curr_pwrsave = true;
-	}
+	writel_relaxed((readl_relaxed(host->base + MMCICLOCK) |
+			MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
+	msmsdcc_sync_reg_wr(host);
 	spin_unlock_irqrestore(&host->lock, flags);
 
 	/*
@@ -3853,7 +3843,6 @@ static int msmsdcc_switch_io_voltage(struct mmc_host *mmc,
 	writel_relaxed((readl_relaxed(host->base + MMCICLOCK)
 			& ~MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
 	msmsdcc_sync_reg_wr(host);
-	curr_pwrsave = false;
 	spin_unlock_irqrestore(&host->lock, flags);
 
 	/*
@@ -3874,9 +3863,10 @@ static int msmsdcc_switch_io_voltage(struct mmc_host *mmc,
 	}
 
 out_unlock:
-	/* Restore the correct PWRSAVE state */
-	if (prev_pwrsave ^ curr_pwrsave)
-		msmsdcc_set_pwrsave(mmc, prev_pwrsave);
+	/* Enable PWRSAVE */
+	writel_relaxed((readl_relaxed(host->base + MMCICLOCK) |
+			MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
+	msmsdcc_sync_reg_wr(host);
 	spin_unlock_irqrestore(&host->lock, flags);
 out:
 	return rc;
@@ -3915,24 +3905,17 @@ static int msmsdcc_init_cm_sdc4_dll(struct msmsdcc_host *host)
 	int rc = 0;
 	unsigned long flags;
 	u32 wait_cnt;
-	bool prev_pwrsave, curr_pwrsave;
 
 	spin_lock_irqsave(&host->lock, flags);
-	prev_pwrsave = !!(readl_relaxed(host->base + MMCICLOCK) &
-			MCI_CLK_PWRSAVE);
-	curr_pwrsave = prev_pwrsave;
 	/*
 	 * Make sure that clock is always enabled when DLL
 	 * tuning is in progress. Keeping PWRSAVE ON may
 	 * turn off the clock. So let's disable the PWRSAVE
 	 * here and re-enable it once tuning is completed.
 	 */
-	if (prev_pwrsave) {
-		writel_relaxed((readl_relaxed(host->base + MMCICLOCK)
-				& ~MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
-		msmsdcc_sync_reg_wr(host);
-		curr_pwrsave = false;
-	}
+	writel_relaxed((readl_relaxed(host->base + MMCICLOCK)
+			& ~MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
+	msmsdcc_sync_reg_wr(host);
 
 	/* Write 1 to DLL_RST bit of MCI_DLL_CONFIG register */
 	writel_relaxed((readl_relaxed(host->base + MCI_DLL_CONFIG)
@@ -3975,9 +3958,10 @@ static int msmsdcc_init_cm_sdc4_dll(struct msmsdcc_host *host)
 	}
 
 out:
-	/* Restore the correct PWRSAVE state */
-	if (prev_pwrsave ^ curr_pwrsave)
-		msmsdcc_set_pwrsave(host->mmc, prev_pwrsave);
+	/* re-enable PWRSAVE */
+	writel_relaxed((readl_relaxed(host->base + MMCICLOCK) |
+			MCI_CLK_PWRSAVE), host->base + MMCICLOCK);
+	msmsdcc_sync_reg_wr(host);
 	spin_unlock_irqrestore(&host->lock, flags);
 
 	return rc;
@@ -4225,8 +4209,7 @@ static int msmsdcc_execute_tuning(struct mmc_host *mmc, u32 opcode)
 	int size = sizeof(tuning_block_64); /* Tuning pattern size in bytes */
 	bool is_tuning_all_phases;
 
-//	pr_debug("%s: Enter %s\n", mmc_hostname(mmc), __func__);
-	printk("%s: Enter %s\n", mmc_hostname(mmc), __func__);		//add debug
+	pr_debug("%s: Enter %s\n", mmc_hostname(mmc), __func__);
 
 	/* Tuning is only required for SDR104 modes */
 	if (!host->tuning_needed) {
@@ -4299,15 +4282,11 @@ retry:
 			if (!is_tuning_all_phases)
 				goto kfree;
 			tuned_phases[tuned_phase_cnt++] = phase;
-//			pr_debug("%s: %s: found good phase = %d\n",
-//				mmc_hostname(mmc), __func__, phase);
-			printk("%s: %s: found good phase = %d\n",
-				mmc_hostname(mmc), __func__, phase);		//add debug
+			pr_debug("%s: %s: found good phase = %d\n",
+				mmc_hostname(mmc), __func__, phase);
 		} else if (!is_tuning_all_phases) {
-//			pr_debug("%s: tuning failed at saved phase (%d), retrying\n",
-//					mmc_hostname(mmc), (u32)phase);
-			printk("%s: tuning failed at saved phase (%d), retrying\n",
-					mmc_hostname(mmc), (u32)phase);		//add debug
+			pr_debug("%s: tuning failed at saved phase (%d), retrying\n",
+					mmc_hostname(mmc), (u32)phase);
 			is_tuning_all_phases = true;
 			goto retry;
 		}
@@ -4330,10 +4309,8 @@ retry:
 			goto kfree;
 		else
 			host->saved_tuning_phase = phase;
-//		pr_debug("%s: %s: finally setting the tuning phase to %d\n",
-//				mmc_hostname(mmc), __func__, phase);
-		printk("%s: %s: finally setting the tuning phase to %d\n",
-				mmc_hostname(mmc), __func__, phase);		//add debug
+		pr_debug("%s: %s: finally setting the tuning phase to %d\n",
+				mmc_hostname(mmc), __func__, phase);
 	} else {
 		/* tuning failed */
 		pr_err("%s: %s: no tuning point found\n",
@@ -4352,14 +4329,61 @@ out:
 #else
 	if (!rc)
 #endif
-	{
-		printk("%s : set tuning_done ture.\n", __func__);		//add debug
 		host->tuning_done = true;
-	}
 	spin_unlock_irqrestore(&host->lock, flags);
 exit:
 	pr_debug("%s: Exit %s\n", mmc_hostname(mmc), __func__);
 	return rc;
+}
+
+/*
+ * Work around of the unavailability of a power_reset functionality in SD cards
+ * by turning the OFF & back ON the regulators supplying the SD card.
+ */
+void msmsdcc_hw_reset(struct mmc_host *mmc)
+{
+	struct mmc_card *card = mmc->card;
+	struct msmsdcc_host *host = mmc_priv(mmc);
+	int rc;
+
+	/* Write-protection bits would be lost on a hardware reset in emmc */
+	if (!card || !mmc_card_sd(card))
+		return;
+
+	pr_debug("%s: Starting h/w reset\n", mmc_hostname(host->mmc));
+
+	if (host->plat->translate_vdd || host->plat->vreg_data) {
+
+		/* Disable the regulators */
+		if (host->plat->translate_vdd)
+			rc = host->plat->translate_vdd(mmc_dev(mmc), 0);
+		else if (host->plat->vreg_data)
+			rc = msmsdcc_setup_vreg(host, false, false);
+
+		if (rc) {
+			pr_err("%s: Failed to disable voltage regulator\n",
+				mmc_hostname(host->mmc));
+			BUG_ON(rc);
+		}
+
+		/* 10ms delay for supply to reach the desired voltage level */
+		usleep_range(10000, 12000);
+
+		/* Enable the regulators */
+		if (host->plat->translate_vdd)
+			rc = host->plat->translate_vdd(mmc_dev(mmc), 1);
+		else if (host->plat->vreg_data)
+			rc = msmsdcc_setup_vreg(host, true, false);
+
+		if (rc) {
+			pr_err("%s: Failed to enable voltage regulator\n",
+				mmc_hostname(host->mmc));
+			BUG_ON(rc);
+		}
+
+		/* 10ms delay for supply to reach the desired voltage level */
+		usleep_range(10000, 12000);
+	}
 }
 
 /**
@@ -4469,6 +4493,7 @@ static const struct mmc_host_ops msmsdcc_ops = {
 	.enable_sdio_irq = msmsdcc_enable_sdio_irq,
 	.start_signal_voltage_switch = msmsdcc_switch_io_voltage,
 	.execute_tuning = msmsdcc_execute_tuning,
+	.hw_reset = msmsdcc_hw_reset,
 	.stop_request = msmsdcc_stop_request,
 	.get_xfer_remain = msmsdcc_get_xfer_remain,
 	.notify_load = msmsdcc_notify_load,
@@ -5371,7 +5396,7 @@ static void msmsdcc_req_tout_timer_hdlr(unsigned long data)
 	mrq = host->curr.mrq;
 
 	if (mrq && mrq->cmd) {
-		if (!mrq->cmd->ignore_timeout) {
+		if (!mrq->cmd->bkops_busy) {
 			pr_info("%s: CMD%d: Request timeout\n",
 				mmc_hostname(host->mmc), mrq->cmd->opcode);
 			msmsdcc_dump_sdcc_state(host);
@@ -6232,6 +6257,7 @@ msmsdcc_probe(struct platform_device *pdev)
 	mmc->caps |= plat->mmc_bus_width;
 	mmc->caps |= MMC_CAP_MMC_HIGHSPEED | MMC_CAP_SD_HIGHSPEED;
 	mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY | MMC_CAP_ERASE;
+	mmc->caps |= MMC_CAP_HW_RESET;
 	/*
 	 * If we send the CMD23 before multi block write/read command
 	 * then we need not to send CMD12 at the end of the transfer.
@@ -6254,8 +6280,7 @@ msmsdcc_probe(struct platform_device *pdev)
 				MMC_CAP_SET_XPC_180);
 
 	mmc->caps2 |= (MMC_CAP2_BOOTPART_NOACC | MMC_CAP2_DETECT_ON_ERR);
-#if defined(CONFIG_MACH_HLTEATT) || defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)\
-	|| defined(CONFIG_MACH_JACTIVESKT)
+#if defined(CONFIG_MACH_HLTEATT) || defined(CONFIG_MACH_KS01SKT) || defined(CONFIG_MACH_KS01KTT) || defined(CONFIG_MACH_KS01LGT)
 	mmc->caps2 |= MMC_CAP2_CACHE_CTRL;
 #else
 	if(system_rev > 2)
@@ -6263,7 +6288,6 @@ msmsdcc_probe(struct platform_device *pdev)
 #endif
 	mmc->caps2 |= MMC_CAP2_POWEROFF_NOTIFY;
 	mmc->caps2 |= MMC_CAP2_STOP_REQUEST;
-	mmc->caps2 |= MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE;
 
 	if (plat->nonremovable)
 		mmc->caps |= MMC_CAP_NONREMOVABLE;

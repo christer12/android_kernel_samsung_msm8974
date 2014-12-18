@@ -44,8 +44,6 @@
 #define HAL_BUFFERFLAG_READONLY         0x00000200
 #define HAL_BUFFERFLAG_ENDOFSUBFRAME    0x00000400
 #define HAL_BUFFERFLAG_EOSEQ            0x00200000
-#define HAL_BUFFERFLAG_DROP_FRAME       0x20000000
-
 
 #define HAL_DEBUG_MSG_LOW				0x00000001
 #define HAL_DEBUG_MSG_MEDIUM			0x00000002
@@ -97,7 +95,6 @@ enum hal_extradata_id {
 	HAL_EXTRADATA_NUM_CONCEALED_MB,
 	HAL_EXTRADATA_METADATA_FILLER,
 	HAL_EXTRADATA_ASPECT_RATIO,
-	HAL_EXTRADATA_MPEG2_SEQDISP
 };
 
 enum hal_property {
@@ -174,11 +171,6 @@ enum hal_property {
 	HAL_PARAM_VENC_H264_VUI_TIMING_INFO,
 	HAL_PARAM_VENC_H264_GENERATE_AUDNAL,
 	HAL_PARAM_VENC_MAX_NUM_B_FRAMES,
-	HAL_PARAM_BUFFER_ALLOC_MODE,
-	HAL_PARAM_VDEC_FRAME_ASSEMBLY,
-	HAL_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC,
-	HAL_PARAM_VENC_PRESERVE_TEXT_QUALITY,
-	HAL_PARAM_VDEC_CONCEAL_COLOR,	
 };
 
 enum hal_domain {
@@ -398,20 +390,20 @@ struct hal_frame_rate {
 };
 
 enum hal_uncompressed_format {
-	HAL_COLOR_FORMAT_MONOCHROME   = 0x00000001,
-	HAL_COLOR_FORMAT_NV12         = 0x00000002,
-	HAL_COLOR_FORMAT_NV21         = 0x00000004,
+	HAL_COLOR_FORMAT_MONOCHROME = 0x00000001,
+	HAL_COLOR_FORMAT_NV12 = 0x00000002,
+	HAL_COLOR_FORMAT_NV21 = 0x00000004,
 	HAL_COLOR_FORMAT_NV12_4x4TILE = 0x00000008,
 	HAL_COLOR_FORMAT_NV21_4x4TILE = 0x00000010,
-	HAL_COLOR_FORMAT_YUYV         = 0x00000020,
-	HAL_COLOR_FORMAT_YVYU         = 0x00000040,
-	HAL_COLOR_FORMAT_UYVY         = 0x00000080,
-	HAL_COLOR_FORMAT_VYUY         = 0x00000100,
-	HAL_COLOR_FORMAT_RGB565       = 0x00000200,
-	HAL_COLOR_FORMAT_BGR565       = 0x00000400,
-	HAL_COLOR_FORMAT_RGB888       = 0x00000800,
-	HAL_COLOR_FORMAT_BGR888       = 0x00001000,
-	HAL_UNUSED_COLOR              = 0x10000000,
+	HAL_COLOR_FORMAT_YUYV = 0x00000020,
+	HAL_COLOR_FORMAT_YVYU = 0x00000040,
+	HAL_COLOR_FORMAT_UYVY = 0x00000080,
+	HAL_COLOR_FORMAT_VYUY = 0x00000100,
+	HAL_COLOR_FORMAT_RGB565 = 0x00000200,
+	HAL_COLOR_FORMAT_BGR565 = 0x00000400,
+	HAL_COLOR_FORMAT_RGB888 = 0x00000800,
+	HAL_COLOR_FORMAT_BGR888 = 0x00001000,
+	HAL_UNUSED_COLOR = 0x10000000,
 };
 
 enum hal_ssr_trigger_type {
@@ -761,10 +753,6 @@ struct hal_nal_stream_format_supported {
 	u32 nal_stream_format_supported;
 };
 
-struct hal_nal_stream_format_select {
-	u32 nal_stream_format_select;
-};
-
 struct hal_multi_view_format {
 	u32 views;
 	u32 rg_view_order[1];
@@ -929,7 +917,6 @@ struct vidc_hal_ebd {
 	u32 timestamp_hi;
 	u32 timestamp_lo;
 	u32 flags;
-	u32 status;
 	u32 mark_target;
 	u32 mark_data;
 	u32 stats;
@@ -1087,9 +1074,6 @@ struct hfi_device {
 	int (*get_fw_info)(void *dev, enum fw_info info);
 	int (*get_stride_scanline)(int color_fmt, int width,
 		int height,	int *stride, int *scanlines);
-	int (*capability_check)(u32 fourcc, u32 width,
-		u32 *max_width, u32 *max_height);
-	int (*session_clean)(void *sess);
 };
 
 typedef void (*hfi_cmd_response_callback) (enum command_response cmd,

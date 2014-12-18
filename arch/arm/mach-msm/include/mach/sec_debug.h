@@ -33,10 +33,6 @@ extern void *restart_reason;
 extern int sec_debug_init(void);
 extern int sec_debug_dump_stack(void);
 extern void sec_debug_hw_reset(void);
-#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
-extern void sec_peripheral_secure_check_fail(void);
-extern void sec_debug_set_qc_dload_magic(int on);
-#endif
 extern void sec_debug_check_crash_key(unsigned int code, int value);
 extern void sec_getlog_supply_fbinfo(void *p_fb, u32 res_x, u32 res_y, u32 bpp,
 		u32 frames);
@@ -230,7 +226,7 @@ struct rwsem_debug {
 
 #ifdef CONFIG_SEC_DEBUG_MSG_LOG
 extern asmlinkage int sec_debug_msg_log(void *caller, const char *fmt, ...);
-#define MSG_LOG_MAX 512
+#define MSG_LOG_MAX 1024
 struct secmsg_log {
 	unsigned long long time;
 	char msg[64];
@@ -579,10 +575,6 @@ extern struct class *sec_class;
 
 #ifdef CONFIG_SEC_DEBUG_DOUBLE_FREE
 extern void *kfree_hook(void *p, void *caller);
-#endif
-
-#ifdef CONFIG_USER_RESET_DEBUG
-extern int sec_debug_get_cp_crash_log(char *str);
 #endif
 
 #endif	/* SEC_DEBUG_H */

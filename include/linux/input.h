@@ -470,11 +470,6 @@ struct input_keymap_entry {
 
 #define KEY_MICMUTE		248	/* Mute / unmute the microphone */
 
-#define KEY_DUMMY_MENU		251	/* Dummy Touchkey : MENU*/
-#define KEY_DUMMY_HOME1		249	/* Dummy Touchkey : HOME1*/
-#define KEY_DUMMY_HOME2		250	/* Dummy Touchkey : HOME2*/
-#define KEY_DUMMY_BACK		253	/* Dummy Touchkey : BACK*/
-
 /* Code 255 is reserved for special needs of AT keyboard driver */
 
 #define BTN_MISC		0x100
@@ -530,7 +525,6 @@ struct input_keymap_entry {
 #define BTN_MODE		0x13c
 #define BTN_THUMBL		0x13d
 #define BTN_THUMBR		0x13e
-#define BTN_GAME		0x13f	/* Add game button for samsung bluetooth keypad */
 
 #define BTN_DIGI		0x140
 #define BTN_TOOL_PEN		0x140
@@ -716,10 +710,6 @@ struct input_keymap_entry {
 #define KEY_DMB_ANT_DET_DOWN		0x21c
 
 
-#define KEY_NET_SEL			0x220
-#define KEY_NET_3G			0x221
-#define KEY_TKEY_WAKEUP		0x222
-
 #define KEY_PEN_PDCT		0x230 /* E-PEN PDCT flag*/
 #define KEY_FAKE_PWR		0x240 /* Fake Power off flag*/
 
@@ -874,11 +864,7 @@ struct input_keymap_entry {
 #define SW_STROBE_INSERT	0x14
 #define SW_FLIP			0x15  /* set = flip cover... */
 #define SW_GLOVE		0x16	/* set = glove mode */
-#define SW_LEFT_HAND	0x17	/* set = left hand*/
-#define SW_RIGHT_HAND	0x18	/* set = right hand*/
-#define SW_BOTH_HAND	0x19	/* set = both hand*/
-
-#define SW_MAX			0x1F
+#define SW_MAX			0x20
 #define SW_CNT			(SW_MAX+1)
 
 /*

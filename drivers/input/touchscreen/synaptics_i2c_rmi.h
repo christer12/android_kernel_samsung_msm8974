@@ -55,7 +55,7 @@
 #define TOUCH_OPEN_DWORK_TIME 10
 #endif
 
-#if !defined(CONFIG_SEC_H_PROJECT) && !defined(CONFIG_SEC_JS_PROJECT)
+#if !defined(CONFIG_SEC_H_PROJECT)
 /* To recovery the device from ghost touch  */
 #define TSP_PATTERN_TRACKING_METHOD
 #define PATTERN_TRACKING_FOR_FULLSCREEN
@@ -68,43 +68,21 @@
 #define SYNAPTICS_PRODUCT_ID_B0	"SY 01"
 #define SYNAPTICS_PRODUCT_ID_B0_SPAIR	"S5000B"
 
-#ifdef CONFIG_MACH_JACTIVESKT
-#define FW_IMAGE_NAME_B0_HSYNC		"tsp_synaptics/jactive/synaptics_b0_hsync.fw"
-#define FW_IMAGE_NAME_B0_HSYNC_FAC	"tsp_synaptics/jactive/synaptics_b0_hsync_fac.fw"
-#define FW_IMAGE_NAME_B0_HSYNC04	"tsp_synaptics/jactive/synaptics_b0_hsync04.fw"
-#define FW_IMAGE_NAME_B0_HSYNC04_FAC	"tsp_synaptics/jactive/synaptics_b0_hsync04_fac.fw"
-
-/* NON HYNC F/W will be removed */
-/* PRODUCT ID : SY 01, SY 02, S5000B */
-#define FW_IMAGE_NAME_B0_NON_HSYNC	"tsp_synaptics/jactive/synaptics_b0_non_hsync.fw"
-#define FW_IMAGE_NAME_B0_NON_HSYNC_FAC	"tsp_synaptics/jactive/synaptics_b0_non_hsync_fac.fw"
-#endif
 
 /* User firmware */
 #define FW_IMAGE_NAME_B0_3_4	"tsp_synaptics/synaptics_b0_3_4.fw"
 #define FW_IMAGE_NAME_B0_4_0	"tsp_synaptics/synaptics_b0_4_0.fw"
-#if	defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_JS_PROJECT)
+#ifdef CONFIG_SEC_H_PROJECT
 #define FW_IMAGE_NAME_B0_4_3	"tsp_synaptics/synaptics_b0_4_3_new.fw"
 #else
 #define FW_IMAGE_NAME_B0_4_3	"tsp_synaptics/synaptics_b0_4_3.fw"
 #endif
-#if	defined(CONFIG_SEC_JS_PROJECT)
-#define FW_IMAGE_NAME_B0_5_1	"tsp_synaptics/synaptics_js_b0_5_1.fw"
-#else
 #define FW_IMAGE_NAME_B0_5_1	"tsp_synaptics/synaptics_b0_5_1.fw"
-#endif
 
 /* Factory firmware */
 #define FAC_FWIMAGE_NAME_B0		"tsp_synaptics/synaptics_b0_fac.fw"
-#if	defined(CONFIG_SEC_JS_PROJECT)
-#define FAC_FWIMAGE_NAME_B0_5_1		"tsp_synaptics/synaptics_js_b0_5_1_fac.fw"
-#else
 #define FAC_FWIMAGE_NAME_B0_5_1		"tsp_synaptics/synaptics_b0_5_1_fac.fw"
-#endif
 
-/* firmware for Melius */
-#define FW_IMAGE_NAME_B0_NEP_14	"tsp_synaptics/synaptics_b0_nep_14.fw"
-#define FW_IMAGE_NAME_B0_NEP_1F	"tsp_synaptics/synaptics_b0_nep_1F.fw"
 
 #define SYNAPTICS_MAX_FW_PATH	64
 

@@ -185,6 +185,7 @@ static int w1_uevent(struct device *dev, struct kobj_uevent_env *env);
 static struct bus_type w1_bus_type = {
 	.name = "w1",
 	.match = w1_master_match,
+	.uevent = w1_uevent,
 };
 
 struct device_driver w1_master_driver = {
@@ -927,8 +928,7 @@ void w1_search(struct w1_master *dev, u8 search_type, w1_slave_found_callback cb
 			tmp64 = (triplet_ret >> 2);
 			rn |= (tmp64 << i);
 
-			/* ensure we're called from kthread and not by netlink callback */
-			if (!dev->priv && kthread_should_stop()) {
+			if (kthread_should_stop()) {
 				dev_dbg(&dev->dev, "Abort w1_search\n");
 				return;
 			}

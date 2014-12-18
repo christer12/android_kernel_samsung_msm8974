@@ -21,10 +21,8 @@
 #include <linux/jiffies.h>
 
 #include <mach/msm_iomap.h>
-#include <mach/msm_smem.h>
 
 #include "smd_private.h"
-#include "smem_private.h"
 
 #if defined(CONFIG_DEBUG_FS)
 

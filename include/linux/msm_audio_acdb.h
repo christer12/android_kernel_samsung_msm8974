@@ -54,16 +54,12 @@
 #define AUDIO_SET_ASM_CUSTOM_TOPOLOGY	_IOW(AUDIO_IOCTL_MAGIC, \
 			(AUDIO_MAX_COMMON_IOCTL_NUM+24), unsigned)
 #define AUDIO_SET_SPEAKER_PROT _IOW(AUDIO_IOCTL_MAGIC, 25, \
-			struct msm_spk_prot_cfg)
+		struct msm_spk_prot_cfg)
 #define AUDIO_GET_SPEAKER_PROT _IOR(AUDIO_IOCTL_MAGIC, 26, \
-			struct msm_spk_prot_status)
+		struct msm_spk_prot_status)
 #define AUDIO_SET_AANC_CAL		_IOW(AUDIO_IOCTL_MAGIC, \
 			(AUDIO_MAX_COMMON_IOCTL_NUM+27), unsigned)
-#define AUDIO_REGISTER_VOCPROC_VOL_TABLE	_IOW(AUDIO_IOCTL_MAGIC, \
-			(AUDIO_MAX_COMMON_IOCTL_NUM+28), unsigned)
-#define AUDIO_DEREGISTER_VOCPROC_VOL_TABLE	_IOW(AUDIO_IOCTL_MAGIC, \
-			(AUDIO_MAX_COMMON_IOCTL_NUM+29), unsigned)
-#define	AUDIO_MAX_ACDB_IOCTL	(AUDIO_MAX_COMMON_IOCTL_NUM+40)
+#define	AUDIO_MAX_ACDB_IOCTL	(AUDIO_MAX_COMMON_IOCTL_NUM+30)
 
 /* ACDB structures */
 struct cal_block {
@@ -74,13 +70,6 @@ struct cal_block {
 struct sidetone_cal {
 	uint16_t	enable;
 	uint16_t	gain;
-};
-
-enum msm_spkr_prot_states {
-	MSM_SPKR_PROT_CALIBRATED,
-	MSM_SPKR_PROT_CALIBRATION_IN_PROGRESS,
-	MSM_SPKR_PROT_DISABLED,
-	MSM_SPKR_PROT_NOT_CALIBRATED
 };
 
 struct msm_spk_prot_cfg {

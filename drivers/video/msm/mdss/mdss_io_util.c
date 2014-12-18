@@ -276,17 +276,15 @@ int msm_dss_enable_gpio(struct dss_gpio *in_gpio, int num_gpio, int enable)
 			DEV_DBG("%pS->%s: %s disable\n",
 				__builtin_return_address(0), __func__,
 				in_gpio[i].gpio_name);
-			if (in_gpio[i].gpio)
-				gpio_free(in_gpio[i].gpio);
+
+			gpio_free(in_gpio[i].gpio);
 		}
 	}
 	return rc;
 
 disable_gpio:
 	for (i--; i >= 0; i--)
-		if (in_gpio[i].gpio)
-			gpio_free(in_gpio[i].gpio);
-
+		gpio_free(in_gpio[i].gpio);
 	return rc;
 } /* msm_dss_enable_gpio */
 

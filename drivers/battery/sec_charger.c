@@ -82,16 +82,13 @@ static int sec_chg_set_property(struct power_supply *psy,
 			charger->is_charging = true;
 
 		/* current setting */
-		if (!(charger->pdata->cable_source_type &
-			SEC_BATTERY_CABLE_SOURCE_EXTENDED)) {
-			charger->charging_current_max =
-				charger->pdata->charging_current[
-				val->intval].input_current_limit;
+		charger->charging_current_max =
+			charger->pdata->charging_current[
+			val->intval].input_current_limit;
 
-			charger->charging_current =
-				charger->pdata->charging_current[
-				val->intval].fast_charging_current;
-		}
+		charger->charging_current =
+			charger->pdata->charging_current[
+			val->intval].fast_charging_current;
 
 		if (!sec_hal_chg_set_property(charger->client, psp, val))
 			return -EINVAL;
@@ -456,9 +453,6 @@ static int sec_charger_resume(struct i2c_client *client)
 
 static void sec_charger_shutdown(struct i2c_client *client)
 {
-#if defined(CONFIG_CHARGER_BQ24260)
-	sec_hal_chg_shutdown(client);
-#endif
 }
 
 static const struct i2c_device_id sec_charger_id[] = {

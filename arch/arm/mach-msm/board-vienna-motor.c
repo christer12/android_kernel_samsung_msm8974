@@ -35,8 +35,8 @@
 
 static u8 isa1400_init[] = {
 	ISA1400_REG_INIT, 41,
-	ISA1400_REG_AMPGAIN1, 0x53,
-	ISA1400_REG_AMPGAIN2, 0x53,
+	ISA1400_REG_AMPGAIN1, 0x57,
+	ISA1400_REG_AMPGAIN2, 0x57,
 	ISA1400_REG_OVDRTYP, 0xca,
 	ISA1400_REG_AMPSWTCH, 0x1a,
 	ISA1400_REG_SYSCLK, 0x22,
@@ -44,15 +44,15 @@ static u8 isa1400_init[] = {
 	ISA1400_REG_GAIN2, 0x20,
 	ISA1400_REG_GAIN3, 0x20,
 	ISA1400_REG_GAIN4, 0x20,
-	ISA1400_REG_FREQ1M, 0x08,
-	ISA1400_REG_FREQ1L, 0xD3,
-	ISA1400_REG_FREQ2M, 0x08,
-	ISA1400_REG_FREQ2L, 0xD3,
-	ISA1400_REG_FREQ3M, 0x08,
-	ISA1400_REG_FREQ3L, 0xD3,
-	ISA1400_REG_FREQ4M, 0x08,
-	ISA1400_REG_FREQ4L, 0xD3,
-	ISA1400_REG_HPTEN, 0x01,
+	ISA1400_REG_FREQ1M, 0x0c,
+	ISA1400_REG_FREQ1L, 0xd6,
+	ISA1400_REG_FREQ2M, 0x0c,
+	ISA1400_REG_FREQ2L, 0xd6,
+	ISA1400_REG_FREQ3M, 0x0c,
+	ISA1400_REG_FREQ3L, 0xd6,
+	ISA1400_REG_FREQ4M, 0x0c,
+	ISA1400_REG_FREQ4L, 0xd6,
+	ISA1400_REG_HPTEN, 0x0f,
 	ISA1400_REG_CHMODE, 0x00,
 	ISA1400_REG_WAVESEL, 0x00,
 };
@@ -60,9 +60,9 @@ static u8 isa1400_init[] = {
 static u8 isa1400_start[] = {
 	ISA1400_REG_START, 0,
 	ISA1400_REG_GAIN, 0x7f,
-	ISA1400_REG_GAIN2, 0x00,
-	ISA1400_REG_GAIN3, 0x00,
-	ISA1400_REG_GAIN4, 0x00,
+	ISA1400_REG_GAIN2, 0x7f,
+	ISA1400_REG_GAIN3, 0x7f,
+	ISA1400_REG_GAIN4, 0x7f,
 };
 
 static u8 isa1400_stop[] = {
@@ -90,7 +90,7 @@ static int isa1400_vdd_en(bool en)
 	ret = gpio_direction_output(GPIO_MOTOR_EN, en);
 
 	if (en)
-		usleep(400);
+		msleep(20);
 
 	return ret;
 }
@@ -130,10 +130,6 @@ static int isa1400_clk_en(bool en)
         }
         else {
 		clk_disable_unprepare(vib_gp1_clk);
-		clk_put(vib_gp1_clk);
-		clk_put(vib_src_clk);
-		vib_src_clk = NULL;
-		vib_gp1_clk = NULL;
 
 		gpio_tlmm_config(GPIO_CFG(GPIO_PWM_CLK,
 				 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL,
@@ -154,7 +150,7 @@ struct platform_device vib_device_i2c20 __initdata = {
 	.dev.platform_data = &gpio_i2c_data20,
 };*/
 
-const u8 actuators[] = {CH1};
+const u8 actuators[] = {CH1, CH3,};
 static struct isa1400_vibrator_platform_data isa1400_vibrator_pdata = {
 	.gpio_en = isa1400_vdd_en,
 	.clk_en = isa1400_clk_en,
@@ -177,16 +173,19 @@ void __init vienna_motor_init(void)
 
 	//pr_info("[VIB] system_rev %d\n", system_rev);
 	printk("[VIB] %s\n", __func__);
+	gpio_tlmm_config(GPIO_CFG(GPIO_PWM_CLK,
+                                2, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
+                                GPIO_CFG_ENABLE);
 	gpio = GPIO_MOTOR_EN;
 	gpio_request(gpio, "MOTOR_EN");
-	gpio_direction_output(gpio, 0);
+	gpio_direction_output(gpio, 1);
 	gpio_export(gpio, 0);
 	gpio_motor_pwm = GPIO_PWM_CLK;
 	gpio_request(gpio_motor_pwm, "MOTOR_CLK");
-	gpio_tlmm_config(GPIO_CFG(gpio_motor_pwm,
-			 0, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN,
+	/*gpio_tlmm_config(GPIO_CFG(gpio_motor_pwm,
+			 6, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN,
 				GPIO_CFG_2MA), GPIO_CFG_ENABLE);
-	gpio_direction_output(gpio_motor_pwm, 0);
+	gpio_direction_output(gpio_motor_pwm, 1);*/
 	gpio_export(gpio_motor_pwm, 0);
 	isa1400_init[1] = sizeof(isa1400_init);
 	isa1400_start[1] = sizeof(isa1400_start);

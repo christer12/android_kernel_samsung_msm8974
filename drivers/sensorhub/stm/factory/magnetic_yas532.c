@@ -13,7 +13,6 @@
  *
  */
 #include "../ssp.h"
-#include "magnetic_yas532.h"
 
 /*************************************************************************/
 /* factory Sysfs                                                         */
@@ -105,97 +104,58 @@ int mag_store_hwoffset(struct ssp_data *data)
 
 int set_hw_offset(struct ssp_data *data)
 {
+	char chTxBuf[4] = { 0, };
+	char chRxBuf = 0;
 	int iRet = 0;
-	struct ssp_msg *msg;
 
-	if (!(data->uSensorState & 0x04)) {
-		pr_info("[SSP]: %s - Skip this function!!!"\
-			", magnetic sensor is not connected(0x%x)\n",
-			__func__, data->uSensorState);
-		return iRet;
+	if (waiting_wakeup_mcu(data) < 0 ||
+		data->fw_dl_state == FW_DL_STATE_DOWNLOADING) {
+		pr_info("[SSP] : %s, skip DL state = %d\n", __func__,
+			data->fw_dl_state);
+		return FAIL;
 	}
 
-	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-	msg->cmd = MSG2SSP_AP_SET_MAGNETIC_HWOFFSET;
-	msg->length = 3;
-	msg->options = AP2HUB_WRITE;
-	msg->buffer = (char*) kzalloc(3, GFP_KERNEL);
-	msg->free_buffer = 1;
+	chTxBuf[0] = MSG2SSP_AP_SET_MAGNETIC_HWOFFSET;
+	chTxBuf[1] = data->magoffset.x;
+	chTxBuf[2] = data->magoffset.y;
+	chTxBuf[3] = data->magoffset.z;
 
-	msg->buffer[0] = data->magoffset.x;
-	msg->buffer[1] = data->magoffset.y;
-	msg->buffer[2] = data->magoffset.z;
-
-	iRet = ssp_spi_async(data, msg);
-
-	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
+	iRet = ssp_i2c_read(data, chTxBuf, 4, &chRxBuf, 1, DEFAULT_RETRIES);
+	if ((chRxBuf != MSG_ACK) || (iRet != SUCCESS)) {
+		pr_err("[SSP]: %s - i2c fail %d, %d\n",
+			__func__, iRet, chRxBuf);
 		iRet = ERROR;
 	}
 
 	pr_info("[SSP]: %s: x: %d, y: %d, z: %d\n", __func__,
-		(s8)data->magoffset.x, (s8)data->magoffset.y, (s8)data->magoffset.z);
-	return iRet;
-}
-
-int set_static_matrix(struct ssp_data *data)
-{
-	int iRet = 0;
-	struct ssp_msg *msg;
-	s16 static_matrix[9] = YAS_STATIC_ELLIPSOID_MATRIX;
-
-	if (!(data->uSensorState & 0x04)) {
-		pr_info("[SSP]: %s - Skip this function!!!"\
-			", magnetic sensor is not connected(0x%x)\n",
-			__func__, data->uSensorState);
-		return iRet;
-	}
-
-	msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-	msg->cmd = MSG2SSP_AP_MCU_SET_STATIC_MATRIX;
-	msg->length = 18;
-	msg->options = AP2HUB_WRITE;
-	msg->buffer = (char*) kzalloc(18, GFP_KERNEL);
-
-	msg->free_buffer = 1;
-	memcpy(msg->buffer, static_matrix, 18);
-
-	iRet = ssp_spi_async(data, msg);
-
-	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
-		iRet = ERROR;
-	}
-
+		(s8)chTxBuf[1], (s8)chTxBuf[2], (s8)chTxBuf[3]);
 	return iRet;
 }
 
 int get_hw_offset(struct ssp_data *data)
 {
+	char chTxBuf = 0;
+	char chRxBuf[3] = { 0, };
 	int iRet = 0;
-	char buffer[3] = { 0, };
 
-	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-	msg->cmd = MSG2SSP_AP_GET_MAGNETIC_HWOFFSET;
-	msg->length = 3;
-	msg->options = AP2HUB_READ;
-	msg->buffer = buffer;
-	msg->free_buffer = 0;
+	if (waiting_wakeup_mcu(data) < 0)
+		return ERROR;
+
+	chTxBuf = MSG2SSP_AP_GET_MAGNETIC_HWOFFSET;
 
 	data->magoffset.x = 0;
 	data->magoffset.y = 0;
 	data->magoffset.z = 0;
 
-	iRet = ssp_spi_sync(data, msg, 1000);
-
+	iRet = ssp_i2c_read(data, &chTxBuf, 1, chRxBuf, 3, DEFAULT_RETRIES);
 	if (iRet != SUCCESS) {
 		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
 		iRet = ERROR;
 	}
 
-	data->magoffset.x = buffer[0];
-	data->magoffset.y = buffer[1];
-	data->magoffset.z = buffer[2];
+	data->magoffset.x = chRxBuf[0];
+	data->magoffset.y = chRxBuf[1];
+	data->magoffset.z = chRxBuf[2];
 
 	pr_info("[SSP]: %s: x: %d, y: %d, z: %d\n", __func__,
 		(s8)data->magoffset.x,
@@ -218,9 +178,9 @@ static ssize_t magnetic_name_show(struct device *dev,
 
 static int check_rawdata_spec(struct ssp_data *data)
 {
-	if ((data->buf[GEOMAGNETIC_RAW].x == 0) &&
-		(data->buf[GEOMAGNETIC_RAW].y == 0) &&
-		(data->buf[GEOMAGNETIC_RAW].z == 0))
+	if ((data->buf[GEOMAGNETIC_SENSOR].x == 0) &&
+		(data->buf[GEOMAGNETIC_SENSOR].y == 0) &&
+		(data->buf[GEOMAGNETIC_SENSOR].z == 0))
 		return FAIL;
 	else
 		return SUCCESS;
@@ -232,32 +192,32 @@ static ssize_t raw_data_show(struct device *dev,
 	struct ssp_data *data = dev_get_drvdata(dev);
 
 	pr_info("[SSP] %s - %d,%d,%d\n", __func__,
-		data->buf[GEOMAGNETIC_RAW].x,
-		data->buf[GEOMAGNETIC_RAW].y,
-		data->buf[GEOMAGNETIC_RAW].z);
+		data->buf[GEOMAGNETIC_SENSOR].x,
+		data->buf[GEOMAGNETIC_SENSOR].y,
+		data->buf[GEOMAGNETIC_SENSOR].z);
 
 	if (data->bGeomagneticRawEnabled == false) {
-		data->buf[GEOMAGNETIC_RAW].x = -1;
-		data->buf[GEOMAGNETIC_RAW].y = -1;
-		data->buf[GEOMAGNETIC_RAW].z = -1;
+		data->buf[GEOMAGNETIC_SENSOR].x = -1;
+		data->buf[GEOMAGNETIC_SENSOR].y = -1;
+		data->buf[GEOMAGNETIC_SENSOR].z = -1;
 	} else {
-		if (data->buf[GEOMAGNETIC_RAW].x > 18000)
-			data->buf[GEOMAGNETIC_RAW].x = 18000;
-		else if (data->buf[GEOMAGNETIC_RAW].x < -18000)
-			data->buf[GEOMAGNETIC_RAW].x = -18000;
-		if (data->buf[GEOMAGNETIC_RAW].y > 18000)
-			data->buf[GEOMAGNETIC_RAW].y = 18000;
-		else if (data->buf[GEOMAGNETIC_RAW].y < -18000)
-			data->buf[GEOMAGNETIC_RAW].y = -18000;
-		if (data->buf[GEOMAGNETIC_RAW].z > 18000)
-			data->buf[GEOMAGNETIC_RAW].z = 18000;
-		else if (data->buf[GEOMAGNETIC_RAW].z < -18000)
-			data->buf[GEOMAGNETIC_RAW].z = -18000;
+		if (data->buf[GEOMAGNETIC_SENSOR].x > 18000)
+			data->buf[GEOMAGNETIC_SENSOR].x = 18000;
+		else if (data->buf[GEOMAGNETIC_SENSOR].x < -18000)
+			data->buf[GEOMAGNETIC_SENSOR].x = -18000;
+		if (data->buf[GEOMAGNETIC_SENSOR].y > 18000)
+			data->buf[GEOMAGNETIC_SENSOR].y = 18000;
+		else if (data->buf[GEOMAGNETIC_SENSOR].y < -18000)
+			data->buf[GEOMAGNETIC_SENSOR].y = -18000;
+		if (data->buf[GEOMAGNETIC_SENSOR].z > 18000)
+			data->buf[GEOMAGNETIC_SENSOR].z = 18000;
+		else if (data->buf[GEOMAGNETIC_SENSOR].z < -18000)
+			data->buf[GEOMAGNETIC_SENSOR].z = -18000;
 	}
 	return snprintf(buf, PAGE_SIZE, "%d,%d,%d\n",
-		data->buf[GEOMAGNETIC_RAW].x,
-		data->buf[GEOMAGNETIC_RAW].y,
-		data->buf[GEOMAGNETIC_RAW].z);
+		data->buf[GEOMAGNETIC_SENSOR].x,
+		data->buf[GEOMAGNETIC_SENSOR].y,
+		data->buf[GEOMAGNETIC_SENSOR].z);
 }
 
 static ssize_t raw_data_store(struct device *dev,
@@ -274,9 +234,9 @@ static ssize_t raw_data_store(struct device *dev,
 		return iRet;
 
 	if (dEnable) {
-		data->buf[GEOMAGNETIC_RAW].x = 0;
-		data->buf[GEOMAGNETIC_RAW].y = 0;
-		data->buf[GEOMAGNETIC_RAW].z = 0;
+		data->buf[GEOMAGNETIC_SENSOR].x = 0;
+		data->buf[GEOMAGNETIC_SENSOR].y = 0;
+		data->buf[GEOMAGNETIC_SENSOR].z = 0;
 
 		send_instruction(data, ADD_SENSOR, GEOMAGNETIC_RAW,
 			chTempbuf, 2);
@@ -365,44 +325,54 @@ static ssize_t adc_data_read(struct device *dev,
 static ssize_t magnetic_get_selftest(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	char chTempBuf[22] = { 0,  };
-	int iRet = 0;
+	char chTempBuf[2] = { 0, 10 };
+	int iDelayCnt = 0, iRet = 0, iTimeoutReties = 0;
 	s8 id = 0, x = 0, y1 = 0, y2 = 0, dir = 0;
 	s16 sx = 0, sy = 0, ohx = 0, ohy = 0, ohz = 0;
 	s8 err[7] = {-1, };
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-	msg->cmd = GEOMAGNETIC_FACTORY;
-	msg->length = 22;
-	msg->options = AP2HUB_READ;
-	msg->buffer = chTempBuf;
-	msg->free_buffer = 0;
+reties:
+	iDelayCnt = 0;
+	data->uFactorydataReady = 0;
+	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
 
-	iRet = ssp_spi_sync(data, msg, 1000);
+	iRet = send_instruction(data, FACTORY_MODE, GEOMAGNETIC_FACTORY,
+			chTempBuf, 2);
 
-	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - Magnetic Selftest Timeout!! %d\n", __func__, iRet);
-		goto exit;
+	while (!(data->uFactorydataReady & (1 << GEOMAGNETIC_FACTORY))
+		&& (iDelayCnt++ < 50)
+		&& (iRet == SUCCESS))
+		msleep(20);
+
+	if ((iDelayCnt >= 50) || (iRet != SUCCESS)) {
+		pr_err("[SSP]: %s - Magnetic Selftest Timeout!! %d\n",
+			__func__, iRet);
+		if (iTimeoutReties++ < 3)
+			goto reties;
+		else
+			goto exit;
 	}
 
-	id = (s8)(chTempBuf[0]);
-	err[0] = (s8)(chTempBuf[1]);
-	err[1] = (s8)(chTempBuf[2]);
-	err[2] = (s8)(chTempBuf[3]);
-	x = (s8)(chTempBuf[4]);
-	y1 = (s8)(chTempBuf[5]);
-	y2 = (s8)(chTempBuf[6]);
-	err[3] = (s8)(chTempBuf[7]);
-	dir = (s8)(chTempBuf[8]);
-	err[4] = (s8)(chTempBuf[9]);
-	ohx = (s16)((chTempBuf[10] << 8) + chTempBuf[11]);
-	ohy = (s16)((chTempBuf[12] << 8) + chTempBuf[13]);
-	ohz = (s16)((chTempBuf[14] << 8) + chTempBuf[15]);
-	err[6] = (s8)(chTempBuf[16]);
-	sx = (s16)((chTempBuf[17] << 8) + chTempBuf[18]);
-	sy = (s16)((chTempBuf[19] << 8) + chTempBuf[20]);
-	err[5] = (s8)(chTempBuf[21]);
+	mdelay(5);
+
+	id = (s8)(data->uFactorydata[0]);
+	err[0] = (s8)(data->uFactorydata[1]);
+	err[1] = (s8)(data->uFactorydata[2]);
+	err[2] = (s8)(data->uFactorydata[3]);
+	x = (s8)(data->uFactorydata[4]);
+	y1 = (s8)(data->uFactorydata[5]);
+	y2 = (s8)(data->uFactorydata[6]);
+	err[3] = (s8)(data->uFactorydata[7]);
+	dir = (s8)(data->uFactorydata[8]);
+	err[4] = (s8)(data->uFactorydata[9]);
+	ohx = (s16)((data->uFactorydata[10] << 8) + data->uFactorydata[11]);
+	ohy = (s16)((data->uFactorydata[12] << 8) + data->uFactorydata[13]);
+	ohz = (s16)((data->uFactorydata[14] << 8) + data->uFactorydata[15]);
+	err[6] = (s8)(data->uFactorydata[16]);
+	sx = (s16)((data->uFactorydata[17] << 8) + data->uFactorydata[18]);
+	sy = (s16)((data->uFactorydata[19] << 8) + data->uFactorydata[20]);
+	err[5] = (s8)(data->uFactorydata[21]);
 
 	if (unlikely(id != 0x2))
 		err[0] = -1;

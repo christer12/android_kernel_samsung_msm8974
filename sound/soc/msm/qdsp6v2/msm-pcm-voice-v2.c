@@ -67,9 +67,9 @@ static int is_voice2(struct msm_voice *pvoice2)
 		return false;
 }
 
-static uint32_t get_session_id(struct msm_voice *pvoc)
+static uint16_t get_session_id(struct msm_voice *pvoc)
 {
-	uint32_t session_id = 0;
+	uint16_t session_id = 0;
 
 	if (is_volte(pvoc))
 		session_id = voc_get_session_id(VOLTE_SESSION_NAME);
@@ -175,7 +175,7 @@ static int msm_pcm_close(struct snd_pcm_substream *substream)
 
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_voice *prtd = runtime->private_data;
-	uint32_t session_id = 0;
+	uint16_t session_id = 0;
 	int ret = 0;
 
 	mutex_lock(&prtd->lock);
@@ -201,7 +201,7 @@ static int msm_pcm_prepare(struct snd_pcm_substream *substream)
 	int ret = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_voice *prtd = runtime->private_data;
-	uint32_t session_id = 0;
+	uint16_t session_id = 0;
 
 	mutex_lock(&prtd->lock);
 
@@ -236,7 +236,7 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	int ret = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct msm_voice *prtd = runtime->private_data;
-	uint32_t session_id = 0;
+	uint16_t session_id = 0;
 
 	pr_debug("%s: cmd = %d\n", __func__, cmd);
 
@@ -281,58 +281,6 @@ static int msm_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 	return ret;
 }
 
-static int msm_pcm_ioctl(struct snd_pcm_substream *substream,
-			 unsigned int cmd, void *arg)
-{
-	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct msm_voice *prtd = runtime->private_data;
-	uint16_t session_id = get_session_id(prtd);
-	enum voice_lch_mode lch_mode;
-	int ret = 0;
-
-	switch (cmd) {
-	case SNDRV_VOICE_IOCTL_LCH:
-		if (copy_from_user(&lch_mode, (void *)arg,
-				   sizeof(enum voice_lch_mode))) {
-			pr_err("%s: Copy from user failed, size %d\n", __func__,
-			       sizeof(enum voice_lch_mode));
-
-			ret = -EFAULT;
-			break;
-		}
-
-		pr_debug("%s: %s lch_mode:%d\n",
-			 __func__, substream->pcm->id, lch_mode);
-
-		switch (lch_mode) {
-		case VOICE_LCH_START:
-		case VOICE_LCH_STOP:
-			ret = voc_set_lch(session_id, lch_mode);
-			break;
-
-		default:
-			pr_err("%s: Invalid LCH MODE %d\n", __func__, lch_mode);
-
-			ret = -EFAULT;
-		}
-
-		break;
-	default:
-		pr_debug("%s: Falling into default snd_lib_ioctl cmd 0x%x\n",
-			 __func__, cmd);
-
-		ret = snd_pcm_lib_ioctl(substream, cmd, arg);
-		break;
-	}
-
-	if (!ret)
-		pr_debug("%s: ret %d\n", __func__, ret);
-	else
-		pr_err("%s: cmd 0x%x failed %d\n", __func__, cmd, ret);
-
-	return ret;
-}
-
 #ifdef CONFIG_SND_SOC_ES325
 int es325_set_VEQ_max_gain(int volume);
 #endif
@@ -370,9 +318,7 @@ static int msm_voice_volume_put(struct snd_kcontrol *kcontrol,
 				RX_PATH, volume);
 #endif /* CONFIG_SEC_DEVIDE_RINGTONE_GAIN */
 #ifdef CONFIG_SND_SOC_ES325
-#if !defined(CONFIG_SEC_J_PROJECT) && !defined(CONFIG_SEC_JACTIVE_PROJECT)\
-	&& !defined(CONFIG_SEC_MELIUSCA_PROJECT)\
-	&& !defined(CONFIG_SEC_LOCALE_KOR_H)
+#if !defined(CONFIG_SEC_J_PROJECT)
 	es325_set_VEQ_max_gain(volume);
 #endif
 #endif
@@ -721,12 +667,11 @@ static struct snd_kcontrol_new msm_voice_controls[] = {
 };
 
 static struct snd_pcm_ops msm_pcm_ops = {
-	.open			= msm_pcm_open,
-	.hw_params		= msm_pcm_hw_params,
-	.close			= msm_pcm_close,
-	.prepare		= msm_pcm_prepare,
-	.trigger		= msm_pcm_trigger,
-	.ioctl			= msm_pcm_ioctl,
+	.open           = msm_pcm_open,
+	.hw_params	= msm_pcm_hw_params,
+	.close          = msm_pcm_close,
+	.prepare        = msm_pcm_prepare,
+	.trigger	= msm_pcm_trigger,
 };
 
 

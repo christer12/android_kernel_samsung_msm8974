@@ -29,34 +29,28 @@
 #include <sound/pcm_params.h>
 #include <asm/dma.h>
 #include <linux/dma-mapping.h>
-#include <linux/msm_audio_ion.h>
 
 #include <sound/timer.h>
 
 #include "msm-compr-q6-v2.h"
 #include "msm-pcm-routing-v2.h"
 #include "audio_ocmem.h"
-#include <sound/tlv.h>
 
 #define COMPRE_CAPTURE_NUM_PERIODS	16
 /* Allocate the worst case frame size for compressed audio */
 #define COMPRE_CAPTURE_HEADER_SIZE	(sizeof(struct snd_compr_audio_info))
-/* Changing period size to 4032. 4032 will make sure COMPRE_CAPTURE_PERIOD_SIZE
- * is 4096 with meta data size of 64 and MAX_NUM_FRAMES_PER_BUFFER 1
- */
-#define COMPRE_CAPTURE_MAX_FRAME_SIZE	(4032)
+#define COMPRE_CAPTURE_MAX_FRAME_SIZE	(6144)
 #define COMPRE_CAPTURE_PERIOD_SIZE	((COMPRE_CAPTURE_MAX_FRAME_SIZE + \
 					  COMPRE_CAPTURE_HEADER_SIZE) * \
 					  MAX_NUM_FRAMES_PER_BUFFER)
 #define COMPRE_OUTPUT_METADATA_SIZE	(sizeof(struct output_meta_data_st))
-#define COMPRESSED_LR_VOL_MAX_STEPS	0x20002000
 
-const DECLARE_TLV_DB_LINEAR(compr_rx_vol_gain, 0,
-			    COMPRESSED_LR_VOL_MAX_STEPS);
 struct snd_msm {
+	struct msm_audio *prtd;
+	unsigned volume;
 	atomic_t audio_ocmem_req;
 };
-static struct snd_msm compressed_audio;
+static struct snd_msm compressed_audio = {NULL, 0x20002000} ;
 
 static struct audio_locks the_locks;
 
@@ -153,14 +147,14 @@ static void compr_event_handler(uint32_t opcode,
 		 * check for underrun
 		 */
 		snd_pcm_stream_lock_irq(substream);
-		if (runtime->status->hw_ptr >= runtime->control->appl_ptr) {
+		if (snd_pcm_playback_empty(substream)) {
 			runtime->render_flag |= SNDRV_RENDER_STOPPED;
 			stop_playback = 1;
 		}
 		snd_pcm_stream_unlock_irq(substream);
 
 		if (stop_playback) {
-			pr_err("underrun! render stopped\n");
+			pr_err("%s empty buffer, stop writes\n", __func__);
 			break;
 		}
 
@@ -232,7 +226,7 @@ static void compr_event_handler(uint32_t opcode,
 				prtd->pcm_irq_pos);
 
 		memcpy(prtd->audio_client->port[OUT].buf->data +
-			   prtd->pcm_irq_pos, (ptrmem + READDONE_IDX_SIZE),
+			   prtd->pcm_irq_pos, (ptrmem + 2),
 			   COMPRE_CAPTURE_HEADER_SIZE);
 		pr_debug("buf = %p, updated data = 0x%X, *data = %p\n",
 				prtd->audio_client->port[OUT].buf,
@@ -241,10 +235,9 @@ static void compr_event_handler(uint32_t opcode,
 				prtd->audio_client->port[OUT].buf->data);
 		if (!atomic_read(&prtd->start))
 			break;
-		pr_debug("frame size=%d, buffer = 0x%X\n",
-				ptrmem[READDONE_IDX_SIZE],
-				ptrmem[READDONE_IDX_BUFADD_LSW]);
-		if (ptrmem[READDONE_IDX_SIZE] > COMPRE_CAPTURE_MAX_FRAME_SIZE) {
+		pr_debug("frame size=%d, buffer = 0x%X\n", ptrmem[2],
+				ptrmem[1]);
+		if (ptrmem[2] > COMPRE_CAPTURE_MAX_FRAME_SIZE) {
 			pr_err("Frame length exceeded the max length");
 			break;
 		}
@@ -495,6 +488,11 @@ static int msm_compr_trigger(struct snd_pcm_substream *substream, int cmd)
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		prtd->pcm_irq_pos = 0;
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			if (!atomic_cmpxchg(&compressed_audio.audio_ocmem_req,
+									0, 1))
+				audio_ocmem_process_req(AUDIO, true);
+		}
 
 		if (substream->stream == SNDRV_PCM_STREAM_CAPTURE) {
 			switch (compr->info.codec_param.codec.id) {
@@ -528,14 +526,12 @@ static int msm_compr_trigger(struct snd_pcm_substream *substream, int cmd)
 			}
 		}
 		atomic_set(&prtd->start, 0);
-		runtime->render_flag &= ~SNDRV_RENDER_STOPPED;
 		break;
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
 		pr_debug("SNDRV_PCM_TRIGGER_PAUSE\n");
 		q6asm_cmd_nowait(prtd->audio_client, CMD_PAUSE);
 		atomic_set(&prtd->start, 0);
-		runtime->render_flag &= ~SNDRV_RENDER_STOPPED;
 		break;
 	default:
 		ret = -EINVAL;
@@ -550,7 +546,7 @@ static void populate_codec_list(struct compr_audio *compr,
 {
 	pr_debug("%s\n", __func__);
 	/* MP3 Block */
-	compr->info.compr_cap.num_codecs = 5;
+	compr->info.compr_cap.num_codecs = 4;
 	compr->info.compr_cap.min_fragment_size = runtime->hw.period_bytes_min;
 	compr->info.compr_cap.max_fragment_size = runtime->hw.period_bytes_max;
 	compr->info.compr_cap.min_fragments = runtime->hw.periods_min;
@@ -559,7 +555,6 @@ static void populate_codec_list(struct compr_audio *compr,
 	compr->info.compr_cap.codecs[1] = SND_AUDIOCODEC_AAC;
 	compr->info.compr_cap.codecs[2] = SND_AUDIOCODEC_AC3;
 	compr->info.compr_cap.codecs[3] = SND_AUDIOCODEC_EAC3;
-	compr->info.compr_cap.codecs[4] = SND_AUDIOCODEC_AMRWB;
 	/* Add new codecs here */
 }
 
@@ -618,40 +613,25 @@ static int msm_compr_open(struct snd_pcm_substream *substream)
 	populate_codec_list(compr, runtime);
 	runtime->private_data = compr;
 	atomic_set(&prtd->eos, 0);
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		if (!atomic_cmpxchg(&compressed_audio.audio_ocmem_req, 0, 1))
-			audio_ocmem_process_req(AUDIO, true);
-		else
-			atomic_inc(&compressed_audio.audio_ocmem_req);
-		pr_debug("%s: req: %d\n", __func__,
-			atomic_read(&compressed_audio.audio_ocmem_req));
-	}
+	atomic_set(&compressed_audio.audio_ocmem_req, 0);
+	compressed_audio.prtd =  &compr->prtd;
+
 	return 0;
 }
 
-static int compressed_set_volume(struct msm_audio *prtd, uint32_t volume)
+int compressed_set_volume(unsigned volume)
 {
 	int rc = 0;
-	int avg_vol = 0;
-	int lgain = (volume >> 16) & 0xFFFF;
-	int rgain = volume & 0xFFFF;
-	if (prtd && prtd->audio_client) {
-		pr_debug("%s: channels %d volume 0x%x\n", __func__,
-			prtd->channel_mode, volume);
-		if ((prtd->channel_mode == 2) &&
-			(lgain != rgain)) {
-			pr_debug("%s: call q6asm_set_lrgain\n", __func__);
-			rc = q6asm_set_lrgain(prtd->audio_client, lgain, rgain);
-		} else {
-			avg_vol = (lgain + rgain)/2;
-			pr_debug("%s: call q6asm_set_volume\n", __func__);
-			rc = q6asm_set_volume(prtd->audio_client, avg_vol);
-		}
+	if (compressed_audio.prtd && compressed_audio.prtd->audio_client) {
+		rc = q6asm_set_lrgain(compressed_audio.prtd->audio_client,
+						(volume >> 16) & 0xFFFF,
+						volume & 0xFFFF);
 		if (rc < 0) {
 			pr_err("%s: Send Volume command failed rc=%d\n",
 						__func__, rc);
 		}
 	}
+	compressed_audio.volume = volume;
 	return rc;
 }
 
@@ -667,16 +647,11 @@ static int msm_compr_playback_close(struct snd_pcm_substream *substream)
 
 	dir = IN;
 	atomic_set(&prtd->pending_buffer, 0);
-
-	if (atomic_read(&compressed_audio.audio_ocmem_req) > 1)
-		atomic_dec(&compressed_audio.audio_ocmem_req);
-	else if (atomic_cmpxchg(&compressed_audio.audio_ocmem_req, 1, 0))
+	if (atomic_cmpxchg(&compressed_audio.audio_ocmem_req, 1, 0))
 		audio_ocmem_process_req(AUDIO, false);
-
-	pr_debug("%s: req: %d\n", __func__,
-		atomic_read(&compressed_audio.audio_ocmem_req));
 	prtd->pcm_irq_pos = 0;
 	q6asm_cmd(prtd->audio_client, CMD_CLOSE);
+	compressed_audio.prtd = NULL;
 	q6asm_audio_client_buf_free_contiguous(dir,
 				prtd->audio_client);
 		msm_pcm_routing_dereg_phy_stream(
@@ -748,23 +723,25 @@ static snd_pcm_uframes_t msm_compr_pointer(struct snd_pcm_substream *substream)
 static int msm_compr_mmap(struct snd_pcm_substream *substream,
 				struct vm_area_struct *vma)
 {
+	int result = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct msm_audio *prtd = runtime->private_data;
-	struct audio_client *ac = prtd->audio_client;
-	struct audio_port_data *apd = ac->port;
-	struct audio_buffer *ab;
-	int dir = -1;
+	struct compr_audio *compr = runtime->private_data;
+	struct msm_audio *prtd = &compr->prtd;
 
+	pr_debug("%s\n", __func__);
 	prtd->mmap_flag = 1;
-
 	runtime->render_flag = SNDRV_NON_DMA_MODE;
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dir = IN;
-	else
-		dir = OUT;
-	ab = &(apd[dir].buf[0]);
-
-	return msm_audio_ion_mmap(ab, vma);
+	if (runtime->dma_addr && runtime->dma_bytes) {
+		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+		result = remap_pfn_range(vma, vma->vm_start,
+				runtime->dma_addr >> PAGE_SHIFT,
+				runtime->dma_bytes,
+				vma->vm_page_prot);
+	} else {
+		pr_err("Physical address or size of buf is NULL");
+		return -EINVAL;
+	}
+	return result;
 }
 
 static int msm_compr_hw_params(struct snd_pcm_substream *substream,
@@ -799,7 +776,7 @@ static int msm_compr_hw_params(struct snd_pcm_substream *substream,
 
 	if (runtime->format == SNDRV_PCM_FORMAT_S24_LE)
 		bits_per_sample = 24;
-	pr_info("%s rate=%d bit_per_sampe=%d\n", __func__,runtime->rate,bits_per_sample);
+
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		ret = q6asm_open_write_v2(prtd->audio_client,
 				compr->codec, bits_per_sample);
@@ -813,21 +790,18 @@ static int msm_compr_hw_params(struct snd_pcm_substream *substream,
 			prtd->audio_client->perf_mode,
 			prtd->session_id,
 			substream->stream);
-		/* the number of channels are required to call volume api
-		   accoridngly. So, get channels from hw params */
-		if ((params_channels(params) > 0) &&
-		    (params_periods(params) <= runtime->hw.channels_max))
-			prtd->channel_mode = params_channels(params);
 
-		ret = compressed_set_volume(prtd, 0);
+		ret = compressed_set_volume(0);
 		if (ret < 0)
 			pr_err("%s : Set Volume failed : %d", __func__, ret);
 
-		ret = q6asm_set_softpause(prtd->audio_client, &softpause);
+		ret = q6asm_set_softpause(compressed_audio.prtd->audio_client,
+								&softpause);
 		if (ret < 0)
 			pr_err("%s: Send SoftPause Param failed ret=%d\n",
 				__func__, ret);
-		ret = q6asm_set_softvolume(prtd->audio_client, &softvol);
+		ret = q6asm_set_softvolume(compressed_audio.prtd->audio_client,
+								&softvol);
 		if (ret < 0)
 			pr_err("%s: Send SoftVolume Param failed ret=%d\n",
 				__func__, ret);
@@ -1069,7 +1043,7 @@ static int msm_compr_ioctl(struct snd_pcm_substream *substream,
 			}
 			rc = wait_event_timeout(the_locks.flush_wait,
 				prtd->cmd_ack, 5 * HZ);
-			if (!rc)
+			if (rc < 0)
 				pr_err("Flush cmd timeout\n");
 			prtd->pcm_irq_pos = 0;
 		}
@@ -1167,66 +1141,6 @@ static int msm_compr_restart(struct snd_pcm_substream *substream)
 	return 0;
 }
 
-static int msm_compr_volume_ctl_put(struct snd_kcontrol *kcontrol,
-				    struct snd_ctl_elem_value *ucontrol)
-{
-	int rc = 0;
-	struct snd_pcm_volume *vol = snd_kcontrol_chip(kcontrol);
-	struct snd_pcm_substream *substream =
-			 vol->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
-	struct msm_audio *prtd;
-	int volume = ucontrol->value.integer.value[0];
-
-	pr_debug("%s: volume : %x\n", __func__, volume);
-	if (!substream)
-		return -ENODEV;
-	if (!substream->runtime)
-		return 0;
-	prtd = substream->runtime->private_data;
-	if (prtd)
-		rc = compressed_set_volume(prtd, volume);
-
-	return rc;
-}
-
-static int msm_compr_volume_ctl_get(struct snd_kcontrol *kcontrol,
-				  struct snd_ctl_elem_value *ucontrol)
-{
-	struct snd_pcm_volume *vol = snd_kcontrol_chip(kcontrol);
-	struct snd_pcm_substream *substream =
-			 vol->pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream;
-	struct msm_audio *prtd;
-
-	pr_debug("%s\n", __func__);
-	if (!substream)
-		return -ENODEV;
-	if (!substream->runtime)
-		return 0;
-	prtd = substream->runtime->private_data;
-	if (prtd)
-		ucontrol->value.integer.value[0] = prtd->volume;
-	return 0;
-}
-
-static int msm_compr_add_controls(struct snd_soc_pcm_runtime *rtd)
-{
-	int ret = 0;
-	struct snd_pcm *pcm = rtd->pcm;
-	struct snd_pcm_volume *volume_info;
-	struct snd_kcontrol *kctl;
-
-	dev_dbg(rtd->dev, "%s, Volume cntrl add\n", __func__);
-	ret = snd_pcm_add_volume_ctls(pcm, SNDRV_PCM_STREAM_PLAYBACK,
-				      NULL, 1, rtd->dai_link->be_id,
-				      &volume_info);
-	if (ret < 0)
-		return ret;
-	kctl = volume_info->kctl;
-	kctl->put = msm_compr_volume_ctl_put;
-	kctl->get = msm_compr_volume_ctl_get;
-	kctl->tlv.p = compr_rx_vol_gain;
-	return 0;
-}
 
 static struct snd_pcm_ops msm_compr_ops = {
 	.open	   = msm_compr_open,
@@ -1247,10 +1161,6 @@ static int msm_asoc_pcm_new(struct snd_soc_pcm_runtime *rtd)
 
 	if (!card->dev->coherent_dma_mask)
 		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
-
-	ret = msm_compr_add_controls(rtd);
-	if (ret)
-		pr_err("%s, kctl add failed\n", __func__);
 	return ret;
 }
 
@@ -1266,8 +1176,6 @@ static __devinit int msm_compr_probe(struct platform_device *pdev)
 
 	dev_info(&pdev->dev, "%s: dev name %s\n",
 			 __func__, dev_name(&pdev->dev));
-
-	atomic_set(&compressed_audio.audio_ocmem_req, 0);
 	return snd_soc_register_platform(&pdev->dev,
 				   &msm_soc_platform);
 }

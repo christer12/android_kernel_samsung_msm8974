@@ -58,18 +58,14 @@
 #include <linux/jump_label.h>
 #include <linux/pfn.h>
 #include <linux/bsearch.h>
-#ifdef	CONFIG_TIMA_LKMAUTH_CODE_PROT
-#include <asm/tlbflush.h>
-#endif/*CONFIG_TIMA_LKMAUTH_CODE_PROT*/
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/module.h>
-#ifdef	CONFIG_TIMA_LKMAUTH_CODE_PROT
+#ifdef	TIMA_LKM_SET_PAGE_ATTRIB
 #define TIMA_PAC_CMD_ID 0x3f80d221
-#define TIMA_SET_PTE_RO 1
-#define TIMA_SET_PTE_NX 2
-#endif/*CONFIG_TIMA_LKMAUTH_CODE_PROT*/
+#endif
 
-#ifdef CONFIG_TIMA_LKMAUTH
+#ifdef TIMA_LKM_AUTH_ENABLED
 #include <linux/qseecom.h>
 #include <linux/kobject.h>
 
@@ -144,7 +140,7 @@ typedef struct lkmauth_rsp_s
  * to ensure complete separation of code and data, but
  * only when CONFIG_DEBUG_SET_MODULE_RONX=y
  */
-#ifdef	CONFIG_TIMA_LKMAUTH_CODE_PROT
+#ifdef	TIMA_LKM_SET_PAGE_ATTRIB
 # define debug_align(X) ALIGN(X, PAGE_SIZE)
 #else
 #ifdef CONFIG_DEBUG_SET_MODULE_RONX
@@ -152,7 +148,7 @@ typedef struct lkmauth_rsp_s
 #else
 # define debug_align(X) (X)
 #endif
-#endif/*CONFIG_TIMA_LKMAUTH_CODE_PROT*/
+#endif
 
 /*
  * Given BASE and SIZE this macro calculates the number of pages the
@@ -2411,7 +2407,7 @@ static void add_kallsyms(struct module *mod, const struct load_info *info)
 }
 #endif /* CONFIG_KALLSYMS */
 
-#ifdef	CONFIG_TIMA_LKMAUTH
+#ifdef	TIMA_LKM_AUTH_ENABLED
 int qseecom_set_bandwidth(struct qseecom_handle *handle, bool high);
 static int lkmauth(Elf_Ehdr *hdr, int len)
 {
@@ -2636,7 +2632,7 @@ static int copy_and_check(struct load_info *info,
 		goto free_hdr;
 	}
 
-#ifdef CONFIG_TIMA_LKMAUTH
+#ifdef TIMA_LKM_AUTH_ENABLED
 	if (lkmauth(hdr, len) != 0) {
 		err = -ENOEXEC;
 		goto free_hdr;
@@ -3213,54 +3209,7 @@ static void do_mod_ctors(struct module *mod)
 		mod->ctors[i]();
 #endif
 }
-#ifdef	CONFIG_TIMA_LKMAUTH_CODE_PROT
-
-#ifndef TIMA_KERNEL_L1_MANAGE
-static inline pmd_t *tima_pmd_off_k(unsigned long virt)
-{
-		return pmd_offset(pud_offset(pgd_offset_k(virt), virt), virt);
-}
-
-void tima_set_pte_val(unsigned long virt,int numpages,int flags)
-{
-        unsigned long start = virt;
-        unsigned long end   = virt + (numpages << PAGE_SHIFT);
-        unsigned long pmd_end;
-        pmd_t *pmd;
-        pte_t *pte;
-
-        while (virt < end) 
-        {
-                pmd =tima_pmd_off_k(virt);
-                pmd_end = min(ALIGN(virt + 1, PMD_SIZE), end);
-
-                if ((pmd_val(*pmd) & PMD_TYPE_MASK) != PMD_TYPE_TABLE) {
-                        //printk("Not a pagetable\n");
-                        virt = pmd_end;
-                        continue;
-                }
-
-                while (virt < pmd_end) 
-                {
-                        pte = pte_offset_kernel(pmd, virt);
-                        if(flags == TIMA_SET_PTE_RO)
-                        {
-                                /*Make pages readonly*/
-                                ptep_set_wrprotect(current->mm, virt,pte);
-                        }
-                        if(flags == TIMA_SET_PTE_NX)
-                        { 
-                                /*Make pages Non Executable*/
-                                ptep_set_nxprotect(current->mm, virt,pte);
-                        }
-                        virt += PAGE_SIZE;
-                }
-        }
-
-        flush_tlb_kernel_range(start, end);
-        
-             }
-#endif
+#ifdef	TIMA_LKM_SET_PAGE_ATTRIB
 void tima_mod_send_smc_instruction(unsigned int    *vatext,unsigned int    *vadata,unsigned int text_count,unsigned int data_count)
 {
         unsigned long   cmd_id = TIMA_PAC_CMD_ID;
@@ -3310,15 +3259,10 @@ void tima_mod_page_change_access(struct module *mod)
                 text_count = 1;
         if(!data_count)
                 data_count = 1;
-#ifdef  TIMA_KERNEL_L1_MANAGE
+        
         /* Change permissive bits for core section*/
         tima_mod_send_smc_instruction(vatext,vadata,text_count,data_count);
-#else
- /* Change permissive bits for core section and making Code read only, Data Non Executable*/
-        tima_set_pte_val( (unsigned long)vatext,text_count,TIMA_SET_PTE_RO);
-        tima_set_pte_val( (unsigned long)vadata,data_count,TIMA_SET_PTE_NX); 
-#endif/*TIMA_KERNEL_L1_MANAGE*/
-
+ 
      /*Lets pickup init section */
         vatext      = mod->module_init;
         vadata      = (int *)((char *)(mod->module_init) + mod->init_ro_size);
@@ -3327,19 +3271,12 @@ void tima_mod_page_change_access(struct module *mod)
         text_count  = text_count / PAGE_SIZE;
         data_count  = data_count / PAGE_SIZE;
 
-#ifdef  TIMA_KERNEL_L1_MANAGE
+
         /* Change permissive bits for init section*/
         tima_mod_send_smc_instruction(vatext,vadata,text_count,data_count);
-#else
-/* Change permissive bits for init section and making Code read only,Data Non Executable*/
-        tima_set_pte_val( (unsigned long)vatext,text_count,TIMA_SET_PTE_RO);
-        tima_set_pte_val( (unsigned long)vadata,data_count,TIMA_SET_PTE_NX);
-#endif/*TIMA_KERNEL_L1_MANAGE*/
-
 }
 
-#endif/*CONFIG_TIMA_LKMAUTH_CODE_PROT*/
-
+#endif
 /* This is where the real work happens */
 SYSCALL_DEFINE3(init_module, void __user *, umod,
 		unsigned long, len, const char __user *, uargs)
@@ -3358,9 +3295,10 @@ SYSCALL_DEFINE3(init_module, void __user *, umod,
 
 	blocking_notifier_call_chain(&module_notify_list,
 			MODULE_STATE_COMING, mod);
-#ifdef	CONFIG_TIMA_LKMAUTH_CODE_PROT
+
+#ifdef	TIMA_LKM_SET_PAGE_ATTRIB
     tima_mod_page_change_access(mod);
-#endif/*CONFIG_TIMA_LKMAUTH_CODE_PROT*/
+#endif
 
 	/* Set RO and NX regions for core */
 	set_section_ro_nx(mod->module_core,

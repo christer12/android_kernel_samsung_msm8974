@@ -127,9 +127,6 @@ static int get_hdlc_size(struct io_device *iod, char *buf)
 	switch (iod->format) {
 	case IPC_FMT:
 		fmt_header = (struct fmt_hdr *)buf;
-		if (iod->mc->mdm_data->ipc_version == SIPC_VER_42)
-			return fmt_header->len & 0x3FFF;
-		else
 		return fmt_header->len;
 	case IPC_RAW:
 	case IPC_MULTI_RAW:
@@ -160,11 +157,6 @@ static void *get_header(struct io_device *iod, size_t count,
 		fmt_h = (struct fmt_hdr *)frame_header_buf;
 
 		fmt_h->len = count + sizeof(struct fmt_hdr);
-
-		if (iod->mc->mdm_data->ipc_version == SIPC_VER_42 && iod->id==1)		{
-			fmt_h->len = fmt_h->len | 0x4000;
-		}
-
 		fmt_h->control = 0;
 
 		return (void *)frame_header_buf;
@@ -471,159 +463,7 @@ static int rx_data_loopback(struct sk_buff *skb, struct io_device *iod,
 	skbpriv(skb_new)->iod = iod;
 	skbpriv(skb_new)->ld = ld;
 
-	ld->send(ld, iod, skb_new);
-	return 0;
-}
-
-
-static int rx_multi_fmt_frame(struct sk_buff *rx_skb)
-{
-	struct io_device *iod = skbpriv(rx_skb)->iod;
-	struct link_device *ld = skbpriv(rx_skb)->ld;
-	struct fmt_hdr *fh =
-		(struct fmt_hdr *)fragdata(iod, ld)->h_data.hdr;
-	unsigned int id = fh->control & 0x7F;
-	struct sk_buff *skb = iod->skb[id];
-	unsigned char *data = fragdata(iod, ld)->skb_recv->data;
-	unsigned int rcvd = fragdata(iod, ld)->skb_recv->len;
-
-	if (!skb) {
-		/* If there has been no multiple frame with this ID */
-		if (!(fh->control & 0x80)) {
-			/* It is a single frame because the "more" bit is 0. */
-#if 0
-			mif_err("\n<%s> Rx FMT frame (len %d)\n",
-				iod->name, rcvd);
-			print_sipc4_fmt_frame(data);
-			mif_err("\n");
-#endif
-			skb_queue_tail(&iod->sk_rx_q,
-					fragdata(iod, ld)->skb_recv);
-			mif_debug("wake up wq of %s\n", iod->name);
-			wake_up(&iod->wq);
-			return 0;
-		} else {
-			struct fmt_hdr *fh = NULL;
-			skb = rx_alloc_skb(MAX_MULTI_FMT_SIZE, iod, ld);
-			if (!skb) {
-				mif_err("<%d> alloc_skb fail\n",
-					__LINE__);
-				return -ENOMEM;
-			}
-			iod->skb[id] = skb;
-
-			fh = (struct fmt_hdr *)data;
-			mif_info("Start multi-frame (ID %d, len %d)",
-				id, fh->len);
-		}
-	}
-
-	/* Start multi-frame processing */
-
-	memcpy(skb_put(skb, rcvd), data, rcvd);
-	dev_kfree_skb_any(fragdata(iod, ld)->skb_recv);
-
-	if (fh->control & 0x80) {
-		/* The last frame has not arrived yet. */
-		mif_info("Receiving (ID %d, %d bytes)\n",
-			id, skb->len);
-	} else {
-		/* It is the last frame because the "more" bit is 0. */
-		mif_info("The Last (ID %d, %d bytes received)\n",
-			id, skb->len);
-#if 0
-		mif_err("\n<%s> Rx FMT frame (len %d)\n",
-			iod->name, skb->len);
-		print_sipc4_fmt_frame(skb->data);
-		mif_err("\n");
-#endif
-		skb_queue_tail(&iod->sk_rx_q, skb);
-		iod->skb[id] = NULL;
-		mif_info("wake up wq of %s\n", iod->name);
-		wake_up(&iod->wq);
-	}
-
-	return 0;
-}
-
-static int rx_multi_fmt_frame_sipc42(struct sk_buff *rx_skb)
-{
-	struct io_device *iod = skbpriv(rx_skb)->iod;
-	struct link_device *ld = skbpriv(rx_skb)->ld;
-	struct fmt_hdr *fh =
-		(struct fmt_hdr *)fragdata(iod, ld)->h_data.hdr;
-	unsigned int    id = fh->control & 0x7F;
-	struct sk_buff *skb = iod->skb[id];
-	unsigned char  *data = fragdata(iod, ld)->skb_recv->data;
-	unsigned int    rcvd = fragdata(iod, ld)->skb_recv->len;
-
-	u8 ch;
-	struct io_device *real_iod = NULL;
-
-	ch = (fh->len & 0xC000) >> 14;
-	fh->len = fh->len & 0x3FFF;
-	real_iod = ld->fmt_iods[ch];
-	if (!real_iod) {
-		mif_err("wrong channel %d\n", ch);
-		return -1;
-	}
-	skbpriv(rx_skb)->real_iod = real_iod;
-
-	if (!skb) {
-		/* If there has been no multiple frame with this ID */
-		if (!(fh->control & 0x80)) {
-			/* It is a single frame because the "more" bit is 0. */
-#if 0
-			mif_err("\n<%s> Rx FMT frame (len %d)\n",
-				iod->name, rcvd);
-			print_sipc4_fmt_frame(data);
-			mif_err("\n");
-#endif
-			skb_queue_tail(&real_iod->sk_rx_q,
-					fragdata(iod, ld)->skb_recv);
-			mif_debug("wake up wq of %s\n", iod->name);
-			wake_up(&real_iod->wq);
-			return 0;
-		} else {
-			struct fmt_hdr *fh = NULL;
-			skb = rx_alloc_skb(MAX_MULTI_FMT_SIZE, real_iod, ld);
-			if (!skb) {
-				mif_err("alloc_skb fail\n");
-				return -ENOMEM;
-			}
-			real_iod->skb[id] = skb;
-
-			fh = (struct fmt_hdr *)data;
-			mif_err("Start multi-frame (ID %d, len %d)",
-				id, fh->len);
-		}
-	}
-
-	/* Start multi-frame processing */
-
-	memcpy(skb_put(skb, rcvd), data, rcvd);
-	dev_kfree_skb_any(fragdata(real_iod, ld)->skb_recv);
-
-	if (fh->control & 0x80) {
-		/* The last frame has not arrived yet. */
-		mif_err("Receiving (ID %d, %d bytes)\n",
-			id, skb->len);
-	} else {
-		/* It is the last frame because the "more" bit is 0. */
-		mif_err("The Last (ID %d, %d bytes received)\n",
-			id, skb->len);
-#if 0
-		mif_err("\n<%s> Rx FMT frame (len %d)\n",
-			iod->name, skb->len);
-		print_sipc4_fmt_frame(skb->data);
-		mif_err("\n");
-#endif
-		skb_queue_tail(&real_iod->sk_rx_q, skb);
-		real_iod->skb[id] = NULL;
-		mif_info("wake up wq of %s\n", real_iod->name);
-		wake_up(&real_iod->wq);
-	}
-
+	ld->send(ld, iod, skb);
 	return 0;
 }
 
@@ -665,11 +505,6 @@ static int rx_iodev_skb(struct sk_buff *skb)
 		print_sipc4_fmt_frame(fragdata(iod, ld)->skb_recv->data);
 		mif_info("\n");
 #endif
-		if (iod->mc->mdm_data->ipc_version == SIPC_VER_42)
-			return rx_multi_fmt_frame_sipc42(skb);
-		else
-			return rx_multi_fmt_frame(skb);
-
 	case IPC_RFS:
 #ifdef CONFIG_LINK_DEVICE_SPI_RFS_DEBUG
 		rfs_header = (struct rfs_hdr *)fragdata(iod, ld)->h_data.hdr;
@@ -710,13 +545,6 @@ static int rx_hdlc_packet(struct io_device *iod, struct link_device *ld,
 		*/
 		goto data_check;
 	}
-
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
-	mif_info("\n<%s> Rx FMT frame (len %d)\n",
-		iod->name, rest);
-	mif_print_data((char*)data, rest);
-	mif_info("\n");
-#endif
 
 next_frame:
 	err = len = rx_hdlc_head_check(iod, ld, buf, rest);

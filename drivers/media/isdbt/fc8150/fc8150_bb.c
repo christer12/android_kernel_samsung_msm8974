@@ -599,6 +599,8 @@ int fc8150_probe(HANDLE hDevice)
 	u16 ver;
 	bbm_word_read(hDevice, BBM_CHIP_ID_L, &ver);
 
+	bbm_word_read(hDevice, BBM_CHIP_ID_L, &ver);
+	bbm_word_read(hDevice, BBM_CHIP_ID_L, &ver);
 	return (ver == 0x8150) ? BBM_OK : BBM_NOK;
 }
 

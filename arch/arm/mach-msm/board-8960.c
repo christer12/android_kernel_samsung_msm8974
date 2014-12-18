@@ -98,6 +98,7 @@
 #include "rpm_resources.h"
 #include <mach/mpm.h>
 #include "clock.h"
+#include "smd_private.h"
 #include "pm-boot.h"
 #include "msm_watchdog.h"
 #include "platsmp.h"
@@ -1307,7 +1308,6 @@ static struct msm_tspp_platform_data tspp_platform_data = {
 	.gpios = tsif_gpios,
 	.tsif_pclk = "tsif_pclk",
 	.tsif_ref_clk = "tsif_ref_clk",
-	.tsif_vreg_present = 0,
 };
 
 static struct platform_device msm_device_tspp = {

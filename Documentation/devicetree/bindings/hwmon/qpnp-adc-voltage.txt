@@ -20,9 +20,6 @@ Required properties:
 Channel nodes
 NOTE: Atleast one Channel node is required.
 
-Optional property:
-- qcom,vadc-poll-eoc: Use polling to check the End of Conversion status.
-
 Required properties:
 - label : Channel name used for sysfs entry.
 - reg : AMUX channel number.

@@ -25,9 +25,32 @@ void convert_acc_data(s16 *iValue)
 
 void report_acc_data(struct ssp_data *data, struct sensor_value *accdata)
 {
-	data->buf[ACCELEROMETER_SENSOR].x = accdata->x;
-	data->buf[ACCELEROMETER_SENSOR].y = accdata->y;
-	data->buf[ACCELEROMETER_SENSOR].z = accdata->z;
+	convert_acc_data(&accdata->x);
+	convert_acc_data(&accdata->y);
+	convert_acc_data(&accdata->z);
+
+	data->buf[ACCELEROMETER_SENSOR].x = accdata->x - data->accelcal.x;
+	data->buf[ACCELEROMETER_SENSOR].y = accdata->y - data->accelcal.y;
+	data->buf[ACCELEROMETER_SENSOR].z = accdata->z - data->accelcal.z;
+
+	if (!(data->buf[ACCELEROMETER_SENSOR].x >> 15 == accdata->x >> 15) &&\
+		!(data->accelcal.x >> 15 == accdata->x >> 15)) {
+		pr_debug("[SSP] : ACCEL X is overflowed!!!\n");
+		data->buf[ACCELEROMETER_SENSOR].x =
+			(data->buf[ACCELEROMETER_SENSOR].x > 0 ? MIN_ACCEL_2G : MAX_ACCEL_2G);
+	}
+	if (!(data->buf[ACCELEROMETER_SENSOR].y >> 15 == accdata->y >> 15) &&\
+		!(data->accelcal.y >> 15 == accdata->y >> 15)) {
+		pr_debug("[SSP] : ACCEL Y is overflowed!!!\n");
+		data->buf[ACCELEROMETER_SENSOR].y =
+			(data->buf[ACCELEROMETER_SENSOR].y > 0 ? MIN_ACCEL_2G : MAX_ACCEL_2G);
+	}
+	if (!(data->buf[ACCELEROMETER_SENSOR].z >> 15 == accdata->z >> 15) &&\
+		!(data->accelcal.z >> 15 == accdata->z >> 15)) {
+		pr_debug("[SSP] : ACCEL Z is overflowed!!!\n");
+		data->buf[ACCELEROMETER_SENSOR].z =
+			(data->buf[ACCELEROMETER_SENSOR].z > 0 ? MIN_ACCEL_2G : MAX_ACCEL_2G);
+	}
 
 	input_report_rel(data->acc_input_dev, REL_X,
 		data->buf[ACCELEROMETER_SENSOR].x);
@@ -41,9 +64,28 @@ void report_acc_data(struct ssp_data *data, struct sensor_value *accdata)
 void report_gyro_data(struct ssp_data *data, struct sensor_value *gyrodata)
 {
 	long lTemp[3] = {0,};
-	data->buf[GYROSCOPE_SENSOR].x = gyrodata->x;
-	data->buf[GYROSCOPE_SENSOR].y = gyrodata->y;
-	data->buf[GYROSCOPE_SENSOR].z = gyrodata->z;
+	data->buf[GYROSCOPE_SENSOR].x = gyrodata->x - data->gyrocal.x;
+	data->buf[GYROSCOPE_SENSOR].y = gyrodata->y - data->gyrocal.y;
+	data->buf[GYROSCOPE_SENSOR].z = gyrodata->z - data->gyrocal.z;
+
+	if (!(data->buf[GYROSCOPE_SENSOR].x >> 15 == gyrodata->x >> 15) &&\
+		!(data->gyrocal.x >> 15 == gyrodata->x >> 15)) {
+		pr_debug("[SSP] : GYRO X is overflowed!!!\n");
+		data->buf[GYROSCOPE_SENSOR].x =
+			(data->buf[GYROSCOPE_SENSOR].x >= 0 ? MIN_GYRO : MAX_GYRO);
+	}
+	if (!(data->buf[GYROSCOPE_SENSOR].y >> 15 == gyrodata->y >> 15) &&\
+		!(data->gyrocal.y >> 15 == gyrodata->y >> 15)) {
+		pr_debug("[SSP] : GYRO Y is overflowed!!!\n");
+		data->buf[GYROSCOPE_SENSOR].y =
+			(data->buf[GYROSCOPE_SENSOR].y >= 0 ? MIN_GYRO : MAX_GYRO);
+	}
+	if (!(data->buf[GYROSCOPE_SENSOR].z >> 15 == gyrodata->z >> 15) &&\
+		!(data->gyrocal.z >> 15 == gyrodata->z >> 15)) {
+		pr_debug("[SSP] : GYRO Z is overflowed!!!\n");
+		data->buf[GYROSCOPE_SENSOR].z =
+			(data->buf[GYROSCOPE_SENSOR].z >= 0 ? MIN_GYRO : MAX_GYRO);
+	}
 
 	if (data->uGyroDps == GYROSCOPE_DPS500) {
 		lTemp[0] = (long)data->buf[GYROSCOPE_SENSOR].x;
@@ -71,129 +113,32 @@ void report_gyro_data(struct ssp_data *data, struct sensor_value *gyrodata)
 
 void report_mag_data(struct ssp_data *data, struct sensor_value *magdata)
 {
-	data->buf[GEOMAGNETIC_SENSOR].cal_x = magdata->cal_x;
-	data->buf[GEOMAGNETIC_SENSOR].cal_y = magdata->cal_y;
-	data->buf[GEOMAGNETIC_SENSOR].cal_z = magdata->cal_z;
-	data->buf[GEOMAGNETIC_SENSOR].accuracy = magdata->accuracy;
-
+	data->buf[GEOMAGNETIC_SENSOR].x = magdata->x;
+	data->buf[GEOMAGNETIC_SENSOR].y = magdata->y;
+	data->buf[GEOMAGNETIC_SENSOR].z = magdata->z;
 
 	input_report_rel(data->mag_input_dev, REL_RX,
-		data->buf[GEOMAGNETIC_SENSOR].cal_x);
+		data->buf[GEOMAGNETIC_SENSOR].x);
 	input_report_rel(data->mag_input_dev, REL_RY,
-		data->buf[GEOMAGNETIC_SENSOR].cal_y);
+		data->buf[GEOMAGNETIC_SENSOR].y);
 	input_report_rel(data->mag_input_dev, REL_RZ,
-		data->buf[GEOMAGNETIC_SENSOR].cal_z);
-	input_report_rel(data->mag_input_dev, REL_HWHEEL,
-		data->buf[GEOMAGNETIC_SENSOR].accuracy + 1);
+		data->buf[GEOMAGNETIC_SENSOR].z);
 	input_sync(data->mag_input_dev);
-}
-
-void report_uncalib_mag_data(struct ssp_data *data, struct sensor_value *magdata)
-{
-	data->buf[GEOMAGNETIC_UNCALIB_SENSOR].uncal_x = magdata->uncal_x;
-	data->buf[GEOMAGNETIC_UNCALIB_SENSOR].uncal_y = magdata->uncal_y;
-	data->buf[GEOMAGNETIC_UNCALIB_SENSOR].uncal_z = magdata->uncal_z;
-	data->buf[GEOMAGNETIC_UNCALIB_SENSOR].offset_x = magdata->offset_x;
-	data->buf[GEOMAGNETIC_UNCALIB_SENSOR].offset_y = magdata->offset_y;
-	data->buf[GEOMAGNETIC_UNCALIB_SENSOR].offset_z = magdata->offset_z;
-
-	input_report_rel(data->uncalib_mag_input_dev, REL_X,
-		data->buf[GEOMAGNETIC_UNCALIB_SENSOR].uncal_x);
-	input_report_rel(data->uncalib_mag_input_dev, REL_Y,
-		data->buf[GEOMAGNETIC_UNCALIB_SENSOR].uncal_y);
-	input_report_rel(data->uncalib_mag_input_dev, REL_Z,
-		data->buf[GEOMAGNETIC_UNCALIB_SENSOR].uncal_z);
-	input_report_rel(data->uncalib_mag_input_dev, REL_RX,
-		data->buf[GEOMAGNETIC_UNCALIB_SENSOR].offset_x);
-	input_report_rel(data->uncalib_mag_input_dev, REL_RY,
-		data->buf[GEOMAGNETIC_UNCALIB_SENSOR].offset_y);
-	input_report_rel(data->uncalib_mag_input_dev, REL_RZ,
-		data->buf[GEOMAGNETIC_UNCALIB_SENSOR].offset_z);
-	input_sync(data->uncalib_mag_input_dev);
-}
-
-void report_uncalib_gyro_data(struct ssp_data *data, struct sensor_value *gyrodata)
-{
-	data->buf[GYRO_UNCALIB_SENSOR].uncal_x = gyrodata->uncal_x;
-	data->buf[GYRO_UNCALIB_SENSOR].uncal_y = gyrodata->uncal_y;
-	data->buf[GYRO_UNCALIB_SENSOR].uncal_z = gyrodata->uncal_z;
-	data->buf[GYRO_UNCALIB_SENSOR].offset_x = gyrodata->offset_x;
-	data->buf[GYRO_UNCALIB_SENSOR].offset_y = gyrodata->offset_y;
-	data->buf[GYRO_UNCALIB_SENSOR].offset_z = gyrodata->offset_z;
-
-	input_report_rel(data->uncalib_gyro_input_dev, REL_X,
-		data->buf[GYRO_UNCALIB_SENSOR].uncal_x);
-	input_report_rel(data->uncalib_gyro_input_dev, REL_Y,
-		data->buf[GYRO_UNCALIB_SENSOR].uncal_y);
-	input_report_rel(data->uncalib_gyro_input_dev, REL_Z,
-		data->buf[GYRO_UNCALIB_SENSOR].uncal_z);
-	input_report_rel(data->uncalib_gyro_input_dev, REL_RX,
-		data->buf[GYRO_UNCALIB_SENSOR].offset_x);
-	input_report_rel(data->uncalib_gyro_input_dev, REL_RY,
-		data->buf[GYRO_UNCALIB_SENSOR].offset_y);
-	input_report_rel(data->uncalib_gyro_input_dev, REL_RZ,
-		data->buf[GYRO_UNCALIB_SENSOR].offset_z);
-	input_sync(data->uncalib_gyro_input_dev);
-}
-
-void report_sig_motion_data(struct ssp_data *data,
-	struct sensor_value *sig_motion_data)
-{
-	data->buf[SIG_MOTION_SENSOR].sig_motion = sig_motion_data->sig_motion;
-
-	input_report_rel(data->sig_motion_input_dev, REL_MISC,
-		data->buf[SIG_MOTION_SENSOR].sig_motion);
-	input_sync(data->sig_motion_input_dev);
-}
-
-void report_rot_data(struct ssp_data *data, struct sensor_value *magdata)
-{
-	data->buf[ROTATION_VECTOR].quat_a = magdata->quat_a;
-	data->buf[ROTATION_VECTOR].quat_b = magdata->quat_b;
-	data->buf[ROTATION_VECTOR].quat_c = magdata->quat_c;
-	data->buf[ROTATION_VECTOR].quat_d = magdata->quat_d;
-
-
-	input_report_rel(data->rot_input_dev, REL_RX,
-		data->buf[ROTATION_VECTOR].quat_a);
-	input_report_rel(data->rot_input_dev, REL_RY,
-		data->buf[ROTATION_VECTOR].quat_b);
-	input_report_rel(data->rot_input_dev, REL_RZ,
-		data->buf[ROTATION_VECTOR].quat_c);
-	input_report_rel(data->rot_input_dev, REL_HWHEEL,
-		data->buf[ROTATION_VECTOR].quat_d);
-	input_report_rel(data->rot_input_dev, REL_DIAL,
-		data->buf[ROTATION_VECTOR].acc_rot + 1);
-	input_sync(data->rot_input_dev);
-}
-
-void report_game_rot_data(struct ssp_data *data, struct sensor_value *magdata)
-{
-	data->buf[GAME_ROTATION_VECTOR].quat_a = magdata->quat_a;
-	data->buf[GAME_ROTATION_VECTOR].quat_b = magdata->quat_b;
-	data->buf[GAME_ROTATION_VECTOR].quat_c = magdata->quat_c;
-	data->buf[GAME_ROTATION_VECTOR].quat_d = magdata->quat_d;
-
-
-	input_report_rel(data->game_rot_input_dev, REL_RX,
-		data->buf[GAME_ROTATION_VECTOR].quat_a);
-	input_report_rel(data->game_rot_input_dev, REL_RY,
-		data->buf[GAME_ROTATION_VECTOR].quat_b);
-	input_report_rel(data->game_rot_input_dev, REL_RZ,
-		data->buf[GAME_ROTATION_VECTOR].quat_c);
-	input_report_rel(data->game_rot_input_dev, REL_HWHEEL,
-		data->buf[GAME_ROTATION_VECTOR].quat_d);
-	input_report_rel(data->game_rot_input_dev, REL_DIAL,
-		data->buf[GAME_ROTATION_VECTOR].acc_rot + 1);
-	input_sync(data->game_rot_input_dev);
 }
 
 void report_gesture_data(struct ssp_data *data, struct sensor_value *gesdata)
 {
-	int i = 0;
-	for (i=0; i<19; i++) {
-		data->buf[GESTURE_SENSOR].data[i] = gesdata->data[i];
-	}
+	data->buf[GESTURE_SENSOR].data[0] = gesdata->data[0]; //A0 
+	data->buf[GESTURE_SENSOR].data[1] = gesdata->data[1]; //B0
+	data->buf[GESTURE_SENSOR].data[2] = gesdata->data[2]; //C0
+	data->buf[GESTURE_SENSOR].data[3] = gesdata->data[3]; //D0
+	data->buf[GESTURE_SENSOR].data[4] = gesdata->data[4]; //A1
+	data->buf[GESTURE_SENSOR].data[5] = gesdata->data[5]; //B1
+	data->buf[GESTURE_SENSOR].data[6] = gesdata->data[6]; //C1
+	data->buf[GESTURE_SENSOR].data[7] = gesdata->data[7]; //D1
+	
+	data->buf[GESTURE_SENSOR].data[16] = gesdata->data[16]; //dummy
+	data->buf[GESTURE_SENSOR].data[17] = gesdata->data[17]; //count
 
 	input_report_abs(data->gesture_input_dev,
 		ABS_X, data->buf[GESTURE_SENSOR].data[0]);
@@ -212,27 +157,9 @@ void report_gesture_data(struct ssp_data *data, struct sensor_value *gesdata)
 	input_report_abs(data->gesture_input_dev,
 		ABS_RUDDER, data->buf[GESTURE_SENSOR].data[7]);
 	input_report_abs(data->gesture_input_dev,
-		ABS_WHEEL, data->buf[GESTURE_SENSOR].data[8]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_GAS, data->buf[GESTURE_SENSOR].data[9]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_BRAKE, data->buf[GESTURE_SENSOR].data[10]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_HAT0X, data->buf[GESTURE_SENSOR].data[11]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_HAT0Y, data->buf[GESTURE_SENSOR].data[12]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_HAT1X, data->buf[GESTURE_SENSOR].data[13]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_HAT1Y, data->buf[GESTURE_SENSOR].data[14]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_HAT2X, data->buf[GESTURE_SENSOR].data[15]);
-	input_report_abs(data->gesture_input_dev,
 		ABS_HAT2Y, data->buf[GESTURE_SENSOR].data[16]);
 	input_report_abs(data->gesture_input_dev,
 		ABS_HAT3X, data->buf[GESTURE_SENSOR].data[17]);
-	input_report_abs(data->gesture_input_dev,
-		ABS_HAT3Y, data->buf[GESTURE_SENSOR].data[18]);
 	
 	input_sync(data->gesture_input_dev);
 }
@@ -258,7 +185,7 @@ void report_light_data(struct ssp_data *data, struct sensor_value *lightdata)
 	data->buf[LIGHT_SENSOR].g = lightdata->g;
 	data->buf[LIGHT_SENSOR].b = lightdata->b;
 	data->buf[LIGHT_SENSOR].w = lightdata->w;
-#if defined (CONFIG_SENSORS_SSP_MAX88921)
+#ifdef CONFIG_SENSORS_SSP_MAX88921
 	data->buf[LIGHT_SENSOR].ir_cmp = lightdata->ir_cmp;
 	data->buf[LIGHT_SENSOR].amb_pga = lightdata->amb_pga;
 #endif
@@ -271,7 +198,7 @@ void report_light_data(struct ssp_data *data, struct sensor_value *lightdata)
 		data->buf[LIGHT_SENSOR].b + 1);
 	input_report_rel(data->light_input_dev, REL_MISC,
 		data->buf[LIGHT_SENSOR].w + 1);
-#if defined (CONFIG_SENSORS_SSP_MAX88921)
+#ifdef CONFIG_SENSORS_SSP_MAX88921
 	input_report_rel(data->light_input_dev, REL_RY,
 		data->buf[LIGHT_SENSOR].ir_cmp + 1);
 	input_report_rel(data->light_input_dev, REL_RZ,
@@ -300,9 +227,9 @@ void report_prox_raw_data(struct ssp_data *data,
 {
 	if (data->uFactoryProxAvg[0]++ >= PROX_AVG_READ_NUM) {
 		data->uFactoryProxAvg[2] /= PROX_AVG_READ_NUM;
-		data->buf[PROXIMITY_RAW].prox[1] = (u16)data->uFactoryProxAvg[1];
-		data->buf[PROXIMITY_RAW].prox[2] = (u16)data->uFactoryProxAvg[2];
-		data->buf[PROXIMITY_RAW].prox[3] = (u16)data->uFactoryProxAvg[3];
+		data->buf[PROXIMITY_RAW].prox[1] = (u8)data->uFactoryProxAvg[1];
+		data->buf[PROXIMITY_RAW].prox[2] = (u8)data->uFactoryProxAvg[2];
+		data->buf[PROXIMITY_RAW].prox[3] = (u8)data->uFactoryProxAvg[3];
 
 		data->uFactoryProxAvg[0] = 0;
 		data->uFactoryProxAvg[1] = 0;
@@ -331,16 +258,6 @@ void report_geomagnetic_raw_data(struct ssp_data *data,
 	data->buf[GEOMAGNETIC_RAW].z = magrawdata->z;
 }
 
-void report_step_det_data(struct ssp_data *data,
-	struct sensor_value *sig_motion_data)
-{
-	data->buf[STEP_DETECTOR].step_det = sig_motion_data->step_det;
-
-	input_report_rel(data->step_det_input_dev, REL_MISC,
-		data->buf[STEP_DETECTOR].step_det + 1);
-	input_sync(data->step_det_input_dev);
-}
-
 void report_temp_humidity_data(struct ssp_data *data,
 	struct sensor_value *temp_humi_data)
 {
@@ -360,13 +277,6 @@ void report_temp_humidity_data(struct ssp_data *data,
 	input_sync(data->temp_humi_input_dev);
 	if (data->buf[TEMPERATURE_HUMIDITY_SENSOR].data[2])
 		wake_lock_timeout(&data->ssp_wake_lock, 2 * HZ);
-}
-
-void report_bulk_comp_data(struct ssp_data *data)
-{
-	input_report_rel(data->temp_humi_input_dev, REL_WHEEL,
-		data->bulk_buffer->len);
-	input_sync(data->temp_humi_input_dev);
 }
 
 int initialize_event_symlink(struct ssp_data *data)
@@ -424,71 +334,11 @@ int initialize_event_symlink(struct ssp_data *data)
 	if (iRet < 0)
 		goto iRet_mag_sysfs_create_link;
 
-	iRet = sysfs_create_link(&data->sen_dev->kobj,
-		&data->uncalib_mag_input_dev->dev.kobj,
-		data->uncalib_mag_input_dev->name);
-	if (iRet < 0)
-		goto iRet_uncalib_mag_sysfs_create_link;
-
-	iRet = sysfs_create_link(&data->sen_dev->kobj,
-		&data->rot_input_dev->dev.kobj,
-		data->rot_input_dev->name);
-	if (iRet < 0)
-		goto iRet_rot_sysfs_create_link;
-
-	iRet = sysfs_create_link(&data->sen_dev->kobj,
-		&data->game_rot_input_dev->dev.kobj,
-		data->game_rot_input_dev->name);
-	if (iRet < 0)
-		goto iRet_game_rot_sysfs_create_link;
-
-	iRet = sysfs_create_link(&data->sen_dev->kobj,
-		&data->step_det_input_dev->dev.kobj,
-		data->step_det_input_dev->name);
-	if (iRet < 0)
-		goto iRet_step_det_sysfs_create_link;
-
-	iRet = sysfs_create_link(&data->sen_dev->kobj,
-		&data->sig_motion_input_dev->dev.kobj,
-		data->sig_motion_input_dev->name);
-	if (iRet < 0)
-		goto iRet_sig_motion_sysfs_create_link;
-
-	iRet = sysfs_create_link(&data->sen_dev->kobj,
-		&data->uncalib_gyro_input_dev->dev.kobj,
-		data->uncalib_gyro_input_dev->name);
-	if (iRet < 0)
-		goto iRet_uncalib_gyro_sysfs_create_link;
-
 	return SUCCESS;
-iRet_uncalib_gyro_sysfs_create_link:
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->sig_motion_input_dev->dev.kobj,
-		data->sig_motion_input_dev->name);
-iRet_sig_motion_sysfs_create_link:
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->step_det_input_dev->dev.kobj,
-		data->step_det_input_dev->name);
-iRet_step_det_sysfs_create_link:
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->game_rot_input_dev->dev.kobj,
-		data->game_rot_input_dev->name);
-iRet_game_rot_sysfs_create_link:
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->rot_input_dev->dev.kobj,
-		data->rot_input_dev->name);
-iRet_rot_sysfs_create_link:
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->uncalib_mag_input_dev->dev.kobj,
-		data->uncalib_mag_input_dev->name);
-iRet_uncalib_mag_sysfs_create_link:
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->mag_input_dev->dev.kobj,
-		data->mag_input_dev->name);
 iRet_mag_sysfs_create_link:
 	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->temp_humi_input_dev->dev.kobj,
-		data->temp_humi_input_dev->name);
+		&data->prox_input_dev->dev.kobj,
+		data->prox_input_dev->name);
 iRet_temp_humi_sysfs_create_link:
 	sysfs_delete_link(&data->sen_dev->kobj,
 		&data->prox_input_dev->dev.kobj,
@@ -545,24 +395,6 @@ void remove_event_symlink(struct ssp_data *data)
 	sysfs_delete_link(&data->sen_dev->kobj,
 		&data->mag_input_dev->dev.kobj,
 		data->mag_input_dev->name);
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->uncalib_mag_input_dev->dev.kobj,
-		data->uncalib_mag_input_dev->name);
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->rot_input_dev->dev.kobj,
-		data->rot_input_dev->name);
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->game_rot_input_dev->dev.kobj,
-		data->game_rot_input_dev->name);
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->step_det_input_dev->dev.kobj,
-		data->step_det_input_dev->name);
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->sig_motion_input_dev->dev.kobj,
-		data->sig_motion_input_dev->name);
-	sysfs_delete_link(&data->sen_dev->kobj,
-		&data->uncalib_gyro_input_dev->dev.kobj,
-		data->uncalib_gyro_input_dev->name);
 }
 
 int initialize_input_dev(struct ssp_data *data)
@@ -570,9 +402,7 @@ int initialize_input_dev(struct ssp_data *data)
 	int iRet = 0;
 	struct input_dev *acc_input_dev, *gyro_input_dev, *pressure_input_dev,
 		*light_input_dev, *prox_input_dev, *temp_humi_input_dev,
-		*mag_input_dev, *gesture_input_dev, *uncalib_mag_input_dev,
-		*rot_input_dev, *game_rot_input_dev, *step_det_input_dev,
-		*sig_motion_input_dev, *uncalib_gyro_input_dev;
+		*mag_input_dev, *gesture_input_dev;
 
 	/* allocate input_device */
 	acc_input_dev = input_allocate_device();
@@ -607,30 +437,6 @@ int initialize_input_dev(struct ssp_data *data)
 	if (mag_input_dev == NULL)
 		goto iRet_mag_input_free_device;
 
-	uncalib_mag_input_dev = input_allocate_device();
-	if (uncalib_mag_input_dev == NULL)
-		goto iRet_uncalib_mag_input_free_device;
-
-	rot_input_dev = input_allocate_device();
-	if (rot_input_dev == NULL)
-		goto iRet_rot_input_free_device;
-
-	game_rot_input_dev = input_allocate_device();
-	if (game_rot_input_dev == NULL)
-		goto iRet_game_rot_input_free_device;
-
-	step_det_input_dev = input_allocate_device();
-	if (step_det_input_dev == NULL)
-		goto iRet_step_det_input_free_device;
-
-	sig_motion_input_dev = input_allocate_device();
-	if (sig_motion_input_dev == NULL)
-		goto iRet_sig_motion_input_free_device;
-
-	uncalib_gyro_input_dev = input_allocate_device();
-	if (uncalib_gyro_input_dev == NULL)
-		goto iRet_uncalib_gyro_input_free_device;
-
 	input_set_drvdata(acc_input_dev, data);
 	input_set_drvdata(gyro_input_dev, data);
 	input_set_drvdata(pressure_input_dev, data);
@@ -639,12 +445,6 @@ int initialize_input_dev(struct ssp_data *data)
 	input_set_drvdata(prox_input_dev, data);
 	input_set_drvdata(temp_humi_input_dev, data);
 	input_set_drvdata(mag_input_dev, data);
-	input_set_drvdata(uncalib_mag_input_dev, data);
-	input_set_drvdata(rot_input_dev, data);
-	input_set_drvdata(game_rot_input_dev, data);
-	input_set_drvdata(step_det_input_dev, data);
-	input_set_drvdata(sig_motion_input_dev, data);
-	input_set_drvdata(uncalib_gyro_input_dev, data);
 
 	acc_input_dev->name = "accelerometer_sensor";
 	gyro_input_dev->name = "gyro_sensor";
@@ -654,12 +454,6 @@ int initialize_input_dev(struct ssp_data *data)
 	prox_input_dev->name = "proximity_sensor";
 	temp_humi_input_dev->name = "temp_humidity_sensor";
 	mag_input_dev->name = "geomagnetic_sensor";
-	uncalib_mag_input_dev->name = "uncalibrated_geomagnetic_sensor";
-	rot_input_dev->name = "rotation_vector_sensor";
-	game_rot_input_dev->name = "game_rotation_vector_sensor";
-	step_det_input_dev->name = "step_det_sensor";
-	sig_motion_input_dev->name = "sig_motion_sensor";
-	uncalib_gyro_input_dev->name = "uncalibrated_gyro_sensor";
 
 	input_set_capability(acc_input_dev, EV_REL, REL_X);
 	input_set_capability(acc_input_dev, EV_REL, REL_Y);
@@ -689,36 +483,18 @@ int initialize_input_dev(struct ssp_data *data)
 	input_set_abs_params(gesture_input_dev, ABS_THROTTLE, 0, 1024, 0, 0);
 	input_set_capability(gesture_input_dev, EV_ABS, ABS_RUDDER);
 	input_set_abs_params(gesture_input_dev, ABS_RUDDER, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_WHEEL);
-	input_set_abs_params(gesture_input_dev, ABS_WHEEL, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_GAS);
-	input_set_abs_params(gesture_input_dev, ABS_GAS, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_BRAKE);
-	input_set_abs_params(gesture_input_dev, ABS_BRAKE, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT0X);
-	input_set_abs_params(gesture_input_dev, ABS_HAT0X, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT0Y);
-	input_set_abs_params(gesture_input_dev, ABS_HAT0Y, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT1X);
-	input_set_abs_params(gesture_input_dev, ABS_HAT1X, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT1Y);
-	input_set_abs_params(gesture_input_dev, ABS_HAT1Y, 0, 1024, 0, 0);
-
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT2X);
-	input_set_abs_params(gesture_input_dev, ABS_HAT2X, 0, 1024, 0, 0);
 	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT2Y);
 	input_set_abs_params(gesture_input_dev, ABS_HAT2Y, 0, 1024, 0, 0);
 	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT3X);
 	input_set_abs_params(gesture_input_dev, ABS_HAT3X, 0, 1024, 0, 0);
-	input_set_capability(gesture_input_dev, EV_ABS, ABS_HAT3Y);
-	input_set_abs_params(gesture_input_dev, ABS_HAT3Y, 0, 1024, 0, 0);
+
 
 
 	input_set_capability(light_input_dev, EV_REL, REL_HWHEEL);
 	input_set_capability(light_input_dev, EV_REL, REL_DIAL);
 	input_set_capability(light_input_dev, EV_REL, REL_WHEEL);
 	input_set_capability(light_input_dev, EV_REL, REL_MISC);
-#if defined (CONFIG_SENSORS_SSP_MAX88921)
+#ifdef CONFIG_SENSORS_SSP_MAX88921
 	input_set_capability(light_input_dev, EV_REL, REL_RY);
 	input_set_capability(light_input_dev, EV_REL, REL_RZ);
 #endif
@@ -734,37 +510,6 @@ int initialize_input_dev(struct ssp_data *data)
 	input_set_capability(mag_input_dev, EV_REL, REL_RX);
 	input_set_capability(mag_input_dev, EV_REL, REL_RY);
 	input_set_capability(mag_input_dev, EV_REL, REL_RZ);
-	input_set_capability(mag_input_dev, EV_REL, REL_HWHEEL);
-
-	input_set_capability(uncalib_mag_input_dev, EV_REL, REL_X);
-	input_set_capability(uncalib_mag_input_dev, EV_REL, REL_Y);
-	input_set_capability(uncalib_mag_input_dev, EV_REL, REL_Z);
-	input_set_capability(uncalib_mag_input_dev, EV_REL, REL_RX);
-	input_set_capability(uncalib_mag_input_dev, EV_REL, REL_RY);
-	input_set_capability(uncalib_mag_input_dev, EV_REL, REL_RZ);
-
-	input_set_capability(rot_input_dev, EV_REL, REL_RX);
-	input_set_capability(rot_input_dev, EV_REL, REL_RY);
-	input_set_capability(rot_input_dev, EV_REL, REL_RZ);
-	input_set_capability(rot_input_dev, EV_REL, REL_HWHEEL);
-	input_set_capability(rot_input_dev, EV_REL, REL_DIAL);
-
-	input_set_capability(game_rot_input_dev, EV_REL, REL_RX);
-	input_set_capability(game_rot_input_dev, EV_REL, REL_RY);
-	input_set_capability(game_rot_input_dev, EV_REL, REL_RZ);
-	input_set_capability(game_rot_input_dev, EV_REL, REL_HWHEEL);
-	input_set_capability(game_rot_input_dev, EV_REL, REL_DIAL);
-
-	input_set_capability(step_det_input_dev, EV_REL, REL_MISC);
-
-	input_set_capability(sig_motion_input_dev, EV_REL, REL_MISC);
-
-	input_set_capability(uncalib_gyro_input_dev, EV_REL, REL_X);
-	input_set_capability(uncalib_gyro_input_dev, EV_REL, REL_Y);
-	input_set_capability(uncalib_gyro_input_dev, EV_REL, REL_Z);
-	input_set_capability(uncalib_gyro_input_dev, EV_REL, REL_RX);
-	input_set_capability(uncalib_gyro_input_dev, EV_REL, REL_RY);
-	input_set_capability(uncalib_gyro_input_dev, EV_REL, REL_RZ);
 
 	/* register input_device */
 	iRet = input_register_device(acc_input_dev);
@@ -780,12 +525,6 @@ int initialize_input_dev(struct ssp_data *data)
 		input_free_device(prox_input_dev);
 		input_free_device(temp_humi_input_dev);
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_gyro_input_unreg_device;
 	}
 
@@ -797,12 +536,6 @@ int initialize_input_dev(struct ssp_data *data)
 		input_free_device(prox_input_dev);
 		input_free_device(temp_humi_input_dev);
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_pressure_input_unreg_device;
 	}
 
@@ -813,12 +546,6 @@ int initialize_input_dev(struct ssp_data *data)
 		input_free_device(prox_input_dev);
 		input_free_device(temp_humi_input_dev);
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_gesture_input_unreg_device;
 	}
 
@@ -828,12 +555,6 @@ int initialize_input_dev(struct ssp_data *data)
 		input_free_device(prox_input_dev);
 		input_free_device(temp_humi_input_dev);
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_light_input_unreg_device;
 	}
 
@@ -842,12 +563,6 @@ int initialize_input_dev(struct ssp_data *data)
 		input_free_device(prox_input_dev);
 		input_free_device(temp_humi_input_dev);
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_proximity_input_unreg_device;
 	}
 
@@ -855,78 +570,14 @@ int initialize_input_dev(struct ssp_data *data)
 	if (iRet < 0) {
 		input_free_device(temp_humi_input_dev);
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_tmep_humi_input_unreg_device;
 	}
 
 	iRet = input_register_device(mag_input_dev);
 	if (iRet < 0) {
 		input_free_device(mag_input_dev);
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
 		goto iRet_mag_input_unreg_device;
 	}
-
-	iRet = input_register_device(uncalib_mag_input_dev);
-	if (iRet < 0) {
-		input_free_device(uncalib_mag_input_dev);
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
-		goto iRet_uncalib_mag_input_unreg_device;
-	}
-
-	iRet = input_register_device(rot_input_dev);
-	if (iRet < 0) {
-		input_free_device(rot_input_dev);
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
-		goto iRet_rot_input_unreg_device;
-	}
-
-	iRet = input_register_device(game_rot_input_dev);
-	if (iRet < 0) {
-		input_free_device(game_rot_input_dev);
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
-		goto iRet_game_rot_input_unreg_device;
-	}
-
-	iRet = input_register_device(step_det_input_dev);
-	if (iRet < 0) {
-		input_free_device(step_det_input_dev);
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
-		goto iRet_step_det_motion_input_unreg_device;
-	}
-
-	iRet = input_register_device(sig_motion_input_dev);
-	if (iRet < 0) {
-		input_free_device(sig_motion_input_dev);
-		input_free_device(uncalib_gyro_input_dev);
-		goto iRet_sig_motion_input_unreg_device;
-	}
-
-	iRet = input_register_device(uncalib_gyro_input_dev);
-	if (iRet < 0) {
-		input_free_device(uncalib_gyro_input_dev);
-		goto iRet_uncalib_gyro_input_unreg_device;
-	}
-
 
 	data->acc_input_dev = acc_input_dev;
 	data->gyro_input_dev = gyro_input_dev;
@@ -936,26 +587,9 @@ int initialize_input_dev(struct ssp_data *data)
 	data->prox_input_dev = prox_input_dev;
 	data->temp_humi_input_dev = temp_humi_input_dev;
 	data->mag_input_dev = mag_input_dev;
-	data->uncalib_mag_input_dev = uncalib_mag_input_dev;
-	data->rot_input_dev = rot_input_dev;
-	data->game_rot_input_dev = game_rot_input_dev;
-	data->step_det_input_dev = step_det_input_dev;
-	data->sig_motion_input_dev = sig_motion_input_dev;
-	data->uncalib_gyro_input_dev = uncalib_gyro_input_dev;
 
 	return SUCCESS;
-iRet_uncalib_gyro_input_unreg_device:
-	input_unregister_device(sig_motion_input_dev);
-iRet_sig_motion_input_unreg_device:
-	input_unregister_device(step_det_input_dev);
-iRet_step_det_motion_input_unreg_device:
-	input_unregister_device(game_rot_input_dev);
-iRet_game_rot_input_unreg_device:
-	input_unregister_device(rot_input_dev);
-iRet_rot_input_unreg_device:
-	input_unregister_device(uncalib_mag_input_dev);
-iRet_uncalib_mag_input_unreg_device:
-	input_unregister_device(mag_input_dev);
+
 iRet_mag_input_unreg_device:
 	input_unregister_device(temp_humi_input_dev);
 iRet_tmep_humi_input_unreg_device:
@@ -973,18 +607,6 @@ iRet_gyro_input_unreg_device:
 	return ERROR;
 iRet_acc_input_unreg_device:
 	pr_err("[SSP]: %s - could not register input device\n", __func__);
-	input_free_device(uncalib_gyro_input_dev);
-iRet_uncalib_gyro_input_free_device:
-	input_free_device(sig_motion_input_dev);
-iRet_sig_motion_input_free_device:
-	input_free_device(step_det_input_dev);
-iRet_step_det_input_free_device:
-	input_free_device(game_rot_input_dev);
-iRet_game_rot_input_free_device:
-	input_free_device(rot_input_dev);
-iRet_rot_input_free_device:
-	input_free_device(uncalib_mag_input_dev);
-iRet_uncalib_mag_input_free_device:
 	input_free_device(mag_input_dev);
 iRet_mag_input_free_device:
 	input_free_device(temp_humi_input_dev);
@@ -993,9 +615,9 @@ iRet_temp_humidity_input_free_device:
 iRet_proximity_input_free_device:
 	input_free_device(light_input_dev);
 iRet_light_input_free_device:
-	input_free_device(gesture_input_dev);
-iRet_gesture_input_free_device:
 	input_free_device(pressure_input_dev);
+iRet_gesture_input_free_device:
+	input_free_device(gesture_input_dev);
 iRet_pressure_input_free_device:
 	input_free_device(gyro_input_dev);
 iRet_gyro_input_free_device:
@@ -1015,10 +637,4 @@ void remove_input_dev(struct ssp_data *data)
 	input_unregister_device(data->prox_input_dev);
 	input_unregister_device(data->temp_humi_input_dev);
 	input_unregister_device(data->mag_input_dev);
-	input_unregister_device(data->uncalib_mag_input_dev);
-	input_unregister_device(data->rot_input_dev);
-	input_unregister_device(data->game_rot_input_dev);
-	input_unregister_device(data->step_det_input_dev);
-	input_unregister_device(data->sig_motion_input_dev);
-	input_unregister_device(data->uncalib_gyro_input_dev);
 }

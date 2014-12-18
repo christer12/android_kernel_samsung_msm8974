@@ -31,8 +31,7 @@
 #include <mach/iommu_hw-v0.h>
 #include <mach/msm_iommu_priv.h>
 #include <mach/iommu.h>
-#include <mach/msm_smem.h>
-#include <mach/msm_bus.h>
+#include <mach/msm_smsm.h>
 
 #define MRC(reg, processor, op1, crn, crm, op2)				\
 __asm__ __volatile__ (							\
@@ -51,6 +50,10 @@ __asm__ __volatile__ (							\
 #define MSM_IOMMU_ATTR_CACHED_WB_WA	0x1
 #define MSM_IOMMU_ATTR_CACHED_WB_NWA	0x2
 #define MSM_IOMMU_ATTR_CACHED_WT	0x3
+
+struct bus_type msm_iommu_sec_bus_type = {
+	.name = "msm_iommu_sec_bus",
+};
 
 static int msm_iommu_unmap_range(struct iommu_domain *domain, unsigned int va,
 				 unsigned int len);
@@ -132,20 +135,6 @@ void *msm_iommu_lock_initialize(void)
 	return msm_iommu_remote_lock.lock;
 }
 
-static int apply_bus_vote(struct msm_iommu_drvdata *drvdata, unsigned int vote)
-{
-	int ret = 0;
-
-	if (drvdata->bus_client) {
-		ret = msm_bus_scale_client_update_request(drvdata->bus_client,
-							  vote);
-		if (ret)
-			pr_err("%s: Failed to vote for bus: %d\n", __func__,
-				vote);
-	}
-	return ret;
-}
-
 static int __enable_clocks(struct msm_iommu_drvdata *drvdata)
 {
 	int ret;
@@ -159,26 +148,12 @@ static int __enable_clocks(struct msm_iommu_drvdata *drvdata)
 		if (ret)
 			clk_disable_unprepare(drvdata->pclk);
 	}
-
-	if (ret)
-		goto fail;
-
-	if (drvdata->aclk) {
-		ret = clk_prepare_enable(drvdata->aclk);
-		if (ret) {
-			clk_disable_unprepare(drvdata->clk);
-			clk_disable_unprepare(drvdata->pclk);
-		}
-	}
-
 fail:
 	return ret;
 }
 
 static void __disable_clocks(struct msm_iommu_drvdata *drvdata)
 {
-	if (drvdata->aclk)
-		clk_disable_unprepare(drvdata->aclk);
 	if (drvdata->clk)
 		clk_disable_unprepare(drvdata->clk);
 	clk_disable_unprepare(drvdata->pclk);
@@ -213,13 +188,13 @@ static void _iommu_lock_release(void)
 struct iommu_access_ops iommu_access_ops_v0 = {
 	.iommu_power_on = __enable_regulators,
 	.iommu_power_off = __disable_regulators,
-	.iommu_bus_vote = apply_bus_vote,
 	.iommu_clk_on = __enable_clocks,
 	.iommu_clk_off = __disable_clocks,
 	.iommu_lock_initialize = _iommu_lock_initialize,
 	.iommu_lock_acquire = _iommu_lock_acquire,
 	.iommu_lock_release = _iommu_lock_release,
 };
+EXPORT_SYMBOL(iommu_access_ops_v0);
 
 static int __flush_iotlb_va(struct iommu_domain *domain, unsigned int va)
 {
@@ -517,11 +492,6 @@ static int msm_iommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 			goto unlock;
 		}
 
-	ret = apply_bus_vote(iommu_drvdata, 1);
-
-	if (ret)
-		goto unlock;
-
 	ret = __enable_clocks(iommu_drvdata);
 	if (ret)
 		goto unlock;
@@ -588,9 +558,6 @@ static void msm_iommu_detach_dev(struct iommu_domain *domain,
 	msm_iommu_remote_spin_unlock();
 
 	__disable_clocks(iommu_drvdata);
-
-	apply_bus_vote(iommu_drvdata, 0);
-
 	list_del_init(&ctx_drvdata->attached_elm);
 	ctx_drvdata->attached_domain = NULL;
 unlock:
@@ -1276,7 +1243,7 @@ static int msm_iommu_domain_has_cap(struct iommu_domain *domain,
 	return 0;
 }
 
-static void __print_ctx_regs(void __iomem *base, int ctx)
+static void print_ctx_regs(void __iomem *base, int ctx)
 {
 	unsigned int fsr = GET_FSR(base, ctx);
 	pr_err("FAR    = %08x    PAR    = %08x\n",
@@ -1342,7 +1309,7 @@ irqreturn_t msm_iommu_fault_handler(int irq, void *dev_id)
 			pr_err("name    = %s\n", drvdata->name);
 			pr_err("context = %s (%d)\n", ctx_drvdata->name, num);
 			pr_err("Interesting registers:\n");
-			__print_ctx_regs(base, num);
+			print_ctx_regs(base, num);
 		}
 
 		SET_FSR(base, num, fsr);

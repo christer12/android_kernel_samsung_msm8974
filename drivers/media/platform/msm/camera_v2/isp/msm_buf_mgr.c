@@ -135,7 +135,6 @@ static int msm_isp_prepare_v4l2_buf(struct msm_isp_buf_mgr *buf_mgr,
 			goto ion_map_error;
 		}
 		mapped_info->paddr += v4l2_buf->m.planes[i].data_offset;
-		mapped_info->offset = v4l2_buf->m.planes[i].data_offset;
 		CDBG("%s: plane: %d addr:%lu\n",
 			__func__, i, mapped_info->paddr);
 	}

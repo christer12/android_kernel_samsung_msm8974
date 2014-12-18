@@ -54,10 +54,6 @@
 #include <linux/pm_qos.h>
 #include <mach/cpuidle.h>
 
-#include <mach/gpiomux.h>
-#include <linux/of_gpio.h>
-
-
 #if defined(CONFIG_TDMB_ANT_DET)
 static struct wake_lock tdmb_ant_wlock;
 #endif
@@ -86,82 +82,10 @@ static unsigned int cmd_size;
 
 static unsigned long tdmb_last_ch;
 
+static struct tdmb_platform_data gpio_cfg;
 static struct tdmb_drv_func *tdmbdrv_func;
-static struct tdmb_dt_platform_data *dt_pdata;
 
 static bool tdmb_pwr_on;
-
-static void tdmb_gpio_init(void)
-{
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_en, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	gpio_set_value(dt_pdata->tdmb_en, 0);
-
-	if (dt_pdata->tdmb_rst > 0) {
-		gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_rst, GPIOMUX_FUNC_GPIO,
-			GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-			GPIO_CFG_ENABLE);
-		gpio_set_value(dt_pdata->tdmb_rst, 0);
-	}
-
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_irq, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-
-#if defined(CONFIG_TDMB_ANT_DET)
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_ant_irq, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-#endif
-}
-
-static void tdmb_gpio_on(void)
-{
-	DPRINTK("tdmb_gpio_on\n");
-
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_en, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	if (dt_pdata->tdmb_rst > 0) {
-		gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_rst, GPIOMUX_FUNC_GPIO,
-			GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-			GPIO_CFG_ENABLE);
-	}
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_irq, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	gpio_set_value(dt_pdata->tdmb_en, 1);
-	usleep_range(20000, 20000);
-
-	if (dt_pdata->tdmb_rst > 0) {
-		gpio_set_value(dt_pdata->tdmb_rst, 0);
-		usleep_range(2000, 2000);
-		gpio_set_value(dt_pdata->tdmb_rst, 1);
-		usleep_range(10000, 10000);
-	}
-}
-
-static void tdmb_gpio_off(void)
-{
-	DPRINTK("tdmb_gpio_off\n");
-
-	gpio_set_value(dt_pdata->tdmb_en, 0);
-	usleep_range(1000, 1000);
-	if (dt_pdata->tdmb_rst > 0) {
-		gpio_set_value(dt_pdata->tdmb_rst, 0);
-		gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_rst, GPIOMUX_FUNC_GPIO,
-			GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-			GPIO_CFG_ENABLE);
-	}
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_en, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-	gpio_tlmm_config(GPIO_CFG(dt_pdata->tdmb_irq, GPIOMUX_FUNC_GPIO,
-		GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA),
-		GPIO_CFG_ENABLE);
-}
-
 static bool tdmb_power_on(void)
 {
 	if (tdmb_create_databuffer(tdmbdrv_func->get_int_size()) == false) {
@@ -447,8 +371,8 @@ bool tdmb_control_irq(bool set)
 	bool ret = true;
 	int irq_ret;
 	if (set) {
-		irq_set_irq_type(gpio_to_irq(dt_pdata->tdmb_irq), IRQ_TYPE_EDGE_FALLING);
-		irq_ret = request_irq(gpio_to_irq(dt_pdata->tdmb_irq)
+		irq_set_irq_type(gpio_cfg.irq, IRQ_TYPE_EDGE_FALLING);
+		irq_ret = request_irq(gpio_cfg.irq
 						, tdmb_irq_handler
 						, IRQF_DISABLED
 						, TDMB_DEV_NAME
@@ -458,7 +382,7 @@ bool tdmb_control_irq(bool set)
 			ret = false;
 		}
 	} else {
-		free_irq(gpio_to_irq(dt_pdata->tdmb_irq), NULL);
+		free_irq(gpio_cfg.irq, NULL);
 	}
 
 	return ret;
@@ -467,9 +391,9 @@ bool tdmb_control_irq(bool set)
 void tdmb_control_gpio(bool poweron)
 {
 	if (poweron)
-		tdmb_gpio_on();
+		gpio_cfg.gpio_on();
 	else
-		tdmb_gpio_off();
+		gpio_cfg.gpio_off();
 }
 
 static long tdmb_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
@@ -667,7 +591,7 @@ static int tdmb_ant_det_check_value(void)
 
 	for (loop = 0; loop < TDMB_ANT_CHECK_COUNT; loop++) {
 		usleep_range(TDMB_ANT_CHECK_DURATION, TDMB_ANT_CHECK_DURATION);
-		cur_val = gpio_get_value_cansleep(dt_pdata->tdmb_ant_irq);
+		cur_val = gpio_get_value_cansleep(gpio_cfg.gpio_ant_det);
 		if (ant_prev_status == cur_val)
 			break;
 	}
@@ -816,12 +740,12 @@ bool tdmb_ant_det_irq_set(bool set)
 	if (set) {
 		if (ant_irq_ret < 0) {
 			ant_prev_status =
-				gpio_get_value_cansleep(dt_pdata->tdmb_ant_irq);
+				gpio_get_value_cansleep(gpio_cfg.gpio_ant_det);
 
-			irq_set_irq_type(gpio_to_irq(dt_pdata->tdmb_ant_irq)
+			irq_set_irq_type(gpio_cfg.irq_ant_det
 					, IRQ_TYPE_EDGE_BOTH);
 
-			ant_irq_ret = request_irq(gpio_to_irq(dt_pdata->tdmb_ant_irq)
+			ant_irq_ret = request_irq(gpio_cfg.irq_ant_det
 						, tdmb_ant_det_irq_handler
 						, IRQF_DISABLED
 						, "tdmb_ant_det"
@@ -830,13 +754,13 @@ bool tdmb_ant_det_irq_set(bool set)
 				DPRINTK("%s %d\r\n", __func__, ant_irq_ret);
 				ret = false;
 			} else {
-				enable_irq_wake(gpio_to_irq(dt_pdata->tdmb_ant_irq));
+				enable_irq_wake(gpio_cfg.irq_ant_det);
 			}
 		}
 	} else {
 		if(ant_irq_ret >= 0) {
-			disable_irq_wake(gpio_to_irq(dt_pdata->tdmb_ant_irq));
-			free_irq(gpio_to_irq(dt_pdata->tdmb_ant_irq), NULL);
+			disable_irq_wake(gpio_cfg.irq_ant_det);
+			free_irq(gpio_cfg.irq_ant_det, NULL);
 			ant_irq_ret=-1;
 			ret = false;
 		}
@@ -845,71 +769,14 @@ bool tdmb_ant_det_irq_set(bool set)
 	return ret;
 }
 #endif
-static struct tdmb_dt_platform_data *get_tdmb_dt_pdata(struct device *dev)
-{
-	struct tdmb_dt_platform_data *pdata;
-	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata) {
-		DPRINTK("%s : could not allocate memory for platform data\n", __func__);
-		goto err;
-	}
-	pdata->tdmb_en = of_get_named_gpio(dev->of_node, "tdmb_pwr_en", 0);
-	if (pdata->tdmb_en < 0) {
-		DPRINTK("%s : can not find the tdmb_pwr_en\n", __func__);
-		goto alloc_err;
-	}
-	pdata->tdmb_rst = of_get_named_gpio(dev->of_node, "tdmb_rst", 0);
-	pdata->tdmb_irq = of_get_named_gpio(dev->of_node, "tdmb_irq", 0);
-	if (pdata->tdmb_irq < 0) {
-		DPRINTK("%s : can not find the tdmb_irq\n", __func__);
-		goto alloc_err;
-	}
-	pdata->tdmb_spi_mosi = of_get_named_gpio(dev->of_node, "tdmb_spi_mosi", 0);
-	if (pdata->tdmb_spi_mosi < 0) {
-		DPRINTK("%s : can not find the tdmb_spi_mosi\n", __func__);
-		goto alloc_err;
-	}
-	pdata->tdmb_spi_miso = of_get_named_gpio(dev->of_node, "tdmb_spi_miso", 0);
-	if (pdata->tdmb_spi_miso < 0) {
-		DPRINTK("%s : can not find the tdmb_spi_miso\n", __func__);
-		goto alloc_err;
-	}
-	pdata->tdmb_spi_cs = of_get_named_gpio(dev->of_node, "tdmb_spi_cs", 0);
-	if (pdata->tdmb_spi_cs < 0) {
-		DPRINTK("%s : can not find the tdmb_spi_cs\n", __func__);
-		goto alloc_err;
-	}
-	pdata->tdmb_spi_clk = of_get_named_gpio(dev->of_node, "tdmb_spi_clk", 0);
-	if (pdata->tdmb_en < 0) {
-		DPRINTK("%s : can not find the tdmb_spi_clk\n", __func__);
-		goto alloc_err;
-	}
-#ifdef CONFIG_TDMB_ANT_DET
-	pdata->tdmb_ant_irq = of_get_named_gpio(dev->of_node, "tdmb_ant_irq", 0);
-	if (pdata->tdmb_en < 0) {
-		DPRINTK("%s : can not find the tdmb_ant_irq\n", __func__);
-		goto alloc_err;
-	}
-#endif
-	return pdata;
-alloc_err:
-	devm_kfree(dev, pdata);
-err:
-	return NULL;
-}
 
 static int tdmb_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct device *tdmb_dev;
+	struct tdmb_platform_data *p = pdev->dev.platform_data;
 
 	DPRINTK("call tdmb_probe\n");
-	dt_pdata = get_tdmb_dt_pdata(&pdev->dev);
-	if (!dt_pdata) {
-		pr_err("%s : tdmb_dt_pdata is NULL.\n", __func__);
-		return -ENODEV;
-	}
-	tdmb_gpio_init();
 
 	ret = register_chrdev(TDMB_DEV_MAJOR, TDMB_DEV_NAME, &tdmb_ctl_fops);
 	if (ret < 0)
@@ -934,6 +801,8 @@ static int tdmb_probe(struct platform_device *pdev)
 
 		return -EFAULT;
 	}
+
+	memcpy(&gpio_cfg, p, sizeof(struct tdmb_platform_data));
 
 #if defined(CONFIG_TDMB_EBI)
 	tdmb_init_bus(gpio_cfg.cs_base, gpio_cfg.mem_size);
@@ -994,12 +863,6 @@ static int tdmb_resume(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id tdmb_match_table[] = {
-	{   .compatible = "tdmb_pdata",
-	},
-	{}
-};
-
 static struct platform_driver tdmb_driver = {
 	.probe	= tdmb_probe,
 	.remove = tdmb_remove,
@@ -1007,8 +870,7 @@ static struct platform_driver tdmb_driver = {
 	.resume = tdmb_resume,
 	.driver = {
 		.owner	= THIS_MODULE,
-		.name = "tdmb",
-		.of_match_table = tdmb_match_table,
+		.name = "tdmb"
 	},
 };
 

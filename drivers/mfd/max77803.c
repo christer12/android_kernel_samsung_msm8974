@@ -189,9 +189,7 @@ static int max77803_i2c_probe(struct i2c_client *i2c,
 		pdata->muic_data = &max77803_muic;
 		pdata->charger_data = &sec_battery_pdata;
 		pdata->regulators = max77803_regulators,
-#ifdef CONFIG_VIBETONZ
 		pdata->haptic_data = &max77803_haptic_pdata;
-#endif
 		pdata->led_data = &max77803_led_pdata;
 		/* set irq_base at sec_battery_pdata */
 		sec_battery_pdata.bat_irq = pdata->irq_base + MAX77803_CHG_IRQ_BATP_I;

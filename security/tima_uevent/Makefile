@@ -1,4 +1,7 @@
 #
 # Makefile for TIMA kernel uevent drivers.
 #
-obj-$(CONFIG_TIMA_UEVENT)	+= tima_uevent.o
+
+ifeq ($(TIMA_ENABLED),1)
+obj-y   += tima_uevent.o
+endif

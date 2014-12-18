@@ -53,18 +53,10 @@
 #define BMA255_Z_AXIS_MSB_REG           0x07
 
 /* Control Register */
-#define BMA255_STATUS1_REG              0x09
 #define BMA255_RANGE_SEL_REG            0x0F
 #define BMA255_BW_SEL_REG               0x10
 #define BMA255_MODE_CTRL_REG            0x11
 #define BMA255_LOW_NOISE_CTRL_REG       0x12
-#define BMA255_INT_ENABLE1_REG          0x16
-#define BMA255_INT1_PAD_SEL_REG         0x19
-
-#define BMA255_STATUS_TAP_SLOPE_REG     0x0B
-#define BMA255_INT_CTRL_REG             0x21
-#define BMA255_SLOPE_DURN_REG           0x27
-#define BMA255_SLOPE_THRES_REG          0x28
 
 #define BMA255_LOW_POWER_MODE__POS      6
 #define BMA255_LOW_POWER_MODE__LEN      1
@@ -115,46 +107,6 @@
 #define BMA255_ACC_Z12_LSB__LEN         4
 #define BMA255_ACC_Z12_LSB__MSK         0xF0
 #define BMA255_ACC_Z12_LSB__REG         BMA255_Z_AXIS_LSB_REG
-
-#define BMA255_SLOPE_INT_S__POS         2
-#define BMA255_SLOPE_INT_S__LEN         1
-#define BMA255_SLOPE_INT_S__MSK         0x04
-#define BMA255_SLOPE_INT_S__REG         BMA255_STATUS1_REG
-
-#define BMA255_EN_SLOPE_X_INT__POS      0
-#define BMA255_EN_SLOPE_X_INT__LEN      1
-#define BMA255_EN_SLOPE_X_INT__MSK      0x01
-#define BMA255_EN_SLOPE_X_INT__REG      BMA255_INT_ENABLE1_REG
-
-#define BMA255_EN_SLOPE_Y_INT__POS      1
-#define BMA255_EN_SLOPE_Y_INT__LEN      1
-#define BMA255_EN_SLOPE_Y_INT__MSK      0x02
-#define BMA255_EN_SLOPE_Y_INT__REG      BMA255_INT_ENABLE1_REG
-
-#define BMA255_EN_SLOPE_Z_INT__POS      2
-#define BMA255_EN_SLOPE_Z_INT__LEN      1
-#define BMA255_EN_SLOPE_Z_INT__MSK      0x04
-#define BMA255_EN_SLOPE_Z_INT__REG      BMA255_INT_ENABLE1_REG
-
-#define BMA255_EN_INT1_PAD_SLOPE__POS   2
-#define BMA255_EN_INT1_PAD_SLOPE__LEN   1
-#define BMA255_EN_INT1_PAD_SLOPE__MSK   0x04
-#define BMA255_EN_INT1_PAD_SLOPE__REG   BMA255_INT1_PAD_SEL_REG
-
-#define BMA255_SLOPE_DUR__POS           0
-#define BMA255_SLOPE_DUR__LEN           2
-#define BMA255_SLOPE_DUR__MSK           0x03
-#define BMA255_SLOPE_DUR__REG           BMA255_SLOPE_DURN_REG
-
-#define BMA255_SLOPE_THRES__POS         0
-#define BMA255_SLOPE_THRES__LEN         8
-#define BMA255_SLOPE_THRES__MSK         0xFF
-#define BMA255_SLOPE_THRES__REG         BMA255_SLOPE_THRES_REG
-
-#define BMA255_INT_MODE_SEL__POS        0
-#define BMA255_INT_MODE_SEL__LEN        4
-#define BMA255_INT_MODE_SEL__MSK        0x0F
-#define BMA255_INT_MODE_SEL__REG        BMA255_INT_CTRL_REG
 
 #define BMA255_GET_BITSLICE(regvar, bitname)\
 	((regvar & bitname##__MSK) >> bitname##__POS)

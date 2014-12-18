@@ -152,12 +152,8 @@ obj-$(CONFIG_SENSORS)		+= sensors/
 #obj-$(CONFIG_SEC_FPGA)	+= barcode_emul/
 obj-$(CONFIG_VIBETONZ)          += motor/
 obj-$(CONFIG_MOTOR_DRV_ISA1400) += motor/
-obj-$(CONFIG_MOTOR_DRV_TSP5000) += motor/
-obj-$(CONFIG_MSM_VIBRATOR) += motor/
 obj-$(CONFIG_AUTHENTEC_VPNCLIENT_INTERCEPTOR) += interceptor/
-obj-$(CONFIG_SEC_NET_FILTER)	+= secfilter/
 
-obj-$(CONFIG_FELICA) += felica/
 ifeq (1, $(shell if [ -d ../../../../../../kernel/drivers/exfat ] ; then echo 1 ; fi))
 obj-y                           += exfat/
 endif

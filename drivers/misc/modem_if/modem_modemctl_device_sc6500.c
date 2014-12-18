@@ -64,6 +64,7 @@ static unsigned sprd6500_uart_on_table[] = {
 		 GPIO_CFG_8MA),
 };
 
+/*
 static unsigned sprd6500_uart_off_table[] = {
 	GPIO_CFG(GPIO_BT_UART_RTS, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL,
 		 GPIO_CFG_8MA),
@@ -74,6 +75,7 @@ static unsigned sprd6500_uart_off_table[] = {
 	GPIO_CFG(GPIO_BT_UART_TXD, 0, GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL,
 		 GPIO_CFG_8MA),
 };
+*/
 
 #define GPIO_IPC_MRDY		104
 #define GPIO_IPC_SUB_MRDY	105
@@ -130,8 +132,6 @@ static int sprd6500_on(struct modem_ctl *mc)
 	pr_err("[MODEM_IF:SC6500] <%s> CP On(%d,%d)\n", __func__, 
 			gpio_get_value(mc->gpio_cp_on),
 			gpio_get_value(mc->gpio_phone_active));
-
-	msleep(100);
 
 	gpio_tlmm_config(GPIO_CFG(mc->gpio_cp_on, GPIOMUX_FUNC_GPIO,
 		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
@@ -202,31 +202,36 @@ static int sprd6500_reset(struct modem_ctl *mc)
 
 int sprd6500_boot_on(struct modem_ctl *mc)
 {
-	int pin, rc = 0;
+	struct link_device *ld = get_current_link(mc->iod);
 
-	pr_err("[MODEM_IF:SC6500] <%s> BOOT_ON!!!\n", __func__);
-
-	for (pin = 0; pin < ARRAY_SIZE(sprd6500_uart_on_table); pin++) {
-			rc = gpio_tlmm_config(sprd6500_uart_on_table[pin],
-					      GPIO_CFG_ENABLE);
-		if (rc < 0)
-			pr_err("[MODEM_IF:SC6500] %s: gpio_tlmm_config(%#x)=%d\n",
-			       __func__, sprd6500_uart_on_table[pin], rc);
-	}
+	pr_info("[MODEM_IF:SC6500] <%s>\n", __func__);
 
 	// UART_SEL for UART download
 	gpio_tlmm_config(GPIO_CFG(mc->gpio_uart_sel, GPIOMUX_FUNC_GPIO,
 		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		GPIO_CFG_ENABLE);
 	gpio_set_value(mc->gpio_uart_sel, 1);
+	msleep(20);
+
+	gpio_tlmm_config(GPIO_CFG(mc->gpio_cp_on, GPIOMUX_FUNC_GPIO,
+		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA),
+		GPIO_CFG_ENABLE);
+	gpio_direction_output(mc->gpio_cp_on, 1);
+//	msleep(44);
+
+	pr_info("  - GPIO_GSM_PHONE_ON : %d\n",
+			gpio_get_value(mc->gpio_cp_on));
+
+	gpio_set_value(mc->gpio_pda_active, 1);
+	
+//	mc->iod->modem_state_changed(mc->iod, STATE_BOOTING);
+	ld->mode = LINK_MODE_BOOT;
 
 	return 0;
 }
 
 static int sprd6500_boot_off(struct modem_ctl *mc)
 {
-	int pin, rc = 0;
-
 	pr_info("[MODEM_IF:SC6500] <%s>\n", __func__);
 
 	// UART_SEL for BT
@@ -234,19 +239,6 @@ static int sprd6500_boot_off(struct modem_ctl *mc)
 		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_8MA),
 		GPIO_CFG_ENABLE);
 	gpio_set_value(mc->gpio_uart_sel, 0);
-
-	for (pin = 0; pin < ARRAY_SIZE(sprd6500_uart_off_table); pin++) {
-			rc = gpio_tlmm_config(sprd6500_uart_off_table[pin],
-					      GPIO_CFG_ENABLE);
-		if (rc < 0)
-			pr_err("[MODEM_IF:SC6500] %s: gpio_tlmm_config(%#x)=%d\n",
-			       __func__, sprd6500_uart_off_table[pin], rc);
-	}
-
-	gpio_set_value(GPIO_BT_UART_RTS, 0);
-	gpio_set_value(GPIO_BT_UART_CTS, 0);
-	gpio_set_value(GPIO_BT_UART_RXD, 0);
-	gpio_set_value(GPIO_BT_UART_TXD, 0);
 
 //	mc->iod->modem_state_changed(mc->iod, STATE_OFFLINE);
 
@@ -295,14 +287,18 @@ static irqreturn_t phone_active_irq_handler(int irq, void *arg)
 
 		if (mc->phone_state == STATE_ONLINE) {
 			phone_state = STATE_CRASH_EXIT;
+#if 0 //temp dklee mod 
 			if (mc->iod && mc->iod->modem_state_changed)
 				mc->iod->modem_state_changed(mc->iod,
 							     phone_state);
+#endif
 		}
 	} else {
 		phone_state = STATE_OFFLINE;
+#if 0 //temp dklee mod 
 		if (mc->iod && mc->iod->modem_state_changed)
 			mc->iod->modem_state_changed(mc->iod, phone_state);
+#endif
 	}
 
 	if (phone_active)
@@ -393,9 +389,6 @@ int sprd6500_init_modemctl_device(struct modem_ctl *mc, struct modem_data *pdata
 			return ret;
 		}
 
-#if 1 // don't enable wake option in temp
-		enable_irq(mc->irq_phone_active);
-#else
 		ret = enable_irq_wake(mc->irq_phone_active);
 		if (ret) {
 			pr_err("[MODEM_IF:SC6500] %s: failed to enable_irq_wake IRQ# %d (err=%d)\n",
@@ -403,7 +396,6 @@ int sprd6500_init_modemctl_device(struct modem_ctl *mc, struct modem_data *pdata
 			free_irq(mc->irq_phone_active, mc);
 			return ret;
 		}
-#endif
 	}
 
 #if defined(CONFIG_SIM_DETECT)

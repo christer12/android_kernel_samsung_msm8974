@@ -27,8 +27,6 @@ static struct FIG_DATA fig_data;
 static const U8 FIC_BIT_MASK[8] = {0x0, 0x80, 0xC0, 0xE0, 0xFF,
 	0xF8, 0xFC, 0xFE};
 
-static U8 Ensemble_ECC = 0xFF;
-
 
 /**********************************/
 /*  FIC information get function  */
@@ -529,9 +527,8 @@ S32 Get_FIG0_EXT2(U8 fic_cmd, U8 P_D, U8 C_N)
 {
 U8 temp1, temp2, temp3;
 UINT cnt, update_flag = 0;
-struct FIG_TYPE0_Ext2 type0_ext2;
 
-memset(&type0_ext2, 0xFF, sizeof(struct FIG_TYPE0_Ext2));
+struct FIG_TYPE0_Ext2 type0_ext2;
 
 while (fig_data.byte_cnt < fig_data.length) {
 	if (P_D) {
@@ -1063,10 +1060,8 @@ S32 Get_FIG0_EXT9(U8 fic_cmd, U8 P_D, U8 C_N)
 {
 	U8 temp1, temp2, temp3, temp4;
 	U8 k = 0;
-	U8 NumOfService = 0;
 
 	struct FIG_TYPE0_Ext9 type0_ext9;
-	memset(&type0_ext9, 0x0, sizeof(struct FIG_TYPE0_Ext9));
 
 	while (fig_data.byte_cnt < fig_data.length) {
 		Get_Bits(1, &type0_ext9.Ext_flag);
@@ -1077,55 +1072,35 @@ S32 Get_FIG0_EXT9(U8 fic_cmd, U8 P_D, U8 C_N)
 		Get_Bytes(1, &type0_ext9.Inter_Table_ID);
 
 		if (type0_ext9.Ext_flag) {
-	while (k < fig_data.length) {
-		Get_Bits(2,
-		&type0_ext9.Num_Ser[type0_ext9.NumOfSubField]);
-		Get_Bits(6,
-		&type0_ext9.LTO[type0_ext9.NumOfSubField]);
-		k++;
+			Get_Bits(2, &type0_ext9.Num_Ser);
+			Get_Bits(6, &type0_ext9.LTO);
 
-		if (P_D) {
-			for (NumOfService = 0;
-		NumOfService < type0_ext9.Num_Ser[type0_ext9.NumOfSubField];
-		NumOfService++) {
+			if (P_D) {
+				for (k = 0; k < type0_ext9.Num_Ser; k++) {
 					Get_Bytes(1, &temp1);
 					Get_Bytes(1, &temp2);
 					Get_Bytes(1, &temp3);
 					Get_Bytes(1, &temp4);
-			type0_ext9.Sid[type0_ext9.NumOfSubField][NumOfService]
-					= (temp1 << 24)
+					type0_ext9.Sid[k] = (temp1 << 24)
 						| (temp2 << 16)
 						| (temp3 << 8)
 						| temp4;
-
-				k += 4;
 				}
 			} else {
-			if (type0_ext9.Num_Ser[type0_ext9.NumOfSubField] != 0) {
-				Get_Bytes(1,
-				&type0_ext9.ECC[type0_ext9.NumOfSubField]);
-				k++;
-			}
+				if (type0_ext9.Num_Ser != 0)
+					Get_Bytes(1, &type0_ext9.ECC);
 
-			for (NumOfService = 0;
-		NumOfService < type0_ext9.Num_Ser[type0_ext9.NumOfSubField];
-		NumOfService++) {
+				for (k = 0; k < type0_ext9.Num_Ser; k++) {
 					Get_Bytes(1, &temp1);
 					Get_Bytes(1, &temp2);
-			type0_ext9.Sid[type0_ext9.NumOfSubField][NumOfService]
+					type0_ext9.Sid[k]
 						= (temp1 << 8) | temp2;
-
-				k += 2;
 				}
 			}
-		type0_ext9.NumOfSubField++;
-			}
-
 		}
 
 		if (fic_cmd) {
 			ENS_DESC.date_time_info.LTO = type0_ext9.Ensemble_LTO;
-			Ensemble_ECC = type0_ext9.Ensemble_ECC;
 			ENS_DESC.date_time_info.get_flag |= LTO_FLAG;
 		}
 	}
@@ -2502,16 +2477,16 @@ S32 FIC_Init_Dec(U8 *fic, U8 fib_num, U8 CN)
 
 		ret = FIB_INIT_DEC(fic+fib_crc_pos);
 		if (ret == RTV_OK) {
+
 			if (ENS_DESC.svr_num) {
 				if ((ENS_DESC.svr_num == ENS_DESC.label_num)
-					&& (ENS_DESC.label_flag == 1)
-					&& (FIC_CONUT > 5)) {
+					&&/* (FIC_CONUT > 5)
+					&&*/ (ENS_DESC.label_flag == 1)) {
 					FIC_CONUT = 0;
 					return FIC_DONE;
 				}
 			}
 		}
-
 		fib_crc_pos += 32;
 	}
 
@@ -2525,16 +2500,11 @@ static BOOL fic_decode_run;
 
 void rtvFICDEC_Init(void)
 {
-	UINT i;
-
 	fic_decode_run = TRUE;
 	fib_crc_err_cnt = 0;
 
 	FIC_CONUT = 0;
 	memset(&ENS_DESC, 0, sizeof(struct ENSEMBLE_DESC));
-
-	for (i = 0; i < MAX_SERV_COMP; i++)
-		ENS_DESC.svr_comp[i].SCidS = 0xFF;
 }
 
 
@@ -2584,6 +2554,7 @@ void rtvFICDEC_GetEnsembleInfo(struct ensemble_info_type *ensble,
 			case MSC_STREAM_AUDIO:
 				ensble->sub_ch[subch_idx].sub_ch_id
 					= desc->svr_comp[comp_idx].SubChid;
+
 				ensble->sub_ch[subch_idx].start_addr
 					= desc->svr_comp[comp_idx].START_Addr;
 				ensble->sub_ch[subch_idx].tmid
@@ -2595,9 +2566,6 @@ void rtvFICDEC_GetEnsembleInfo(struct ensemble_info_type *ensble,
 				memcpy(ensble->sub_ch[subch_idx].svc_label,
 					desc->svr_desc[i].Label,
 					RTV_MAX_ENSEMBLE_LABEL_SIZE);
-				ensble->sub_ch[subch_idx].scids
-					= desc->svr_comp[comp_idx].SCidS;
-				ensble->sub_ch[subch_idx].ecc = Ensemble_ECC;
 				subch_idx++;
 				break;
 
@@ -2615,9 +2583,6 @@ void rtvFICDEC_GetEnsembleInfo(struct ensemble_info_type *ensble,
 				memcpy(ensble->sub_ch[subch_idx].svc_label,
 					desc->svr_desc[i].Label,
 					RTV_MAX_ENSEMBLE_LABEL_SIZE);
-				ensble->sub_ch[subch_idx].scids
-					= desc->svr_comp[comp_idx].SCidS;
-				ensble->sub_ch[subch_idx].ecc = Ensemble_ECC;
 				subch_idx++;
 				break;
 
@@ -2630,32 +2595,24 @@ void rtvFICDEC_GetEnsembleInfo(struct ensemble_info_type *ensble,
 				memcpy(ensble.sub_ch[subch_idx].svc_label,
 					desc->svr_desc[i].Label,
 					RTV_MAX_ENSEMBLE_LABEL_SIZE);
-				ensble->sub_ch[subch_idx].scids
-					= desc->svr_comp[comp_idx].SCidS;
-				ensble->sub_ch[subch_idx].ecc = Ensemble_ECC;
-				subch_idx++;
 */
 				break;
 
 			case MSC_PACKET_DATA:
 /*
-				ensble->sub_ch[subch_idx].sub_ch_id
+				ensble.sub_ch[subch_idx].sub_ch_id
 				= desc->svr_comp[comp_idx].SubChid;
-				ensble->sub_ch[subch_idx].start_addr
+				ensble.sub_ch[subch_idx].start_addr
 					= desc->svr_comp[comp_idx].START_Addr;
-				ensble->sub_ch[subch_idx].tmid
+				ensble.sub_ch[subch_idx].tmid
 					= desc->svr_comp[comp_idx].TMID;
-				ensble->sub_ch[subch_idx].svc_type
+				ensble.sub_ch[subch_idx].svc_type
 					= desc->svr_comp[comp_idx].DSCTy;
-				ensble->sub_ch[subch_idx].svc_id
+				ensble.sub_ch[subch_idx].svc_id
 					= desc->svr_desc[i].Sid;
-				memcpy(ensble->sub_ch[subch_idx].svc_label,
+				memcpy(ensble.sub_ch[subch_idx].svc_label,
 					desc->svr_desc[i].Label,
 					RTV_MAX_ENSEMBLE_LABEL_SIZE);
-				ensble->sub_ch[subch_idx].scids
-					= desc->svr_comp[comp_idx].SCidS;
-				ensble->sub_ch[subch_idx].ecc = Ensemble_ECC;
-				subch_idx++;
 */
 				break;
 			default:

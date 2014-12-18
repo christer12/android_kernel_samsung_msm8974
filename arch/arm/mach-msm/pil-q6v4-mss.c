@@ -23,7 +23,6 @@
 #include <mach/subsystem_restart.h>
 #include <mach/msm_smsm.h>
 #include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "smd_private.h"
 #include "peripheral-loader.h"

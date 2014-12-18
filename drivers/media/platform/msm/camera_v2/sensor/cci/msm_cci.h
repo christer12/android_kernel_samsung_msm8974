@@ -52,7 +52,6 @@ enum msm_cci_cmd_type {
 	MSM_CCI_I2C_READ,
 	MSM_CCI_I2C_WRITE,
 	MSM_CCI_GPIO_WRITE,
-	MSM_CCI_I2C_WRITE_BURST,
 };
 
 struct msm_camera_cci_wait_sync_cfg {
@@ -91,7 +90,7 @@ struct msm_camera_cci_ctrl {
 	struct msm_camera_cci_client *cci_info;
 	enum msm_cci_cmd_type cmd;
 	union {
-		struct msm_camera_i2c_reg_setting cci_i2c_write_cfg;
+		struct msm_camera_cci_i2c_write_cfg cci_i2c_write_cfg;
 		struct msm_camera_cci_i2c_read_cfg cci_i2c_read_cfg;
 		struct msm_camera_cci_wait_sync_cfg cci_wait_sync_cfg;
 		struct msm_camera_cci_gpio_cfg gpio_cfg;

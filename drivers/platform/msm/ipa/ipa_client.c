@@ -13,25 +13,20 @@
 #include <linux/delay.h>
 #include "ipa_i.h"
 
-/*
- * These values were determined empirically and shows good E2E bi-
- * directional throughputs
- */
-#define IPA_A2_HOLB_TMR_EN 0x1
-#define IPA_A2_HOLB_TMR_DEFAULT_VAL 0x1ff
-#define IPA_WLAN_HOLB_TMR_EN 0x1
-#define IPA_WLAN_HOLB_TMR_DEFAULT_VAL 0x7f
-
 static void ipa_enable_data_path(u32 clnt_hdl)
 {
+	struct ipa_ep_context *ep = &ipa_ctx->ep[clnt_hdl];
+
 	if (ipa_ctx->ipa_hw_mode == IPA_HW_MODE_VIRTUAL) {
 		/* IPA_HW_MODE_VIRTUAL lacks support for TAG IC & EP suspend */
 		return;
 	}
 
-	if (ipa_ctx->ipa_hw_type == IPA_HW_v1_1)
+	if (ipa_ctx->ipa_hw_type == IPA_HW_v1_1 && ep->suspended) {
 		ipa_write_reg(ipa_ctx->mmio,
 				IPA_ENDP_INIT_CTRL_n_OFST(clnt_hdl), 0);
+		ep->suspended = false;
+	}
 }
 
 static int ipa_disable_data_path(u32 clnt_hdl)
@@ -55,7 +50,7 @@ static int ipa_disable_data_path(u32 clnt_hdl)
 		goto fail_alloc;
 	}
 
-	if (ipa_ctx->ipa_hw_type == IPA_HW_v1_1) {
+	if (ipa_ctx->ipa_hw_type == IPA_HW_v1_1 && !ep->suspended) {
 		ipa_write_reg(ipa_ctx->mmio,
 				IPA_ENDP_INIT_CTRL_n_OFST(clnt_hdl), 1);
 
@@ -90,6 +85,7 @@ static int ipa_disable_data_path(u32 clnt_hdl)
 				ep->cfg.aggr.aggr_en == IPA_ENABLE_AGGR &&
 				ep->cfg.aggr.aggr_time_limit)
 			msleep(ep->cfg.aggr.aggr_time_limit);
+		ep->suspended = true;
 	}
 
 	return 0;
@@ -184,26 +180,6 @@ static int ipa_connect_allocate_fifo(const struct ipa_connect_params *in,
 	return 0;
 }
 
-static void ipa_program_holb(struct ipa_ep_context *ep, int ipa_ep_idx)
-{
-	struct ipa_ep_cfg_holb holb;
-
-	if (IPA_CLIENT_IS_PROD(ep->client))
-		return;
-
-	switch (ep->client) {
-	case IPA_CLIENT_A2_TETHERED_CONS:
-	case IPA_CLIENT_A2_EMBEDDED_CONS:
-		holb.en = IPA_A2_HOLB_TMR_EN;
-		holb.tmr_val = IPA_A2_HOLB_TMR_DEFAULT_VAL;
-		break;
-	default:
-		return;
-	}
-
-	ipa_cfg_ep_holb(ipa_ep_idx, &holb);
-}
-
 /**
  * ipa_connect() - low-level IPA client connect
  * @in:	[in] input parameters from client
@@ -250,26 +226,6 @@ int ipa_connect(const struct ipa_connect_params *in, struct ipa_sps_params *sps,
 	}
 
 	memset(&ipa_ctx->ep[ipa_ep_idx], 0, sizeof(struct ipa_ep_context));
-
-	if (IPA_CLIENT_IS_CONS(in->client)) {
-		ep->cmd = kzalloc(sizeof(struct ipa_ip_packet_init),
-				GFP_KERNEL);
-		if (!ep->cmd) {
-			IPAERR("failed to alloc immediate command object\n");
-			result = -ENOMEM;
-			goto fail;
-		}
-		ep->cmd->destination_pipe_index = ipa_ep_idx;
-		ep->dma_addr = dma_map_single(NULL, ep->cmd,
-				sizeof(struct ipa_ip_packet_init),
-				DMA_TO_DEVICE);
-		if (ep->dma_addr == 0 || ep->dma_addr == ~0) {
-			IPAERR("failed to DMA MAP pkt_init\n");
-			result = -ENOMEM;
-			kfree(ep->cmd);
-			goto fail;
-		}
-	}
 
 	ep->valid = 1;
 	ep->client = in->client;
@@ -339,7 +295,19 @@ int ipa_connect(const struct ipa_connect_params *in, struct ipa_sps_params *sps,
 	memcpy(&sps->desc, &ep->connect.desc, sizeof(struct sps_mem_buffer));
 	memcpy(&sps->data, &ep->connect.data, sizeof(struct sps_mem_buffer));
 
-	ipa_program_holb(ep, ipa_ep_idx);
+	if (in->client == IPA_CLIENT_HSIC1_CONS ||
+			in->client == IPA_CLIENT_HSIC2_CONS ||
+			in->client == IPA_CLIENT_HSIC3_CONS ||
+			in->client == IPA_CLIENT_HSIC4_CONS) {
+		IPADBG("disable holb for ep=%d tmr=%d\n", ipa_ep_idx,
+			ipa_ctx->hol_timer);
+		ipa_write_reg(ipa_ctx->mmio,
+			IPA_ENDP_INIT_HOL_BLOCK_EN_n_OFST(ipa_ep_idx),
+			ipa_ctx->hol_en);
+		ipa_write_reg(ipa_ctx->mmio,
+			IPA_ENDP_INIT_HOL_BLOCK_TIMER_n_OFST(ipa_ep_idx),
+			ipa_ctx->hol_timer);
+	}
 
 	IPADBG("client %d (ep: %d) connected\n", in->client, ipa_ep_idx);
 
@@ -399,11 +367,6 @@ int ipa_disconnect(u32 clnt_hdl)
 
 	ep = &ipa_ctx->ep[clnt_hdl];
 
-	if (ep->suspended) {
-		ipa_inc_client_enable_clks();
-		ep->suspended = false;
-	}
-
 	result = ipa_disable_data_path(clnt_hdl);
 	if (result) {
 		IPAERR("disable data path failed res=%d clnt=%d.\n", result,
@@ -447,13 +410,6 @@ int ipa_disconnect(u32 clnt_hdl)
 		return -EPERM;
 	}
 
-	if (IPA_CLIENT_IS_CONS(ep->client)) {
-		dma_unmap_single(NULL, ep->dma_addr,
-				sizeof(struct ipa_ip_packet_init),
-				DMA_TO_DEVICE);
-		kfree(ep->cmd);
-	}
-
 	ipa_enable_data_path(clnt_hdl);
 	memset(&ipa_ctx->ep[clnt_hdl], 0, sizeof(struct ipa_ep_context));
 
@@ -466,79 +422,55 @@ int ipa_disconnect(u32 clnt_hdl)
 EXPORT_SYMBOL(ipa_disconnect);
 
 /**
- * ipa_resume() - low-level IPA client resume
+ * ipa_connection_suspend() - suspend B2B connection to/from IPA
  * @clnt_hdl:	[in] opaque client handle assigned by IPA to client
  *
- * Should be called by the driver of the peripheral that wants to resume IPA
- * connection. Resume IPA connection results in turning on IPA clocks in
- * case they were off as a result of suspend.
- * this api can be called only if a call to ipa_suspend() was
- * made.
+ * Should be called by the driver of the peripheral that wants to suspend
+ * its BAM-BAM connection to/from IPA in BAM-BAM mode. The pipe is not
+ * disconnected and must later be resumed before data transfer can begin
  *
  * Returns:	0 on success, negative on failure
  *
  * Note:	Should not be called from atomic context
  */
-int ipa_resume(u32 clnt_hdl)
+int ipa_connection_suspend(u32 clnt_hdl)
 {
-	struct ipa_ep_context *ep;
+	int result;
 
 	if (clnt_hdl >= IPA_NUM_PIPES || ipa_ctx->ep[clnt_hdl].valid == 0) {
-		IPAERR("bad parm. clnt_hdl %d\n", clnt_hdl);
+		IPAERR("bad parm.\n");
 		return -EINVAL;
 	}
+	result = ipa_disable_data_path(clnt_hdl);
+	if (result)
+		IPAERR("disable data path failed res=%d clnt=%d.\n", result,
+				clnt_hdl);
 
-	ep = &ipa_ctx->ep[clnt_hdl];
-
-	if (!ep->suspended) {
-		IPAERR("EP not suspended. clnt_hdl %d\n", clnt_hdl);
-		return -EPERM;
-	}
-
-	ipa_inc_client_enable_clks();
-	ep->suspended = false;
-
-	return 0;
+	return result;
 }
-EXPORT_SYMBOL(ipa_resume);
+EXPORT_SYMBOL(ipa_connection_suspend);
 
 /**
-* ipa_suspend() - low-level IPA client suspend
-* @clnt_hdl:	[in] opaque client handle assigned by IPA to client
-*
-* Should be called by the driver of the peripheral that wants to suspend IPA
-* connection. Suspend IPA connection results in turning off IPA clocks in
-* case that there is no active clients using IPA. Pipes remains connected in
-* case of suspend.
-*
-* Returns:	0 on success, negative on failure
-*
-* Note:	Should not be called from atomic context
-*/
-int ipa_suspend(u32 clnt_hdl)
+ * ipa_connection_resume() - resume B2B connection to/from IPA
+ * @clnt_hdl:	[in] opaque client handle assigned by IPA to client
+ *
+ * Should be called by the driver of the peripheral that wants to resume
+ * its previously suspended BAM-BAM connection to/from IPA in BAM-BAM mode.
+ *
+ * Returns:	0 on success, negative on failure
+ *
+ * Note:	Should not be called from atomic context
+ */
+int ipa_connection_resume(u32 clnt_hdl)
 {
-	struct ipa_ep_context *ep;
-
 	if (clnt_hdl >= IPA_NUM_PIPES || ipa_ctx->ep[clnt_hdl].valid == 0) {
-		IPAERR("bad parm. clnt_hdl %d\n", clnt_hdl);
+		IPAERR("bad parm.\n");
 		return -EINVAL;
 	}
 
-	ep = &ipa_ctx->ep[clnt_hdl];
-
-	if (ep->suspended) {
-		IPAERR("EP already suspended. clnt_hdl %d\n", clnt_hdl);
-		return -EPERM;
-	}
-
-	if (IPA_CLIENT_IS_CONS(ep->client) &&
-				ep->cfg.aggr.aggr_en == IPA_ENABLE_AGGR &&
-				ep->cfg.aggr.aggr_time_limit)
-		msleep(ep->cfg.aggr.aggr_time_limit);
-
-	ipa_dec_client_disable_clks();
-	ep->suspended = true;
+	ipa_enable_data_path(clnt_hdl);
 
 	return 0;
 }
-EXPORT_SYMBOL(ipa_suspend);
+EXPORT_SYMBOL(ipa_connection_resume);
+

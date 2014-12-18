@@ -200,8 +200,8 @@
 #define TSENS0_8X10_POINT1_SHIFT	16
 #define TSENS0_8X10_POINT2_SHIFT	22
 #define TSENS1_8X10_POINT2_SHIFT	6
-#define TSENS_8X10_BASE0_MASK		0xff
-#define TSENS_8X10_BASE1_MASK		0xff00
+#define TSENS_8X10_BASE0_MASK		0xf
+#define TSENS_8X10_BASE1_MASK		0xf0
 #define TSENS0_8X10_POINT1_MASK		0x3f0000
 #define TSENS0_8X10_POINT2_MASK		0xfc00000
 #define TSENS_8X10_TSENS_CAL_SEL	0x70000000
@@ -559,10 +559,6 @@ static int tsens_tz_set_trip_temp(struct thermal_zone_device *thermal,
 	unsigned int reg_cntl;
 	int code, hi_code, lo_code, code_err_chk, sensor_sw_id = 0, rc = 0;
 
-	pr_info("%s debug trip = %d, temp = %ld\n", __func__, trip, temp);
-	if (!tm_sensor || trip < 0 || !temp)
-		return -EINVAL;
-
 	rc = tsens_get_sw_id_mapping(tm_sensor->sensor_hw_num, &sensor_sw_id);
 	if (rc < 0) {
 		pr_err("tsens mapping index not found\n");
@@ -667,7 +663,7 @@ static void tsens_scheduler_fn(struct work_struct *work)
 					&sensor_sw_id);
 			if (rc < 0)
 				pr_err("tsens mapping index not found\n");
-			pr_info("sensor:%d trigger temp (%d degC)\n",
+			pr_debug("sensor:%d trigger temp (%d degC)\n",
 				tm->sensor[i].sensor_hw_num,
 				tsens_tz_code_to_degc((status &
 				TSENS_SN_STATUS_TEMP_MASK),
@@ -1329,7 +1325,7 @@ static int tsens_calib_sensors(void)
 
 static int get_device_tree_data(struct platform_device *pdev)
 {
-	struct device_node *of_node = pdev->dev.of_node;
+	const struct device_node *of_node = pdev->dev.of_node;
 	struct resource *res_mem = NULL;
 	u32 *tsens_slope_data;
 	u32 *sensor_id;
@@ -1357,13 +1353,8 @@ static int get_device_tree_data(struct platform_device *pdev)
 		return rc;
 	};
 
-	rc = of_property_read_string(of_node,
-				"qcom,calib-mode", &tsens_calib_mode);
-	if (rc) {
-		dev_err(&pdev->dev, "missing calib-mode\n");
-		return -ENODEV;
-	}
-
+	tsens_calib_mode = of_get_property(of_node,
+			"qcom,calib-mode", NULL);
 	if (!strncmp(tsens_calib_mode, "fuse_map1", 9))
 		calib_type = TSENS_CALIB_FUSE_MAP_8974;
 	else if (!strncmp(tsens_calib_mode, "fuse_map2", 9))

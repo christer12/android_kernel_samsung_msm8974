@@ -187,23 +187,6 @@ static int sdio_read_cccr(struct mmc_card *card, u32 ocr)
 				card->sw_caps.sd3_drv_type |= SD_DRIVER_TYPE_C;
 			if (data & SDIO_DRIVE_SDTD)
 				card->sw_caps.sd3_drv_type |= SD_DRIVER_TYPE_D;
-
-			ret = mmc_io_rw_direct(card, 0, 0,
-				SDIO_CCCR_INTERRUPT_EXTENSION, 0, &data);
-			if (ret)
-				goto out;
-			if (data & SDIO_SUPPORT_ASYNC_INTR) {
-				if (card->host->caps2 &
-				    MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE) {
-					data |= SDIO_ENABLE_ASYNC_INTR;
-					ret = mmc_io_rw_direct(card, 1, 0,
-						SDIO_CCCR_INTERRUPT_EXTENSION,
-						data, NULL);
-					if (ret)
-						goto out;
-					card->cccr.async_intr_sup = 1;
-				}
-			}
 		}
 
 		/* if no uhs mode ensure we check for high speed */
@@ -1281,41 +1264,6 @@ err:
 
 int sdio_reset_comm(struct mmc_card *card)
 {
-#if defined(CONFIG_BCM4339) || defined(CONFIG_BCM4335)
-	struct mmc_host *host = card->host;
-	u32 ocr;
-	int err;
-
-	printk("%s():\n", __func__);
-	mmc_claim_host(host);
-
-	mmc_go_idle(host);
-
-	mmc_set_clock(host, host->f_min);
-
-	err = mmc_send_io_op_cond(host, 0, &ocr);
-	if (err)
-		goto err;
-
-	host->ocr = mmc_select_voltage(host, ocr);
-	if (!host->ocr) {
-		err = -EINVAL;
-		goto err;
-	}
-
-	err = mmc_sdio_init_card(host, host->ocr, card, 0);
-	if (err)
-		goto err;
-
-	mmc_release_host(host);
-	return 0;
-err:
-	printk("%s: Error resetting SDIO communications (%d)\n",
-		mmc_hostname(host), err);
-	mmc_release_host(host);
-	return err;
-#else
 	return mmc_power_restore_host(card->host);
-#endif /* CONFIG_BCM4339 || CONFIG_BCM4335 */
 }
 EXPORT_SYMBOL(sdio_reset_comm);

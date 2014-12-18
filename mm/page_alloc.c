@@ -1661,7 +1661,6 @@ static bool __zone_watermark_ok(struct zone *z, int order, unsigned long mark,
 	long min = mark;
 	long lowmem_reserve = z->lowmem_reserve[classzone_idx];
 	int o;
-	long free_cma = 0;
 
 	free_pages -= (1 << order) - 1;
 	if (alloc_flags & ALLOC_HIGH)
@@ -1671,10 +1670,9 @@ static bool __zone_watermark_ok(struct zone *z, int order, unsigned long mark,
 #ifdef CONFIG_CMA
 	/* If allocation can't use CMA areas don't use free CMA pages */
 	if (!(alloc_flags & ALLOC_CMA))
-		free_cma = zone_page_state(z, NR_FREE_CMA_PAGES);
+		free_pages -= zone_page_state(z, NR_FREE_CMA_PAGES);
 #endif
-
-	if (free_pages - free_cma <= min + lowmem_reserve)
+	if (free_pages <= min + lowmem_reserve)
 		return false;
 	for (o = 0; o < order; o++) {
 		/* At the next order, this order's pages become unavailable */
@@ -2437,6 +2435,7 @@ rebalance:
 	if (test_thread_flag(TIF_MEMDIE) && !(gfp_mask & __GFP_NOFAIL))
 		goto nopage;
 
+#ifdef CONFIG_DIRECT_RECLAIM_ALLOW_COMPACTION
 	/*
 	 * Try direct compaction. The first pass is asynchronous. Subsequent
 	 * attempts after direct reclaim are synchronous
@@ -2450,6 +2449,7 @@ rebalance:
 					&did_some_progress);
 	if (page)
 		goto got_pg;
+#endif /* CONFIG_DIRECT_RECLAIM_ALLOW_COMPACTION */
 	sync_migration = true;
 
 	/*
@@ -2659,19 +2659,6 @@ EXPORT_SYMBOL(get_zeroed_page);
 void __free_pages(struct page *page, unsigned int order)
 {
 	if (put_page_testzero(page)) {
-#ifdef CONFIG_TIMA_RKP_DEBUG
-	//TODO: Do the check for all pages if order > 0
-	if (((unsigned long)__va(page_to_phys(page))) < ((unsigned long) high_memory)){
-		if (tima_debug_page_protection((unsigned long)__va(page_to_phys(page)), 6, 0) == 1) {
-			tima_debug_signal_failure(0x3f80f221, 6);
-			//tima_send_cmd((unsigned long)__va(page_to_phys(page)), 0x3f80e221);
-			//printk(KERN_ERR"TIMA: Freed PAGE prtctd va %lx pa %lx caller %lx\n",
-			// (unsigned long)__va(page_to_phys(page)),
-			// (unsigned long) page_to_phys(page),
-			// (unsigned long)__builtin_return_address(0));
-		}
-	}
-#endif
 		if (order == 0)
 			free_hot_cold_page(page, 0);
 		else

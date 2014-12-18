@@ -14,9 +14,6 @@
  *
  */
 
-#include <linux/fs.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/mm.h>
 #include <linux/mm_types.h>
 #include <linux/bootmem.h>
@@ -310,9 +307,6 @@ static int __init check_for_compat(unsigned long node)
 }
 extern int poweroff_charging, recovery_mode;
 
-static unsigned long reserved_size;
-static unsigned long removed_size;
-
 int __init dt_scan_for_memory_reserve(unsigned long node, const char *uname,
 		int depth, void *data)
 {
@@ -322,8 +316,6 @@ int __init dt_scan_for_memory_reserve(unsigned long node, const char *uname,
 	unsigned long memory_remove_prop_length;
 	unsigned long memory_size_prop_length;
 	unsigned int *memory_size_prop, *temp_memsize_prop;
-	unsigned int *memory_reserve_prop;
-	unsigned long memory_reserve_prop_length;
 	unsigned int memory_size;
 	unsigned int memory_start;
 	int ret;
@@ -335,11 +327,7 @@ int __init dt_scan_for_memory_reserve(unsigned long node, const char *uname,
 						"qcom,memblock-remove",
 						&memory_remove_prop_length);
 
-	memory_reserve_prop = of_get_flat_dt_prop(node,
-						"qcom,memblock-reserve",
-						&memory_reserve_prop_length);
-
-	if (memory_name_prop || memory_remove_prop || memory_reserve_prop) {
+	if (memory_name_prop || memory_remove_prop) {
 		if (!check_for_compat(node))
 			goto out;
 	} else {
@@ -392,7 +380,7 @@ mem_remove:
 	if (memory_remove_prop) {
 		if (memory_remove_prop_length != (2*sizeof(unsigned int))) {
 			WARN(1, "Memory remove malformed\n");
-			goto mem_reserve;
+			goto out;
 		}
 
 		memory_start = be32_to_cpu(memory_remove_prop[0]);
@@ -402,61 +390,16 @@ mem_remove:
 		if (ret)
 			WARN(1, "Failed to remove memory %x-%x\n",
 				memory_start, memory_start+memory_size);
-		else {
-			removed_size += memory_size;
-			pr_info("Node %s removed memory %x-%x(total %lx)\n", uname,
-				memory_start, memory_start+memory_size, removed_size);
-		}
-	}
-
-mem_reserve:
-
-	if (memory_reserve_prop) {
-		if (memory_reserve_prop_length != (2*sizeof(unsigned int))) {
-			WARN(1, "Memory reserve malformed\n");
-			goto out;
-		}
-
-		memory_start = be32_to_cpu(memory_reserve_prop[0]);
-		memory_size = be32_to_cpu(memory_reserve_prop[1]);
-
-		ret = memblock_reserve(memory_start, memory_size);
-		if (ret)
-			WARN(1, "Failed to reserve memory %x-%x\n",
+		else
+			pr_info("Node %s removed memory %x-%x\n", uname,
 				memory_start, memory_start+memory_size);
-		else {
-			reserved_size += memory_size;
-			pr_info("Node %s memblock_reserve memory %x-%x(total %lx)\n",
-				uname, memory_start, memory_start+memory_size, reserved_size);
-		}
 	}
 
 out:
 	return 0;
 }
 
-/* Function to remove any meminfo blocks which are of size zero */
-static void merge_meminfo(void)
-{
-	int i = 0;
-
-	while (i < meminfo.nr_banks) {
-		struct membank *bank = &meminfo.bank[i];
-
-		if (bank->size == 0) {
-			memmove(bank, bank + 1,
-			(meminfo.nr_banks - i) * sizeof(*bank));
-			meminfo.nr_banks--;
-			continue;
-		}
-		i++;
-	}
-}
-
-/*
- * Function to scan the device tree and adjust the meminfo table to
- * reflect the memory holes.
- */
+/* This function scans the device tree to populate the memory hole table */
 int __init dt_scan_for_memory_hole(unsigned long node, const char *uname,
 		int depth, void *data)
 {
@@ -485,6 +428,16 @@ int __init dt_scan_for_memory_hole(unsigned long node, const char *uname,
 		hole_start = be32_to_cpu(memory_remove_prop[0]);
 		hole_size = be32_to_cpu(memory_remove_prop[1]);
 
+		if (hole_start + hole_size <= MAX_HOLE_ADDRESS) {
+			if (memory_hole_start == 0 && memory_hole_end == 0) {
+				memory_hole_start = hole_start;
+				memory_hole_end = hole_start + hole_size;
+			} else if ((memory_hole_end - memory_hole_start)
+							<= hole_size) {
+				memory_hole_start = hole_start;
+				memory_hole_end = hole_start + hole_size;
+			}
+		}
 		adjust_meminfo(hole_start, hole_size);
 	}
 
@@ -514,7 +467,6 @@ void adjust_meminfo(unsigned long start, unsigned long size)
 			bank[1].start = (start + size);
 			bank[1].size -= (bank->size + size);
 			bank[1].highmem = 0;
-			merge_meminfo();
 		}
 	}
 }
@@ -529,42 +481,6 @@ unsigned long get_ddr_size(void)
 
 	return ret;
 }
-
-static unsigned long get_removed_size(void)
-{
-	return removed_size;
-
-}
-
-static unsigned long get_reserved_size(void)
-{
-	return reserved_size;
-}
-
-static int sec_ddrsize_proc_show(struct seq_file *m, void *v)
-{
-	unsigned int total_size = get_ddr_size()+get_removed_size()+get_reserved_size();
-	seq_printf(m, "%d\n", total_size >> (20));
-	return 0;
-}
-
-static int sec_ddrsize_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, sec_ddrsize_proc_show, NULL);
-}
-
-static const struct file_operations sec_ddrsize_proc_fops = {
-	.open	= sec_ddrsize_proc_open,
-	.read	= seq_read,
-	.llseek	= seq_lseek,
-	.release = single_release,
-};
-
-void samsung_proc_ddrsize_init(void)
-{
-	proc_create("sec_ddrsize", 0, NULL, &sec_ddrsize_proc_fops);
-}
-EXPORT_SYMBOL(samsung_proc_ddrsize_init);
 
 /* Provide a string that anonymous device tree allocations (those not
  * directly associated with any driver) can use for their "compatible"

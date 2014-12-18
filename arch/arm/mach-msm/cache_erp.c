@@ -423,7 +423,7 @@ static irqreturn_t msm_l2_erp_irq(int irq, void *dev_id)
 
 	if (l2esr & L2ESR_DSESB) {
 		pr_alert("L2 data soft error, single-bit\n");
-		//soft_error++;
+		soft_error++;
 		msm_l2_erp_stats.dsesb++;
 	}
 

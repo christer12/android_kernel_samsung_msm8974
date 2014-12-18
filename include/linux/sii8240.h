@@ -33,19 +33,6 @@ enum connector_type {
 	CONN_30_PIN,    /* Galaxy Tabs */
 };
 
-enum mhl_sleep_state {
-	MHL_SUSPEND_STATE = 0,
-	MHL_RESUME_STATE = 1,
-};
-
-enum mhl_gpio_type {
-	MHL_GPIO_UNKNOWN_TYPE = 0,
-	MHL_GPIO_AP_GPIO = 1,
-	MHL_GPIO_PM_GPIO = 2,
-	MHL_GPIO_PM_MPP = 3,
-};
-
-
 struct sii8240_platform_data {
 /* Called to setup board-specific power operations */
 	void (*power)(bool on);
@@ -65,15 +52,14 @@ struct sii8240_platform_data {
 	int (*unreg_notifier)(struct notifier_block *nb);
 	u8 power_state;
 	u32 swing_level;
-	bool drm_workaround;
 	int ddc_i2c_num;
 	void (*mhl_sel)(bool enable);
 	int (*get_irq)(void);
 	int gpio;
 	void (*hw_reset)(void);
-	void (*gpio_cfg)(enum mhl_sleep_state sleep_status);
+	void (*gpio_cfg)(void);
 	void (*vbus_present)(bool on, int mhl_charger);
-	int (*muic_otg_set)(int on);
+	void (*muic_otg_set)(int on);
 	/* void (*vbus_present)(bool on); */
 #ifdef CONFIG_SAMSUNG_MHL_UNPOWERED
 	int (*get_vbus_status)(void);
@@ -86,10 +72,7 @@ struct sii8240_platform_data {
 	int gpio_mhl_en;
 	int gpio_mhl_reset;
 	int gpio_mhl_wakeup;
-	int gpio_ta_int;
 	bool gpio_barcode_emul;
-	enum mhl_gpio_type gpio_mhl_reset_type;
-	enum mhl_gpio_type gpio_mhl_en_type;
 	struct regulator *vcc_1p2v;
 	struct regulator *vcc_1p8v;
 	struct regulator *vcc_3p3v;

@@ -15,24 +15,14 @@
 #include "ssp.h"
 
 #define SSP_FIRMWARE_REVISION		101901
-#ifdef CONFIG_SENSORS_SSP_BOUNCE_FIRMWARE
-#define SSP_FIRMWARE_REVISION_STM	13092300 /* Latest, 88922*/
-#else
-#define SSP_FIRMWARE_REVISION_STM	13091100 /* Latest, 88922*/
-#endif
-#define SSP_FIRMWARE_REVISION_STM_88921	13072401 /* 88921 */
+#define SSP_FIRMWARE_REVISION_STM	13053101 /*MCU L5, 6500*/
 #define SSP_FIRMWARE_REVISION_STM_RVS	13051500
 
 #define BOOT_SPI_HZ	960000
 #define NORM_SPI_HZ	4800000
 
 /* Bootload mode cmd */
-#define BL_FW_NAME_88921			"ssp_stm_88921.fw"
-#ifdef CONFIG_SENSORS_SSP_BOUNCE_FIRMWARE
-#define BL_FW_NAME			"ssp_stm_bf.fw"
-#else
 #define BL_FW_NAME			"ssp_stm.fw"
-#endif
 #define BL_FW_NAME_REVERSED			"ssp_stm_rvs.fw"
 #define BL_UMS_FW_NAME			"ssp_stm.bin"
 #define BL_CRASHED_FW_NAME		"ssp_crashed.fw"
@@ -103,24 +93,15 @@ struct stm32fwu_spi_cmd {
 
 unsigned int get_module_rev(struct ssp_data *data)
 {
-#if defined (CONFIG_SEC_MONTBLANC_PROJECT)
-	if (data->ap_rev > 1)
-		return SSP_FIRMWARE_REVISION_STM;
+	if (data->ssp_changes == SSP_MCU_L0)
+		return SSP_FIRMWARE_REVISION;
 	else
-	return SSP_FIRMWARE_REVISION_STM_88921;
-#else
-	if (data->ap_rev > 3)
 		return SSP_FIRMWARE_REVISION_STM;
-	else
-		return SSP_FIRMWARE_REVISION_STM_88921;
-#endif
 }
 
 static int stm32fwu_spi_wait_for_ack(struct spi_device *spi,
 				     struct stm32fwu_spi_cmd *cmd, u8 dummy_bytes)
 {
-	static int check_spi_wait_cnt = 1;
-
 	struct spi_message m;
 	char tx_buf = 0x0;
 	char rx_buf = 0x0;
@@ -152,12 +133,8 @@ static int stm32fwu_spi_wait_for_ack(struct spi_device *spi,
 		} else if (rx_buf == BL_NACK) {
 			return (int)rx_buf;
 		}
-		if (check_spi_wait_cnt % 20 == 0)
-			msleep(1);
-		else
-			usleep_range(1000, 1100);
+		usleep_range(1000, 1100);
 		i++;
-		check_spi_wait_cnt++;
 	}
 #if SSP_STM_DEBUG
 	dev_err(&spi->dev, "%s: Timeout after %d loops\n", __func__, cmd->timeout);
@@ -554,7 +531,7 @@ static int load_ums_fw_bootmode(struct spi_device *spi, const char *pFn)
 		remaining -= block;
 		uPos += block;
 		fw_addr += block;
-		if (count++ == 50) {
+		if (count++ == 20) {
 			pr_info("[SSP] Updated %u bytes / %u bytes\n", uPos,
 				uFSize);
 			count = 0;
@@ -750,32 +727,17 @@ static int update_mcu_bin(struct ssp_data *data, int iBinType)
 	switch (iBinType) {
 	case KERNEL_BINARY:
 	 /* HW request: I2C line is reversed */
-#if defined (CONFIG_SEC_MONTBLANC_PROJECT)
-	if (data->ap_rev > 1)
-	iRet = load_kernel_fw_bootmode(data->spi,
-		BL_FW_NAME);
-	else
-	iRet = load_kernel_fw_bootmode(data->spi,
-			BL_FW_NAME_88921);
-
-#elif defined (CONFIG_MACH_HLTEVZW) || defined (CONFIG_MACH_HLTESPR) \
+#if defined (CONFIG_MACH_HLTEVZW) || defined (CONFIG_MACH_HLTESPR) \
 	|| defined (CONFIG_MACH_HLTEUSC)
-		if (data->ap_rev > 3)
+		if (data->ap_rev > 2)
 			iRet = load_kernel_fw_bootmode(data->spi,
 				BL_FW_NAME);
-		else if (data->ap_rev > 2)
-			iRet = load_kernel_fw_bootmode(data->spi,
-				BL_FW_NAME_88921);
 		else
 			iRet = load_kernel_fw_bootmode(data->spi,
 				BL_FW_NAME_REVERSED);
 #else
-		if (data->ap_rev > 3)
 		iRet = load_kernel_fw_bootmode(data->spi,
 			BL_FW_NAME);
-		else
-			iRet = load_kernel_fw_bootmode(data->spi,
-				BL_FW_NAME_88921);
 #endif
 		break;
 	case KERNEL_CRASHED_BINARY:
@@ -833,8 +795,6 @@ int forced_to_download_binary(struct ssp_data *data, int iBinType)
 
 	data->fw_dl_state = FW_DL_STATE_SYNC;
 	pr_info("[SSP] %s, DL state = %d\n", __func__, data->fw_dl_state);
-	ssp_enable(data, true);
-
 	iRet = initialize_mcu(data);
 	if (iRet < 0) {
 		iRet = ERROR;
@@ -842,15 +802,7 @@ int forced_to_download_binary(struct ssp_data *data, int iBinType)
 		goto out;
 	}
 
-	proximity_open_lcd_ldi(data);
-	proximity_open_calibration(data);
-	accel_open_calibration(data);
-	gyro_open_calibration(data);
-	pressure_open_calibration(data);
-	if (mag_open_hwoffset(data) < 0)
-		pr_info("[SSP]: %s - mag_open_hw_offset"
-			" failed, %d\n", __func__, iRet);
-
+	ssp_enable(data, true);
 	sync_sensor_state(data);
 
 #ifdef CONFIG_SENSORS_SSP_SENSORHUB
@@ -865,33 +817,40 @@ out:
 	return iRet;
 }
 
+static unsigned int check_firmware_rev(struct ssp_data *data)
+{
+	char chTxData = MSG2SSP_AP_FIRMWARE_REV;
+	char chRxBuf[3] = {0,};
+	unsigned int uRev = SSP_INVALID_REVISION;
+	int iRet;
+
+	iRet = ssp_i2c_read(data, &chTxData, 1, chRxBuf, 3, DEFAULT_RETRIES);
+	if (iRet != SUCCESS) {
+		pr_err("[SSP]: %s - i2c fail %d\n", __func__, iRet);
+	} else
+		uRev = ((unsigned int)chRxBuf[0] << 16)
+			| ((unsigned int)chRxBuf[1] << 8) | chRxBuf[2];
+	return uRev;
+}
+
 int check_fwbl(struct ssp_data *data)
 {
 
 	unsigned int fw_revision;
 
 	pr_info("[SSP] change_rev = %d\n", data->ssp_changes);
-#if defined (CONFIG_SEC_MONTBLANC_PROJECT)
-	if (data->ap_rev > 1)
-		fw_revision = SSP_FIRMWARE_REVISION_STM;
-	else
-	fw_revision = SSP_FIRMWARE_REVISION_STM_88921;
-#elif defined (CONFIG_MACH_HLTEVZW) || defined (CONFIG_MACH_HLTESPR) \
+
+#if defined (CONFIG_MACH_HLTEVZW) || defined (CONFIG_MACH_HLTESPR) \
 	|| defined (CONFIG_MACH_HLTEUSC)
-		if (data->ap_rev > 3)
+		if (data->ap_rev > 2)
 			fw_revision = SSP_FIRMWARE_REVISION_STM;
-		else if (data->ap_rev > 2)
-			fw_revision = SSP_FIRMWARE_REVISION_STM_88921;
 		else
 			fw_revision = SSP_FIRMWARE_REVISION_STM_RVS;
 #else
-	if (data->ap_rev > 3)
-		fw_revision = SSP_FIRMWARE_REVISION_STM;
-	else
-		fw_revision = SSP_FIRMWARE_REVISION_STM_88921;
+	fw_revision = SSP_FIRMWARE_REVISION_STM;
 #endif
 
-	data->uCurFirmRev = get_firmware_rev(data);
+	data->uCurFirmRev = check_firmware_rev(data);
 
 	if ((data->uCurFirmRev == SSP_INVALID_REVISION) \
 		|| (data->uCurFirmRev == SSP_INVALID_REVISION2)) {

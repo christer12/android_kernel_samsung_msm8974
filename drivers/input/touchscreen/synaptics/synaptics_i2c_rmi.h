@@ -33,14 +33,13 @@
 /* DVFS feature : TOUCH BOOSTER */
 #define TSP_BOOSTER
 #ifdef TSP_BOOSTER
-#define DVFS_STAGE_TRIPLE	3
 #define DVFS_STAGE_DUAL		2
 #define DVFS_STAGE_SINGLE	1
 #define DVFS_STAGE_NONE		0
 #include <linux/cpufreq.h>
 
-#define TOUCH_BOOSTER_OFF_TIME	500
-#define TOUCH_BOOSTER_CHG_TIME	130
+#define TOUCH_BOOSTER_OFF_TIME	300
+#define TOUCH_BOOSTER_CHG_TIME	200
 #endif
 
 /* To support suface touch, firmware should support data
@@ -49,90 +48,31 @@
  * fucntionality.
  */
 #define SURFACE_TOUCH
-#define PROXIMITY
-#define EDGE_SWIPE
+
 #define	USE_OPEN_CLOSE
-#define GLOVE_MODE
-#define READ_LCD_ID
-#define HAND_GRIP_MODE
-
-#if defined(CONFIG_SEC_H_PROJECT)
-#define USE_HOVER_REZERO
-#endif
-
-#if defined(CONFIG_SEC_H_PROJECT) || defined(CONFIG_SEC_JS_PROJECT)
-#define TSP_INIT_COMPLETE
-#else
-#undef TSP_INIT_COMPLETE
-#endif
-
-#if defined(CONFIG_SEC_F_PROJECT) || defined(CONFIG_SEC_JVE_PROJECT)
-#define TOUCKEY_ENABLE
-#endif
-#if defined(CONFIG_SEC_F_PROJECT)
-#define TOUCHKEY_CHANNEL_ADD
-#define EDGE_SWIPE_SCALE
-#endif
-
-
-/* TA_CON mode @ H mode */
-
-#if defined(CONFIG_SEC_H_PROJECT)
-
-#if defined(CONFIG_MACH_HLTEATT) || defined(CONFIG_MACH_HLTETMO)
-#define TA_CON_REVISION		0x08
-#elif defined(CONFIG_MACH_HLTEEUR) || defined(CONFIG_MACH_HLTEVZW) ||\
-	defined(CONFIG_MACH_HLTESPR) || defined(CONFIG_MACH_HLTEUSC) ||\
-	defined(CONFIG_MACH_HLTEDCM)
-#define TA_CON_REVISION		0x07
-#elif defined(CONFIG_MACH_HLTEKDI)
-#define TA_CON_REVISION		0x05
-#elif defined(CONFIG_MACH_HLTESKT) || defined(CONFIG_MACH_HLTEKTT) ||\
-	defined(CONFIG_MACH_HLTELGT)
-#define TA_CON_REVISION		0x04
-#else
-#define TA_CON_REVISION		0xFF
-#endif
-
-#elif defined(CONFIG_SEC_F_PROJECT)
-#define TA_CON_REVISION		0x08
-
-#elif defined(CONFIG_SEC_JVE_PROJECT)
-#define TA_CON_REVISION		0x10
-
-#else
-#define TA_CON_REVISION		0xFF
-#endif
-
-#ifdef GLOVE_MODE
-#define GLOVE_MODE_EN (1 << 0)
-#define CLOSED_COVER_EN (1 << 1)
-#define FAST_DETECT_EN (1 << 2)
+#ifdef USE_OPEN_CLOSE
+/*#define USE_OPEN_DWORK*/
 #endif
 
 #ifdef USE_OPEN_DWORK
 #define TOUCH_OPEN_DWORK_TIME 10
 #endif
 
-#define SYNAPTICS_HW_RESET_TIME	100
+/* To recovery the device from ghost touch  */
+#undef TSP_PATTERN_TRACKING_METHOD
+
+#define SYNAPTICS_HW_RESET_TIME	80
+#define SYNAPTICS_REZERO_TIME 100
 #define SYNAPTICS_POWER_MARGIN_TIME	150
+
 
 #define SYNAPTICS_PRODUCT_ID_NONE	0
 #define SYNAPTICS_PRODUCT_ID_S5000	1
 #define SYNAPTICS_PRODUCT_ID_S5050	2
 
-#define FW_IMAGE_NAME_NONE		NULL
-#define FW_IMAGE_NAME_S5000		"tsp_synaptics/synaptics_s5000.fw"
 #define FW_IMAGE_NAME_S5050		"tsp_synaptics/synaptics.fw"
-#define FW_IMAGE_NAME_S5050_NONTR	"tsp_synaptics/synaptics_nonTR.fw"
-#define FW_IMAGE_NAME_S5050_F		"tsp_synaptics/synaptics_f.fw"
-#define FW_IMAGE_NAME_S5050_HSYNCF		"tsp_synaptics/synaptics_f_HSYNC.fw"
-#define FW_IMAGE_NAME_S5050_J	"tsp_synaptics/synaptics_j.fw"
-#define FW_IMAGE_NAME_S5050_G2_J	"tsp_synaptics/synaptics_g2_j.fw"
-
-#define SYNAPTICS_FACTORY_TEST_PASS		2
-#define SYNAPTICS_FACTORY_TEST_FAIL		1
-#define SYNAPTICS_FACTORY_TEST_NONE		0
+#define FW_IMAGE_NAME_S5000		"tsp_synaptics/synaptics_s5000.fw"
+#define FW_IMAGE_NAME_NONE		NULL
 
 #define SYNAPTICS_MAX_FW_PATH	64
 
@@ -358,10 +298,6 @@ struct synaptics_rmi4_data {
 	unsigned short f01_cmd_base_addr;
 	unsigned short f01_ctrl_base_addr;
 	unsigned short f01_data_base_addr;
-	unsigned short f12_ctrl11_addr;
-	unsigned short f12_ctrl26_addr;
-	unsigned short f12_ctrl28_addr;
-	unsigned short f34_ctrl_base_addr;
 	int irq;
 	int sensor_max_x;
 	int sensor_max_y;
@@ -380,15 +316,7 @@ struct synaptics_rmi4_data {
 	bool stay_awake;
 	bool staying_awake;
 	bool tsp_probe;
-	bool firmware_cracked;
 
-#if defined(CONFIG_SEC_F_PROJECT) || defined(CONFIG_SEC_JVE_PROJECT)
-	int touchkey_menu;
-	int touchkey_back;
-	bool touchkey_led;
-#endif
-
-	int ic_version;				/* define S5000, S5050 */
 	int ic_revision_of_ic;
 	int ic_revision_of_bin;		/* revision of reading from binary */
 	int fw_version_of_ic;		/* firmware version of IC */
@@ -396,9 +324,6 @@ struct synaptics_rmi4_data {
 	int fw_release_date_of_ic;	/* Config release data from IC */
 	bool doing_reflash;
 	int rebootcount;
-#ifdef READ_LCD_ID
-	int lcd_id;
-#endif
 
 	struct regulator *vcc_en;
 
@@ -406,7 +331,6 @@ struct synaptics_rmi4_data {
 	int bootmode;
 #endif
 
-	bool ta_con_mode;	/* ta_con_mode == true ? I2C (RMI) : INT(GPIO) */
 
 #ifdef TSP_BOOSTER
 	struct delayed_work	work_dvfs_off;
@@ -417,28 +341,23 @@ struct synaptics_rmi4_data {
 	int dvfs_boost_mode;
 	int dvfs_freq;
 #endif
+
 	bool hover_status_in_normal_mode;
-
-#ifdef USE_HOVER_REZERO
-	struct delayed_work rezero_work;
-#endif
-
+#ifdef CONFIG_GLOVE_TOUCH
+	unsigned char glove_mode_feature;
+	unsigned char glove_mode_enables;
+	unsigned short glove_mode_enables_addr;
 	bool fast_glove_state;
 	bool touchkey_glove_mode_status;
-
+#endif
 #ifdef USE_OPEN_DWORK
 	struct delayed_work open_work;
 #endif
-	struct mutex rmi4_device_mutex;
-
-#ifdef HAND_GRIP_MODE
-	unsigned int  hand_grip_mode;
-	unsigned int hand_grip;
-	unsigned int old_hand_grip;
-	unsigned int old_code;
+	struct delayed_work rezero_work;
+#ifdef TSP_PATTERN_TRACKING_METHOD
+	struct delayed_work reboot_work;
 #endif
-
-	bool created_sec_class;
+	struct mutex rmi4_device_mutex;
 
 	void (*register_cb)(struct synaptics_rmi_callbacks *);
 	struct synaptics_rmi_callbacks callbacks;
@@ -485,20 +404,10 @@ int rmidb_module_register(void);
 int synaptics_fw_updater(unsigned char *fw_data);
 int synaptics_rmi4_fw_update_on_probe(struct synaptics_rmi4_data *rmi4_data);
 int synaptics_rmi4_proximity_enables(unsigned char enables);
+int synaptics_rmi4_glove_mode_enables(struct synaptics_rmi4_data *rmi4_data);
 int synaptics_proximity_no_sleep_set(bool enables);
-int synaptics_rmi4_f12_set_feature(struct synaptics_rmi4_data *rmi4_data);
-int synaptics_rmi4_set_tsp_test_result_in_config(int pass_fail);
-int synaptics_rmi4_tsp_read_test_result(struct synaptics_rmi4_data *rmi4_data);
-int synaptics_rmi4_f51_grip_edge_exclusion_rx(bool enables);
-
-int synaptics_rmi4_f12_ctrl11_set (struct synaptics_rmi4_data *rmi4_data,
-		unsigned char data);
 
 extern struct class *sec_class;
-
-#ifdef CONFIG_SAMSUNG_LPM_MODE
-extern int poweroff_charging;
-#endif
 
 static inline ssize_t synaptics_rmi4_show_error(struct device *dev,
 		struct device_attribute *attr, char *buf)

@@ -45,7 +45,7 @@ static struct spi_device *p_spi;
 
 static int spi_init_ipc(struct spi_link_device *spild);
 
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
+#if 1 //test DKLee add
 void spi_print_data(char *buf, int len)
 {
 	int words = len >> 4;
@@ -109,30 +109,6 @@ static void spi_send_work(int spi_sigs, bool spi_work_t)
 		queue_work(p_spild->spi_wq, (struct work_struct *)spi_wq);
 }
 
-
-static irqreturn_t spi_cp_dump_irq_handler(int irq, void *p_ld)
-{
-	struct link_device *ld = (struct link_device *)p_ld;
-	struct spi_link_device *spild = to_spi_link_device(ld);
-	irqreturn_t result = IRQ_HANDLED;
-
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
-	pr_info("[SPI] [%s] cp_dump_int irq received. \n",__func__);
-#endif
-
-	if (!spild->boot_done)
-		goto exit;
-
-	if (!wake_lock_active(&spild->spi_wake_lock)
-		&&  spild->send_modem_spi != 1) {
-		wake_lock(&spild->spi_wake_lock);
-		pr_debug("[SPI] [%s](%d) spi_wakelock locked . spild->spi_state[%d]\n",
-			__func__, __LINE__, (int)spild->spi_state);
-	}
-exit:
-	return result;
-}
-
 static irqreturn_t spi_srdy_irq_handler(int irq, void *p_ld)
 {
 	struct link_device *ld = (struct link_device *)p_ld;
@@ -141,10 +117,8 @@ static irqreturn_t spi_srdy_irq_handler(int irq, void *p_ld)
 
 	irqreturn_t result = IRQ_HANDLED;
 
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
-	pr_info("[SPI] [%s](%d) irq received. spild->spi_state[%d]\n",
+	pr_err("[SPI] [%s](%d) irq received. spild->spi_state[%d]\n",
 				__func__, __LINE__, (int)spild->spi_state);
-#endif
 
 	if (!spild->boot_done)
 		goto exit1;
@@ -172,10 +146,8 @@ static irqreturn_t spi_srdy_irq_handler(int irq, void *p_ld)
 		if (iod->mc->phone_state != STATE_ONLINE)
 			goto exit;
 
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
 		pr_err("[SPI] [%s](%d)call spi_send_work spild->spi_state[%d]\n",
 					__func__, __LINE__, (int)spild->spi_state);
-#endif
 
 		spi_send_work(SPI_WORK_RECEIVE, SPI_WORK_FRONT);
 	}
@@ -347,7 +319,7 @@ static int spi_register_isr
 			__func__, ret);
 		goto err;
 	}
-
+#if 0
 	ret = enable_irq_wake(irq);
 	if (ret) {
 		pr_err("[LNK/E] <%s> enable_irq_wake fail (%d)\n",
@@ -355,7 +327,7 @@ static int spi_register_isr
 		free_irq(irq, ld);
 		goto err;
 	}
-
+#endif
 	pr_debug("[LNK] <%s> IRQ#%d handler is registered.\n", __func__, irq);
 
 err:
@@ -385,10 +357,8 @@ int spi_tx_rx_sync(u8 *tx_d, u8 *rx_d, unsigned len)
 	//t.bits_per_word = 8;
 //	t.speed_hz = 10800000;
 
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG
 	printk("%s : len :- %d\n", __func__, len);
 	printk("%s : mode :- %d\n", __func__, p_spi->mode);
-#endif
 
 	spi_message_init(&msg);
 	spi_message_add_tail(&t, &msg);
@@ -610,6 +580,8 @@ static void spi_tx_work(void)
 		spild->spi_state = SPI_STATE_IDLE;
 		spi_start_data_send();
 	} else
+		pr_err("[SPI] ERR : _start_packet_tx:spild->spi_state[%d]",
+			(int)spild->spi_state);
 
 	return;
 }
@@ -814,7 +786,7 @@ static void spi_rx_work(void)
 		SPI_MAX_PACKET_SIZE) == 0) {
 #endif
 
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG //DKLee test tem log
+#if 1 //DKLee test tem log
 		mif_err("Data from CP\n");
 		spi_print_data(spi_packet_buf, 64);
 #endif
@@ -853,7 +825,7 @@ static void spi_rx_work(void)
 	spild->spi_state = SPI_STATE_IDLE;
 	spi_start_data_send();
 
-#ifdef CONFIG_LINK_DEVICE_SPI_DEBUG //DKLee test tem log
+#if 0 //DKLee test tem log
 	mif_err("Data from CP END\n");
 	spi_print_data(spi_packet_buf, 64);
 #endif
@@ -1689,7 +1661,6 @@ static int __devinit if_spi_platform_probe(struct platform_device *pdev)
 	p_spild->gpio_ipc_srdy = pdata->gpio_ipc_srdy;
 	p_spild->gpio_ipc_sub_mrdy = pdata->gpio_ipc_sub_mrdy;
 	p_spild->gpio_ipc_sub_srdy = pdata->gpio_ipc_sub_srdy;
-	p_spild->gpio_cp_dump_int = pdata->gpio_cp_dump_int;
 	p_spild->gpio_modem_bin_srdy = pdata->gpio_ipc_srdy;
 
 	pr_info("(%d) gpio_mrdy : %d, gpio_srdy : %d(%d)\n",
@@ -1711,10 +1682,7 @@ static int __devinit if_spi_platform_probe(struct platform_device *pdev)
 		od->mmio = p_spild->p_virtual_buff;
 	ret = _request_mem(od, pdev);
 	if (ret)
-	{
-		kfree(od);
 		goto err;
-	}
 
 	sema_init(&p_spild->srdy_sem, 0);
 
@@ -1726,15 +1694,6 @@ static int __devinit if_spi_platform_probe(struct platform_device *pdev)
 	wake_lock_init(&p_spild->spi_wake_lock,
 		       WAKE_LOCK_SUSPEND,
 		       "samsung-spiwakelock");
-
-	/* Register CP_DUMP_INT interrupt handler */
-	ret = spi_register_isr(gpio_to_irq(p_spild->gpio_cp_dump_int),
-				 spi_cp_dump_irq_handler,
-				 IRQF_TRIGGER_RISING,
-				 "spi_cp_dump_rising",
-				 ld);
-	if (ret)
-		goto err;
 
 	/* Register SPI Srdy interrupt handler */
 	ret = spi_register_isr(gpio_to_irq(p_spild->gpio_ipc_srdy),
@@ -1775,14 +1734,11 @@ static int __devexit if_spi_platform_remove(struct platform_device *pdev)
 
 static int if_spi_probe(struct spi_device *spi)
 {
-	int ret=0;
+	int ret;
+
+	pr_info("[%s]\n", __func__);
 
 	p_spi = spi;
-
-	mif_info("if-spi->mode : [%d]\n", p_spi->mode);
-	mif_info("if_spi->bits_per_word : [%d]\n", p_spi->bits_per_word);
-
-#if 0
 	p_spi->mode = SPI_MODE_1;
 	p_spi->bits_per_word = 32;
 
@@ -1795,11 +1751,7 @@ static int if_spi_probe(struct spi_device *spi)
 
 	pr_info("[%s] spi probe Done.\n", __func__);
 
-#endif
-
-	pr_info("[%s]\n", __func__);
 	return ret;
-
 }
 
 static int if_spi_remove(struct spi_device *spi)
@@ -1815,18 +1767,12 @@ static struct platform_driver if_spi_platform_driver = {
 	},
 };
 
-static const struct of_device_id if_spi_match_table[] = {
-	{   .compatible = "if_spi_comp",
-	},
-	{}
-};
-
 static struct spi_driver if_spi_driver = {
 	.probe = if_spi_probe,
 	.remove = __devexit_p(if_spi_remove),
 	.driver = {
 		.name = "if_spi_driver",
-		.of_match_table = if_spi_match_table,
+		.bus = &spi_bus_type,
 		.owner = THIS_MODULE,
 	},
 };
@@ -1897,9 +1843,8 @@ struct link_device *spi_create_link_device(struct platform_device *pdev)
 		goto err2;
 	}
 
-	mif_err("[LNK] <%s> link device = %s\n", __func__, pdata->link_name);
-	mif_err("[LNK] <%s> modem = %s\n", __func__, pdata->name);
-
+	mif_debug("[LNK] <%s> link device = %s\n", __func__, pdata->link_name);
+	mif_debug("[LNK] <%s> modem = %s\n", __func__, pdata->name);
 
 	/* Alloc SPI link device structure */
 	p_spild = spild = kzalloc(sizeof(struct spi_link_device), GFP_KERNEL);

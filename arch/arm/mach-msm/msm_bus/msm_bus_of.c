@@ -22,7 +22,7 @@
 #include <mach/msm_bus_board.h>
 #include "msm_bus_core.h"
 
-#define KBTOB(a) (a * 1000ULL)
+#define KBTOMB(a) (a * 1000ULL)
 static const char * const hw_sel_name[] = {"RPM", "NoC", "BIMC", NULL};
 static const char * const mode_sel_name[] = {"Fixed", "Limiter", "Bypass",
 						"Regulator", NULL};
@@ -103,11 +103,6 @@ static struct msm_bus_scale_pdata *get_pdata(struct platform_device *pdev,
 	}
 
 	vec_arr = of_get_property(of_node, "qcom,msm-bus,vectors-KBps", &len);
-	if (vec_arr == NULL) {
-		pr_err("Error: Vector array not found\n");
-		goto err;
-	}
-
 	if (len != num_usecases * num_paths * sizeof(uint32_t) * 4) {
 		pr_err("Error: Length-error on getting vectors\n");
 		goto err;
@@ -129,9 +124,9 @@ static struct msm_bus_scale_pdata *get_pdata(struct platform_device *pdev,
 			usecase[i].vectors[j].dst =
 				be32_to_cpu(vec_arr[index + 1]);
 			usecase[i].vectors[j].ab = (uint64_t)
-				KBTOB(be32_to_cpu(vec_arr[index + 2]));
+				KBTOMB(be32_to_cpu(vec_arr[index + 2]));
 			usecase[i].vectors[j].ib = (uint64_t)
-				KBTOB(be32_to_cpu(vec_arr[index + 3]));
+				KBTOMB(be32_to_cpu(vec_arr[index + 3]));
 		}
 	}
 
@@ -278,7 +273,6 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 	struct msm_bus_node_info *info;
 	struct device_node *child_node = NULL;
 	int i = 0, ret;
-	u32 temp;
 
 	for_each_child_of_node(of_node, child_node) {
 		i++;
@@ -353,20 +347,6 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 		of_property_read_u32(child_node, "qcom,buswidth",
 			&info[i].buswidth);
 		of_property_read_u32(child_node, "qcom,ws", &info[i].ws);
-		ret = of_property_read_u32(child_node, "qcom,thresh",
-			&temp);
-		if (!ret)
-			info[i].th = (uint64_t)KBTOB(temp);
-
-		ret = of_property_read_u32(child_node, "qcom,bimc,bw",
-			&temp);
-		if (!ret)
-			info[i].bimc_bw = (uint64_t)KBTOB(temp);
-
-		of_property_read_u32(child_node, "qcom,bimc,gp",
-			&info[i].bimc_gp);
-		of_property_read_u32(child_node, "qcom,bimc,thmp",
-			&info[i].bimc_thmp);
 		ret = of_property_read_string(child_node, "qcom,mode",
 			&sel_str);
 		if (ret)
@@ -379,25 +359,6 @@ static struct msm_bus_node_info *get_nodes(struct device_node *of_node,
 			}
 
 			info[i].mode = ret;
-		}
-
-		info[i].dual_conf =
-			of_property_read_bool(child_node, "qcom,dual-conf");
-
-		ret = of_property_read_string(child_node, "qcom,mode-thresh",
-			&sel_str);
-		if (ret)
-			info[i].mode_thresh = 0;
-		else {
-			ret = get_num(mode_sel_name, sel_str);
-			if (ret < 0) {
-				pr_err("Unknown mode :%s\n", sel_str);
-				goto err;
-			}
-
-			info[i].mode_thresh = ret;
-			MSM_BUS_DBG("AXI: THreshold mode set: %d\n",
-				info[i].mode_thresh);
 		}
 
 		ret = of_property_read_string(child_node, "qcom,perm-mode",
@@ -471,7 +432,7 @@ err:
 struct msm_bus_fabric_registration
 	*msm_bus_of_get_fab_data(struct platform_device *pdev)
 {
-	struct device_node *of_node;
+	struct device_node *of_node = pdev->dev.of_node;
 	struct msm_bus_fabric_registration *pdata;
 	bool mem_err = false;
 	int ret = 0;
@@ -482,7 +443,6 @@ struct msm_bus_fabric_registration
 		return NULL;
 	}
 
-	of_node = pdev->dev.of_node;
 	pdata = devm_kzalloc(&pdev->dev,
 			sizeof(struct msm_bus_fabric_registration), GFP_KERNEL);
 	if (!pdata) {

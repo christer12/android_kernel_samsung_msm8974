@@ -163,7 +163,7 @@ struct mux_source {
 };
 
 /**
- * struct cam_mux_clk - branch clock
+ * struct mux_clk_st - branch clock
  * @c: clk
  * @enable_reg: register that contains the enable bit(s) for the mux
  * @select_reg: register that contains the source selection bits for the mux
@@ -172,7 +172,7 @@ struct mux_source {
  * @sources: list of mux sources
  * @base: pointer to base address of ioremapped registers.
  */
-struct cam_mux_clk {
+struct mux_clk_st {
 	struct clk c;
 	const u32 enable_reg;
 	const u32 select_reg;
@@ -184,9 +184,9 @@ struct cam_mux_clk {
 	void *const __iomem *base;
 };
 
-static inline struct cam_mux_clk *to_cam_mux_clk(struct clk *clk)
+static inline struct mux_clk_st *to_mux_clk_st(struct clk *clk)
 {
-	return container_of(clk, struct cam_mux_clk, c);
+	return container_of(clk, struct mux_clk_st, c);
 }
 
 /*
@@ -195,24 +195,20 @@ static inline struct cam_mux_clk *to_cam_mux_clk(struct clk *clk)
 void set_rate_mnd(struct rcg_clk *clk, struct clk_freq_tbl *nf);
 void set_rate_hid(struct rcg_clk *clk, struct clk_freq_tbl *nf);
 
-extern int set_rate_edp_pixel(struct clk *clk, unsigned long rate);
-
 /*
  * Variables from the clock-local driver
  */
 extern spinlock_t local_clock_reg_lock;
 
-extern struct clk_ops clk_ops_cam_mux;
+extern struct clk_ops clk_ops_mux;
 extern struct clk_ops clk_ops_empty;
 extern struct clk_ops clk_ops_rcg;
 extern struct clk_ops clk_ops_rcg_mnd;
 extern struct clk_ops clk_ops_branch;
 extern struct clk_ops clk_ops_vote;
 extern struct clk_ops clk_ops_rcg_hdmi;
-extern struct clk_ops clk_ops_rcg_edp;
 extern struct clk_ops clk_ops_byte;
 extern struct clk_ops clk_ops_pixel;
-extern struct clk_ops clk_ops_edppixel;
 
 enum handoff pixel_rcg_handoff(struct clk *clk);
 enum handoff byte_rcg_handoff(struct clk *clk);

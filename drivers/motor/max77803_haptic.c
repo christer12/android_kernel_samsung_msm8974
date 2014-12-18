@@ -90,10 +90,8 @@ static int max77803_haptic_probe(struct platform_device *pdev)
 	struct max77803_dev *max77803 = dev_get_drvdata(pdev->dev.parent);
 	struct max77803_platform_data *max77803_pdata
 		= dev_get_platdata(max77803->dev);
-#ifdef CONFIG_VIBETONZ
 	struct max77803_haptic_platform_data *pdata
 		= max77803_pdata->haptic_data;
-#endif
 	struct max77803_haptic_data *hap_data;
 
 	pr_debug("[VIB] ++ %s\n", __func__);

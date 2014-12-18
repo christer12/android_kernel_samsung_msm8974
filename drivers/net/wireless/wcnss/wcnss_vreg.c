@@ -31,7 +31,6 @@ static void __iomem *msm_wcnss_base;
 static LIST_HEAD(power_on_lock_list);
 static DEFINE_MUTEX(list_lock);
 static DEFINE_SEMAPHORE(wcnss_power_on_lock);
-static int auto_detect;
 
 #define MSM_RIVA_PHYS           0x03204000
 #define MSM_PRONTO_PHYS         0xfb21b000
@@ -43,16 +42,10 @@ static int auto_detect;
 #define PRONTO_SPARE_OFFSET     0x1088
 #define NVBIN_DLND_BIT          BIT(25)
 
-#define PRONTO_IRIS_REG_READ_OFFSET       0x1134
-#define PRONTO_IRIS_REG_CHIP_ID           0x04
-
 #define WCNSS_PMU_CFG_IRIS_XO_CFG          BIT(3)
 #define WCNSS_PMU_CFG_IRIS_XO_EN           BIT(4)
 #define WCNSS_PMU_CFG_GC_BUS_MUX_SEL_TOP   BIT(5)
 #define WCNSS_PMU_CFG_IRIS_XO_CFG_STS      BIT(6) /* 1: in progress, 0: done */
-
-#define WCNSS_PMU_CFG_IRIS_XO_READ         BIT(9)
-#define WCNSS_PMU_CFG_IRIS_XO_READ_STS     BIT(10)
 
 #define WCNSS_PMU_CFG_IRIS_XO_MODE         0x6
 #define WCNSS_PMU_CFG_IRIS_XO_MODE_48      (3 << 1)
@@ -62,8 +55,6 @@ static int auto_detect;
 #define VREG_SET_VOLTAGE_MASK       0x0002
 #define VREG_OPTIMUM_MODE_MASK      0x0004
 #define VREG_ENABLE_MASK            0x0008
-
-#define WCNSS_INVALID_IRIS_REG      0xbaadbaad
 
 struct vregs_info {
 	const char * const name;
@@ -100,7 +91,7 @@ static struct vregs_info iris_vregs_pronto[] = {
 	{"qcom,iris-vddpa",  VREG_NULL_CONFIG, 2900000, 0,
 		3000000, 515000, NULL},
 	{"qcom,iris-vdddig", VREG_NULL_CONFIG, 1225000, 0,
-		1800000, 10000,  NULL},
+		1300000, 10000,  NULL},
 };
 
 /* WCNSS regulators for Pronto hardware */
@@ -119,33 +110,10 @@ struct host_driver {
 	struct list_head list;
 };
 
-enum {
-	IRIS_3660, /* also 3660A and 3680 */
-	IRIS_3620
-};
 
-
-int xo_auto_detect(u32 reg)
-{
-	reg >>= 30;
-
-	switch (reg) {
-	case IRIS_3660:
-		return WCNSS_XO_48MHZ;
-
-	case IRIS_3620:
-		return WCNSS_XO_19MHZ;
-
-	default:
-		return WCNSS_XO_INVALID;
-	}
-}
-
-static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on,
-			int *iris_xo_set)
+static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on)
 {
 	u32 reg = 0;
-	u32 iris_reg = WCNSS_INVALID_IRIS_REG;
 	int rc = 0;
 	int size = 0;
 	int pmu_offset = 0;
@@ -153,7 +121,6 @@ static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on,
 	unsigned long wcnss_phys_addr;
 	void __iomem *pmu_conf_reg;
 	void __iomem *spare_reg;
-	void __iomem *iris_read_reg;
 	struct clk *clk;
 	struct clk *clk_rf = NULL;
 
@@ -169,6 +136,14 @@ static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on,
 			return PTR_ERR(clk);
 		}
 
+		if (!use_48mhz_xo) {
+			clk_rf = clk_get(dev, "rf_clk");
+			if (IS_ERR(clk_rf)) {
+				pr_err("Couldn't get rf_clk\n");
+				clk_put(clk);
+				return PTR_ERR(clk_rf);
+			}
+		}
 	} else {
 		wcnss_phys_addr = MSM_RIVA_PHYS;
 		pmu_offset = RIVA_PMU_OFFSET;
@@ -197,13 +172,16 @@ static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on,
 		}
 
 		/* NV bit is set to indicate that platform driver is capable
-		 * of doing NV download.
+		 * of doing NV download. SSR should not set NV bit; during
+		 * SSR NV bin is downloaded by WLAN driver.
 		 */
-		pr_debug("wcnss: Indicate NV bin download\n");
-		spare_reg = msm_wcnss_base + spare_offset;
-		reg = readl_relaxed(spare_reg);
-		reg |= NVBIN_DLND_BIT;
-		writel_relaxed(reg, spare_reg);
+		if (!wcnss_cold_boot_done()) {
+			pr_debug("wcnss: Indicate NV bin download\n");
+			spare_reg = msm_wcnss_base + spare_offset;
+			reg = readl_relaxed(spare_reg);
+			reg |= NVBIN_DLND_BIT;
+			writel_relaxed(reg, spare_reg);
+		}
 
 		pmu_conf_reg = msm_wcnss_base + pmu_offset;
 		writel_relaxed(0, pmu_conf_reg);
@@ -212,49 +190,11 @@ static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on,
 				WCNSS_PMU_CFG_IRIS_XO_EN;
 		writel_relaxed(reg, pmu_conf_reg);
 
-		if (wcnss_xo_auto_detect_enabled()) {
-			iris_read_reg = msm_wcnss_base +
-				PRONTO_IRIS_REG_READ_OFFSET;
-			iris_reg = readl_relaxed(iris_read_reg);
-		}
-
-		if (iris_reg != WCNSS_INVALID_IRIS_REG) {
-			iris_reg &= 0xffff;
-			iris_reg |= PRONTO_IRIS_REG_CHIP_ID;
-			writel_relaxed(iris_reg, iris_read_reg);
-
-			/* Iris read */
-			reg = readl_relaxed(pmu_conf_reg);
-			reg |= WCNSS_PMU_CFG_IRIS_XO_READ;
-			writel_relaxed(reg, pmu_conf_reg);
-
-			/* Wait for PMU_CFG.iris_reg_read_sts */
-			while (readl_relaxed(pmu_conf_reg) &
-					WCNSS_PMU_CFG_IRIS_XO_READ_STS)
-				cpu_relax();
-
-			iris_reg = readl_relaxed(iris_read_reg);
-			auto_detect = xo_auto_detect(iris_reg);
-
-			/* Reset iris read bit */
-			reg &= ~WCNSS_PMU_CFG_IRIS_XO_READ;
-
-		} else if (wcnss_xo_auto_detect_enabled())
-			/* Default to 48 MHZ */
-			auto_detect = WCNSS_XO_48MHZ;
-		else
-			auto_detect = WCNSS_XO_INVALID;
-
 		/* Clear XO_MODE[b2:b1] bits. Clear implies 19.2 MHz TCXO */
 		reg &= ~(WCNSS_PMU_CFG_IRIS_XO_MODE);
 
-		if ((use_48mhz_xo && auto_detect == WCNSS_XO_INVALID)
-				|| auto_detect ==  WCNSS_XO_48MHZ) {
+		if (use_48mhz_xo)
 			reg |= WCNSS_PMU_CFG_IRIS_XO_MODE_48;
-
-			if (iris_xo_set)
-				*iris_xo_set = WCNSS_XO_48MHZ;
-		}
 
 		writel_relaxed(reg, pmu_conf_reg);
 
@@ -273,43 +213,30 @@ static int configure_iris_xo(struct device *dev, bool use_48mhz_xo, int on,
 		writel_relaxed(reg, pmu_conf_reg);
 		clk_disable_unprepare(clk);
 
-		if ((!use_48mhz_xo && auto_detect == WCNSS_XO_INVALID)
-				|| auto_detect ==  WCNSS_XO_19MHZ) {
-
-			clk_rf = clk_get(dev, "rf_clk");
-			if (IS_ERR(clk_rf)) {
-				pr_err("Couldn't get rf_clk\n");
-				goto fail;
-			}
-
+		if (!use_48mhz_xo) {
 			rc = clk_prepare_enable(clk_rf);
 			if (rc) {
 				pr_err("clk_rf enable failed\n");
 				goto fail;
 			}
-			if (iris_xo_set)
-				*iris_xo_set = WCNSS_XO_19MHZ;
 		}
-
-	}  else if ((!use_48mhz_xo && auto_detect == WCNSS_XO_INVALID)
-			|| auto_detect ==  WCNSS_XO_19MHZ) {
-		clk_rf = clk_get(dev, "rf_clk");
-		if (IS_ERR(clk_rf)) {
-			pr_err("Couldn't get rf_clk\n");
-			goto fail;
-		}
-		clk_disable_unprepare(clk_rf);
-	}
-
+	}  else if (clk_rf != NULL && !use_48mhz_xo)
+			clk_disable_unprepare(clk_rf);
 	/* Add some delay for XO to settle */
 	msleep(20);
 
-fail:
 	clk_put(clk);
 
+	if (wcnss_hardware_type() == WCNSS_PRONTO_HW) {
+		if (!use_48mhz_xo)
+			clk_put(clk_rf);
+	}
+
+	return rc;
+fail:
 	if (clk_rf != NULL)
 		clk_put(clk_rf);
-
+	clk_put(clk);
 	return rc;
 }
 
@@ -492,7 +419,7 @@ static int wcnss_core_vregs_on(struct device *dev, enum wcnss_hw_type hw_type)
 
 int wcnss_wlan_power(struct device *dev,
 		struct wcnss_wlan_config *cfg,
-		enum wcnss_opcode on, int *iris_xo_set)
+		enum wcnss_opcode on)
 {
 	int rc = 0;
 	enum wcnss_hw_type hw_type = wcnss_hardware_type();
@@ -511,14 +438,14 @@ int wcnss_wlan_power(struct device *dev,
 
 		/* Configure IRIS XO */
 		rc = configure_iris_xo(dev, cfg->use_48mhz_xo,
-				WCNSS_WLAN_SWITCH_ON, iris_xo_set);
+				WCNSS_WLAN_SWITCH_ON);
 		if (rc)
 			goto fail_iris_xo;
 		up(&wcnss_power_on_lock);
 
 	} else {
 		configure_iris_xo(dev, cfg->use_48mhz_xo,
-				WCNSS_WLAN_SWITCH_OFF, NULL);
+				WCNSS_WLAN_SWITCH_OFF);
 		wcnss_iris_vregs_off(hw_type);
 		wcnss_core_vregs_off(hw_type);
 	}

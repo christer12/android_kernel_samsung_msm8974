@@ -1001,6 +1001,7 @@ static struct msm_gpiomux_config msm_taiko_config[] __initdata = {
 	},
 };
 
+#ifdef CONFIG_MMC_MSM_SDC3_SUPPORT
 static struct gpiomux_setting sdc3_clk_actv_cfg = {
 	.func = GPIOMUX_FUNC_2,
 	.drv = GPIOMUX_DRV_8MA,
@@ -1081,6 +1082,9 @@ static void msm_gpiomux_sdc3_install(void)
 	msm_gpiomux_install(msm8974_sdc3_configs,
 			    ARRAY_SIZE(msm8974_sdc3_configs));
 }
+#else
+static void msm_gpiomux_sdc3_install(void) {}
+#endif /* CONFIG_MMC_MSM_SDC3_SUPPORT */
 
 #ifdef CONFIG_MMC_MSM_SDC4_SUPPORT
 static struct gpiomux_setting sdc4_clk_actv_cfg = {
@@ -1167,23 +1171,6 @@ static void msm_gpiomux_sdc4_install(void)
 static void msm_gpiomux_sdc4_install(void) {}
 #endif /* CONFIG_MMC_MSM_SDC4_SUPPORT */
 
-static struct msm_gpiomux_config apq8074_dragonboard_ts_config[] __initdata = {
-	{
-		/* BLSP1 QUP I2C_DATA */
-		.gpio      = 2,
-		.settings = {
-			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
-		},
-	},
-	{
-		/* BLSP1 QUP I2C_CLK */
-		.gpio      = 3,
-		.settings = {
-			[GPIOMUX_SUSPENDED] = &gpio_i2c_config,
-		},
-	},
-};
-
 void __init msm_8974_init_gpiomux(void)
 {
 	int rc;
@@ -1219,11 +1206,7 @@ void __init msm_8974_init_gpiomux(void)
 	msm_gpiomux_install(msm_sensor_configs, ARRAY_SIZE(msm_sensor_configs));
 
 	msm_gpiomux_install(&sd_card_det, 1);
-
-	if (machine_is_apq8074() && (of_board_is_liquid() || \
-	    of_board_is_dragonboard()))
-		msm_gpiomux_sdc3_install();
-
+	msm_gpiomux_sdc3_install();
 	msm_gpiomux_sdc4_install();
 
 	msm_gpiomux_install(msm_taiko_config, ARRAY_SIZE(msm_taiko_config));
@@ -1257,8 +1240,4 @@ void __init msm_8974_init_gpiomux(void)
 	if (socinfo_get_platform_subtype() == PLATFORM_SUBTYPE_MDM)
 		msm_gpiomux_install(mdm_configs,
 			ARRAY_SIZE(mdm_configs));
-
-	if (of_board_is_dragonboard() && machine_is_apq8074())
-		msm_gpiomux_install(apq8074_dragonboard_ts_config,
-			ARRAY_SIZE(apq8074_dragonboard_ts_config));
 }

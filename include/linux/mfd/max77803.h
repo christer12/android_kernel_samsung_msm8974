@@ -149,11 +149,11 @@ struct max77803_muic_data {
 #ifdef CONFIG_MFD_MAX77803
 extern struct max77803_muic_data max77803_muic;
 extern struct max77803_regulator_data max77803_regulators[];
-extern int muic_otg_control(int enable);
+extern void muic_otg_control(int enable);
 extern struct max77803_haptic_platform_data max77803_haptic_pdata;
 extern struct max77803_led_platform_data max77803_led_pdata;
 #endif
-#if defined (CONFIG_VIDEO_MHL_V2) || defined (CONFIG_VIDEO_MHL_SII8246)
+#ifdef CONFIG_VIDEO_MHL_V2
 int acc_register_notifier(struct notifier_block *nb);
 #endif
 #endif				/* __LINUX_MFD_MAX77803_H */

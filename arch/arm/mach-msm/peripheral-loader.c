@@ -40,10 +40,6 @@
 
 #include "peripheral-loader.h"
 
-#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
-#include <mach/sec_debug.h>
-#endif
-
 #define pil_err(desc, fmt, ...)						\
 	dev_err(desc->dev, "%s: " fmt, desc->name, ##__VA_ARGS__)
 #define pil_info(desc, fmt, ...)					\
@@ -591,9 +587,7 @@ int pil_boot(struct pil_desc *desc)
 	struct pil_seg *seg;
 	const struct firmware *fw;
 	struct pil_priv *priv = desc->priv;
-#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
-	static int load_count_fwd;
-#endif
+
 	/* Reinitialize for new image */
 	pil_release_mmap(desc);
 
@@ -633,31 +627,13 @@ int pil_boot(struct pil_desc *desc)
 	}
 
 	ret = pil_init_mmap(desc, mdt);
-	if (ret) {
-		pil_err(desc, "pil_init_mmap failed\n");
+	if (ret)
 		goto release_fw;
-	}
 
 	if (desc->ops->init_image)
 		ret = desc->ops->init_image(desc, fw->data, fw->size);
 	if (ret) {
 		pil_err(desc, "Invalid firmware metadata\n");
-#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
-		if ((!strcmp(desc->name, "mba")) || (!strcmp(desc->name, "modem"))) {
-			if (++load_count_fwd > 5) {
-				release_firmware(fw);
-				up_read(&pil_pm_rwsem);
-
-				if (priv->region) {
-					ion_free(ion, priv->region);
-					priv->region = NULL;
-				}
-
-				pil_release_mmap(desc);
-				sec_peripheral_secure_check_fail();
-			}
-		}
-#endif
 		goto release_fw;
 	}
 
@@ -684,20 +660,6 @@ int pil_boot(struct pil_desc *desc)
 	ret = desc->ops->auth_and_reset(desc);
 	if (ret) {
 		pil_err(desc, "Failed to bring out of reset\n");
-#ifdef CONFIG_SEC_PERIPHERAL_SECURE_CHK
-		if ((!strcmp(desc->name, "mba")) || (!strcmp(desc->name, "modem"))) {
-			pil_proxy_unvote(desc, ret);
-			release_firmware(fw);
-			up_read(&pil_pm_rwsem);
-			if (priv->region) {
-				ion_free(ion, priv->region);
-				priv->region = NULL;
-			}
-
-			pil_release_mmap(desc);
-			sec_peripheral_secure_check_fail();
-		}
-#endif
 		goto err_boot;
 	}
 	pil_info(desc, "Brought out of reset\n");

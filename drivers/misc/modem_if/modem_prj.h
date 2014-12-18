@@ -23,7 +23,7 @@
 #include <linux/spinlock.h>
 #include <linux/cdev.h>
 
-#if 0	//#if defined(CONFIG_LINK_DEVICE_SPI)
+#if defined(CONFIG_LINK_DEVICE_SPI)
 #define CONFIG_LINK_DEVICE_SPI_DEBUG
 #define CONFIG_LINK_DEVICE_SPI_RFS_DEBUG
 #endif
@@ -220,16 +220,10 @@ struct io_device {
 
 	bool use_handover;	/* handover 2+ link devices */
 
-	/* SIPC version */
-	enum sipc_ver ipc_version;
-
 	/* Rx queue of sk_buff */
 	struct sk_buff_head sk_rx_q;
 
 	struct fragmented_data fragments[LINKDEV_MAX];
-
-	/* for multi-frame */
-	struct sk_buff *skb[128];
 
 	/* called from linkdevice when a packet arrives for this iodevice */
 	int (*recv)(struct io_device *iod, struct link_device *ld,
@@ -279,8 +273,6 @@ struct link_device {
 
 	/* Operation mode of the link device */
 	enum link_mode mode;
-
-	struct io_device *fmt_iods[4];
 
 	/* TX queue of socket buffers */
 	struct sk_buff_head sk_fmt_tx_q;

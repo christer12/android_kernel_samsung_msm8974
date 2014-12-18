@@ -27,8 +27,6 @@
 #include <linux/delay.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/of_device.h>
-#include <linux/of_gpio.h>
 #include <linux/list.h>
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
@@ -48,7 +46,6 @@
 #include "dwc3_otg.h"
 #include "core.h"
 #include "gadget.h"
-#include "debug.h"
 
 /* ADC threshold values */
 static int adc_low_threshold = 700;
@@ -137,9 +134,7 @@ MODULE_PARM_DESC(prop_chg_detect, "Enable Proprietary charger detection");
  *
  */
 #define QSCRATCH_REG_OFFSET	(0x000F8800)
-#define QSCRATCH_CTRL_REG	(QSCRATCH_REG_OFFSET + 0x04)
 #define QSCRATCH_GENERAL_CFG	(QSCRATCH_REG_OFFSET + 0x08)
-#define QSCRATCH_RAM1_REG	(QSCRATCH_REG_OFFSET + 0x0C)
 #define HS_PHY_CTRL_REG		(QSCRATCH_REG_OFFSET + 0x10)
 #define PARAMETER_OVERRIDE_X_REG (QSCRATCH_REG_OFFSET + 0x14)
 #define CHARGING_DET_CTRL_REG	(QSCRATCH_REG_OFFSET + 0x18)
@@ -156,9 +151,6 @@ MODULE_PARM_DESC(prop_chg_detect, "Enable Proprietary charger detection");
 #define SS_CR_PROTOCOL_CAP_DATA_REG (QSCRATCH_REG_OFFSET + 0x48)
 #define SS_CR_PROTOCOL_READ_REG     (QSCRATCH_REG_OFFSET + 0x4C)
 #define SS_CR_PROTOCOL_WRITE_REG    (QSCRATCH_REG_OFFSET + 0x50)
-#define PWR_EVNT_IRQ_STAT_REG    (QSCRATCH_REG_OFFSET + 0x58)
-#define PWR_EVNT_IRQ_MASK_REG    (QSCRATCH_REG_OFFSET + 0x5C)
-
 
 struct dwc3_msm_req_complete {
 	struct list_head list_item;
@@ -243,12 +235,6 @@ struct dwc3_msm {
 static struct dwc3_msm *context;
 
 static struct usb_ext_notification *usb_ext;
-
-#ifdef CONFIG_MACH_LT03EUR
-extern int system_rev;
-#endif 
-int vienna_usb_rdrv_pin;
-EXPORT_SYMBOL(vienna_usb_rdrv_pin);
 
 /**
  *
@@ -393,37 +379,6 @@ static u32 dwc3_msm_ssusb_read_phycreg(void *base, u32 addr)
 		cpu_relax();
 
 	return ioread32(base + SS_CR_PROTOCOL_DATA_OUT_REG);
-}
-
-/**
- * Dump all QSCRATCH registers.
- *
- */
-static void dwc3_msm_dump_phy_info(struct dwc3_msm *mdwc)
-{
-
-	dbg_print_reg("SSPHY_CTRL_REG", dwc3_msm_read_reg(mdwc->base,
-						SS_PHY_CTRL_REG));
-	dbg_print_reg("HSPHY_CTRL_REG", dwc3_msm_read_reg(mdwc->base,
-						HS_PHY_CTRL_REG));
-	dbg_print_reg("QSCRATCH_CTRL_REG", dwc3_msm_read_reg(mdwc->base,
-						QSCRATCH_CTRL_REG));
-	dbg_print_reg("QSCRATCH_GENERAL_CFG", dwc3_msm_read_reg(mdwc->base,
-						QSCRATCH_GENERAL_CFG));
-	dbg_print_reg("PARAMETER_OVERRIDE_X_REG", dwc3_msm_read_reg(mdwc->base,
-						PARAMETER_OVERRIDE_X_REG));
-	dbg_print_reg("HS_PHY_IRQ_STAT_REG", dwc3_msm_read_reg(mdwc->base,
-						HS_PHY_IRQ_STAT_REG));
-	dbg_print_reg("SS_PHY_PARAM_CTRL_1", dwc3_msm_read_reg(mdwc->base,
-						SS_PHY_PARAM_CTRL_1));
-	dbg_print_reg("SS_PHY_PARAM_CTRL_2", dwc3_msm_read_reg(mdwc->base,
-						SS_PHY_PARAM_CTRL_2));
-	dbg_print_reg("QSCRATCH_RAM1_REG", dwc3_msm_read_reg(mdwc->base,
-						QSCRATCH_RAM1_REG));
-	dbg_print_reg("PWR_EVNT_IRQ_STAT_REG", dwc3_msm_read_reg(mdwc->base,
-						PWR_EVNT_IRQ_STAT_REG));
-	dbg_print_reg("PWR_EVNT_IRQ_MASK_REG", dwc3_msm_read_reg(mdwc->base,
-						PWR_EVNT_IRQ_MASK_REG));
 }
 
 /**
@@ -1337,7 +1292,7 @@ static void dwc3_msm_ss_phy_reg_init(struct dwc3_msm *msm)
 	data &= ~(1 << 6);
 	data |= (1 << 7);
 	data &= ~(0x7 << 8);
-	data |= (0x4 << 8);
+	data |= (0x3 << 8);
 	data |= (0x1 << 11);
 	dwc3_msm_ssusb_write_phycreg(msm->base, 0x1006, data);
 
@@ -1367,23 +1322,6 @@ static void dwc3_msm_ss_phy_reg_init(struct dwc3_msm *msm)
 /* Initialize QSCRATCH registers for HSPHY and SSPHY operation */
 static void dwc3_msm_qscratch_reg_init(struct dwc3_msm *msm)
 {
-#ifdef CONFIG_MACH_LT03EUR
-	if(system_rev != 3)
-	{
-		/* SSPHY Initialization: Use ref_clk from pads and set its parameters */
-		dwc3_msm_write_reg(msm->base, SS_PHY_CTRL_REG, 0x10210002);
-		msleep(30);
-		/* Assert SSPHY reset */
-		dwc3_msm_write_reg(msm->base, SS_PHY_CTRL_REG, 0x10210082);
-		usleep_range(2000, 2200);
-		/* De-assert SSPHY reset - power and ref_clock must be ON */
-		dwc3_msm_write_reg(msm->base, SS_PHY_CTRL_REG, 0x10210002);
-		usleep_range(2000, 2200);
-		/* Ref clock must be stable now, enable ref clock for HS mode */
-		dwc3_msm_write_reg(msm->base, SS_PHY_CTRL_REG, 0x10210102);
-		usleep_range(2000, 2200);
-	}	
-#else
 	/* SSPHY Initialization: Use ref_clk from pads and set its parameters */
 	dwc3_msm_write_reg(msm->base, SS_PHY_CTRL_REG, 0x10210002);
 	msleep(30);
@@ -1396,9 +1334,7 @@ static void dwc3_msm_qscratch_reg_init(struct dwc3_msm *msm)
 	/* Ref clock must be stable now, enable ref clock for HS mode */
 	dwc3_msm_write_reg(msm->base, SS_PHY_CTRL_REG, 0x10210102);
 	usleep_range(2000, 2200);
-#endif
 	/*
-
 	 * HSPHY Initialization: Enable UTMI clock and clamp enable HVINTs,
 	 * and disable RETENTION (power-on default is ENABLED)
 	 */
@@ -1424,29 +1360,8 @@ static void dwc3_msm_qscratch_reg_init(struct dwc3_msm *msm)
 	 */
 	dwc3_msm_write_reg(msm->base, CGCTL_REG,
 		dwc3_msm_read_reg(msm->base, CGCTL_REG) | 0x18);
-#ifdef CONFIG_MACH_LT03EUR
-	if(system_rev != 3)
-	{
-		dwc3_msm_ss_phy_reg_init(msm);
-	}
-#else
+
 	dwc3_msm_ss_phy_reg_init(msm);
-#endif		
-}
-
-static void dwc3_msm_notify_event(struct dwc3 *dwc, unsigned event)
-{
-	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
-
-	switch (event) {
-	case DWC3_CONTROLLER_ERROR_EVENT:
-		dev_info(mdwc->dev, "DWC3_CONTROLLER_ERROR_EVENT received\n");
-		dwc3_msm_dump_phy_info(mdwc);
-		break;
-	default:
-		dev_dbg(mdwc->dev, "unknown dwc3 event\n");
-		break;
-	}
 }
 
 static void dwc3_msm_block_reset(bool core_reset)
@@ -1577,8 +1492,7 @@ static const char *chg_to_string(enum dwc3_chg_type chg_type)
 	case DWC3_DCP_CHARGER:		return "USB_DCP_CHARGER";
 	case DWC3_CDP_CHARGER:		return "USB_CDP_CHARGER";
 	case DWC3_PROPRIETARY_CHARGER:	return "USB_PROPRIETARY_CHARGER";
-	case DWC3_FLOATED_CHARGER:	return "USB_FLOATED_CHARGER";
-	default:			return "UNKNOWN_CHARGER";
+	default:			return "INVALID_CHARGER";
 	}
 }
 
@@ -1591,7 +1505,6 @@ static void dwc3_chg_detect_work(struct work_struct *w)
 {
 	struct dwc3_msm *mdwc = container_of(w, struct dwc3_msm, chg_work.work);
 	bool is_dcd = false, tmout, vout;
-	static bool dcd;
 	unsigned long delay;
 
 	dev_dbg(mdwc->dev, "chg detection work\n");
@@ -1607,13 +1520,9 @@ static void dwc3_chg_detect_work(struct work_struct *w)
 		is_dcd = dwc3_chg_check_dcd(mdwc);
 		tmout = ++mdwc->dcd_retries == DWC3_CHG_DCD_MAX_RETRIES;
 		if (is_dcd || tmout) {
-			if (is_dcd)
-				dcd = true;
-			else
-				dcd = false;
 			dwc3_chg_disable_dcd(mdwc);
-			usleep_range(1000, 1200);
 			if (dwc3_chg_det_check_linestate(mdwc)) {
+				dev_dbg(mdwc->dev, "proprietary charger\n");
 				mdwc->charger.chg_type =
 						DWC3_PROPRIETARY_CHARGER;
 				mdwc->chg_state = USB_CHG_STATE_DETECTED;
@@ -1634,15 +1543,7 @@ static void dwc3_chg_detect_work(struct work_struct *w)
 			delay = DWC3_CHG_SECONDARY_DET_TIME;
 			mdwc->chg_state = USB_CHG_STATE_PRIMARY_DONE;
 		} else {
-			/*
-			 * Detect floating charger only if propreitary
-			 * charger detection is enabled.
-			 */
-			if (!dcd && prop_chg_detect)
-				mdwc->charger.chg_type =
-						DWC3_FLOATED_CHARGER;
-			else
-				mdwc->charger.chg_type = DWC3_SDP_CHARGER;
+			mdwc->charger.chg_type = DWC3_SDP_CHARGER;
 			mdwc->chg_state = USB_CHG_STATE_DETECTED;
 			delay = 0;
 		}
@@ -1664,8 +1565,8 @@ static void dwc3_chg_detect_work(struct work_struct *w)
 		if (mdwc->charger.chg_type == DWC3_DCP_CHARGER)
 			dwc3_msm_write_readback(mdwc->base,
 					CHARGING_DET_CTRL_REG, 0x1F, 0x10);
-		pr_info("usb:: [%s] chg_type = %s\n",
-			__func__, chg_to_string(mdwc->charger.chg_type));
+		dev_dbg(mdwc->dev, "chg_type = %s\n",
+			chg_to_string(mdwc->charger.chg_type));
 		mdwc->charger.notify_detection_complete(mdwc->otg_xceiv->otg,
 								&mdwc->charger);
 		return;
@@ -1731,20 +1632,11 @@ static int dwc3_msm_suspend(struct dwc3_msm *mdwc)
 	 * 3. Set TEST_POWERED_DOWN in SS_PHY_CTRL_REG to enable PHY retention
 	 * 4. Disable SSPHY ref clk
 	 */
-#ifdef CONFIG_MACH_LT03EUR
-	if(system_rev != 3)
-	{
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 8), 0x0);
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 28), 0x0);
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 26),
-									(1 << 26));
-	}
-#else	 
 	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 8), 0x0);
 	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 28), 0x0);
 	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 26),
 								(1 << 26));
-#endif
+
 	usleep_range(1000, 1200);
 	clk_disable_unprepare(mdwc->ref_clk);
 
@@ -1924,22 +1816,7 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 									0x0);
 
 	}
-#ifdef CONFIG_MACH_LT03EUR
-	if(system_rev != 3)
-	{
-		/* Assert SS PHY RESET */
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 7),
-									(1 << 7));
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 28),
-									(1 << 28));
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 8),
-									(1 << 8));
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 26), 0x0);
-		/* 10usec delay required before de-asserting SS PHY RESET */
-		udelay(10);
-		dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 7), 0x0);
-	}	
-#else
+
 	/* Assert SS PHY RESET */
 	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 7),
 								(1 << 7));
@@ -1950,20 +1827,13 @@ static int dwc3_msm_resume(struct dwc3_msm *mdwc)
 	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 26), 0x0);
 	/* 10usec delay required before de-asserting SS PHY RESET */
 	udelay(10);
-	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 7), 0x0);		
-#endif
+	dwc3_msm_write_readback(mdwc->base, SS_PHY_CTRL_REG, (1 << 7), 0x0);
+
 	/*
 	 * Reinitilize SSPHY parameters as SS_PHY RESET will reset
 	 * the internal registers to default values.
 	 */
-#ifdef CONFIG_MACH_LT03EUR
-	if(system_rev != 3)
-	{
-		dwc3_msm_ss_phy_reg_init(mdwc);
-	}
-#else
 	dwc3_msm_ss_phy_reg_init(mdwc);
-#endif	
 	atomic_set(&mdwc->in_lpm, 0);
 
 	/* match disable_irq call from isr */
@@ -2072,7 +1942,7 @@ const struct file_operations dwc3_connect_fops = {
 
 static struct dentry *dwc3_debugfs_root;
 
-static void dwc3_msm_debugfs_init(struct dwc3_msm *mdwc)
+static void dwc3_debugfs_init(struct dwc3_msm *mdwc)
 {
 	dwc3_debugfs_root = debugfs_create_dir("msm_dwc3", NULL);
 
@@ -2103,14 +1973,9 @@ static irqreturn_t msm_dwc3_irq(int irq, void *data)
 
 	if (atomic_read(&mdwc->in_lpm)) {
 		dev_dbg(mdwc->dev, "%s received in LPM\n", __func__);
-		if (mdwc->host_mode == 1) {
-			dev_dbg(mdwc->dev, "%s host mode\n", __func__);	
-			mdwc->lpm_irq_seen = true;
-			disable_irq_nosync(irq);
-			queue_delayed_work(system_nrt_wq, &mdwc->resume_work, 0);
-		} else {
-			dev_dbg(mdwc->dev, "%s not host_mode, skipped\n", __func__);
-		}
+		mdwc->lpm_irq_seen = true;
+		disable_irq_nosync(irq);
+		queue_delayed_work(system_nrt_wq, &mdwc->resume_work, 0);
 	} else {
 		pr_info_ratelimited("%s: IRQ outside LPM\n", __func__);
 	}
@@ -2284,11 +2149,8 @@ static void dwc3_id_work(struct work_struct *w)
 			__func__, ret);
 
 		if (mdwc->pmic_id_irq) {
-			unsigned long flags;
-			local_irq_save(flags);
 			/* ID may have changed while IRQ disabled; update it */
 			mdwc->id_state = !!irq_read_line(mdwc->pmic_id_irq);
-			local_irq_restore(flags);
 			enable_irq(mdwc->pmic_id_irq);
 		}
 
@@ -2509,16 +2371,6 @@ static int __devinit dwc3_msm_probe(struct platform_device *pdev)
 	}
 
 	/* SS PHY */
-	/* [Vienna only] For USB 3.0 redriver enable */
-	/* PM8914 MPP5 enable */
-#if defined(CONFIG_MACH_VIENNAEUR) || defined(CONFIG_MACH_VIENNAVZW)
-	pr_info("Get USB 3.0 redriver GPIO address\n");
-	vienna_usb_rdrv_pin = of_get_named_gpio(node,	"qcom,gpio_usb_rdrv_en", 0);
-	if (vienna_usb_rdrv_pin < 0) {
-		dev_err(&pdev->dev, "unable to get qcom,gpio_usb_rdrv_en\n");
-	}
-#endif
-
 	msm->ssusb_vddcx = devm_regulator_get(&pdev->dev, "ssusb_vdd_dig");
 	if (IS_ERR(msm->ssusb_vddcx)) {
 		dev_err(&pdev->dev, "unable to get ssusb vddcx\n");
@@ -2715,7 +2567,6 @@ static int __devinit dwc3_msm_probe(struct platform_device *pdev)
 		goto disable_hs_ldo;
 	}
 
-	dwc3_set_notifier(&dwc3_msm_notify_event);
 	/* usb_psy required only for vbus_notifications or charging support */
 	if (msm->ext_xceiv.otg_capability || !msm->charger.charging_disabled) {
 		msm->usb_psy.name = "dwc-usb";
@@ -2808,7 +2659,7 @@ static int __devinit dwc3_msm_probe(struct platform_device *pdev)
 
 	wake_lock_init(&msm->wlock, WAKE_LOCK_SUSPEND, "msm_dwc3");
 	wake_lock(&msm->wlock);
-	dwc3_msm_debugfs_init(msm);
+	dwc3_debugfs_init(msm);
 
 	return 0;
 

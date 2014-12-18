@@ -161,7 +161,5 @@ source "drivers/sensors/Kconfig"
 source "drivers/motor/Kconfig"
 source "drivers/barcode_emul/Kconfig"
 
-source "drivers/felica/Kconfig"
-source "drivers/interceptor/Kconfig"
-source "drivers/secfilter/Kconfig"
+source "drivers/interceptor/Kconfig" 
 endmenu

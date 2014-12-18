@@ -58,9 +58,6 @@ extern int wacom_i2c_write(struct i2c_client *client,
 extern int wacom_i2c_read(struct i2c_client *client,
 			const char *buf, int count, unsigned char addr);
 
-#ifdef USE_WACOM_LCD_WORKAROUND
-extern void wacom_i2c_write_vsync(struct wacom_i2c *wac_i2c);
-#endif
 
 extern int wacom_i2c_test(struct wacom_i2c *wac_i2c);
 extern int wacom_i2c_coord(struct wacom_i2c *wac_i2c);
@@ -71,9 +68,8 @@ extern void forced_release(struct wacom_i2c *wac_i2c);
 extern void forced_hover(struct wacom_i2c *wac_i2c);
 #endif
 
-#ifdef WACOM_BOOSTER
-extern void wacom_set_dvfs_lock(struct wacom_i2c *wac_i2c, int on);
-extern void wacom_init_dvfs(struct wacom_i2c *wac_i2c);
+#ifdef CONFIG_SEC_TOUCHSCREEN_DVFS_LOCK
+extern void free_dvfs_lock(struct work_struct *work);
 #endif
 
 #endif	/* _LINUX_WACOM_I2C_FUNC_H */

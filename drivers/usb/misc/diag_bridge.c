@@ -506,9 +506,6 @@ error:
 	if (dev)
 		kref_put(&dev->kref, diag_bridge_delete);
 
-	platform_device_put(dev->pdev);
-	kfree(dev);
-
 	return ret;
 }
 

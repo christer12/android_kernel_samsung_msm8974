@@ -30,4 +30,6 @@ subdir-$(CONFIG_INTEGRITY)		+= integrity
 obj-$(CONFIG_INTEGRITY)			+= integrity/built-in.o
 
 # TIMA uevent 
-obj-$(CONFIG_TIMA_UEVENT)     += tima_uevent/
+ifeq ($(TIMA_ENABLED),1)
+obj-y     += tima_uevent/
+endif

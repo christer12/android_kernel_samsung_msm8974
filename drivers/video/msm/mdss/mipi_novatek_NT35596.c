@@ -48,12 +48,11 @@ static struct dsi_cmd display_off_cmd;
 static struct dsi_cmd acl_off_cmd;
 static struct dsi_cmd touchsensing_on_cmd;
 static struct dsi_cmd touchsensing_off_cmd;
-
 //melius
-//static struct dsi_cmd display_ready_on_cmds;
+static struct dsi_cmd display_ready_on_cmds;
 static struct dsi_cmd display_ready_off_cmds;
 static struct dsi_cmd display_panel_on_cmds;
-// static struct dsi_cmd display_panel_off_cmds;
+static struct dsi_cmd display_panel_off_cmds;
 static struct dsi_cmd display_late_on_cmds;
 static struct dsi_cmd display_early_off_cmds;
 static struct dsi_cmd backlight_cont_cmd;
@@ -72,13 +71,26 @@ static struct  panel_hrev panel_supp_cdp[]= {
 	{NULL}
 };
 
+static struct dsi_cmd_desc brightness_packet[] = {
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, 0}, NULL},
+};
+
 //#define CONFIG_NO_CMC624 //Melius test
 
 DEFINE_LED_TRIGGER(bl_led_trigger);
 
 static struct mdss_dsi_phy_ctrl phy_params;
+
 char board_rev;
+
 static int lcd_attached = 1;
+
 
 static int mipi_samsung_disp_send_cmd(
 		enum mipi_samsung_cmd_list cmd,
@@ -88,6 +100,7 @@ void mdss_dsi_cmds_send(
 	struct mdss_dsi_ctrl_pdata *ctrl, struct dsi_cmd_desc *cmds, int cnt);
 
 extern void mdss_dsi_panel_touchsensing(int enable);
+
 
 void mdss_dsi_panel_pwm_cfg(struct mdss_dsi_ctrl_pdata *ctrl)
 {
@@ -113,6 +126,37 @@ void mdss_dsi_panel_pwm_cfg(struct mdss_dsi_ctrl_pdata *ctrl)
 				gpio_free(ctrl->pwm_pmic_gpio);
 				ctrl->pwm_pmic_gpio = -1;
 		}
+}
+
+static void mdss_dsi_panel_bklt_pwm(struct mdss_dsi_ctrl_pdata *ctrl, int level)
+{
+	int ret;
+	u32 duty;
+
+	if (ctrl->pwm_bl == NULL) {
+		pr_err("%s: no PWM\n", __func__);
+		return;
+	}
+
+	duty = level * ctrl->pwm_period;
+	duty /= ctrl->bklt_max;
+
+	pr_debug("%s: bklt_ctrl=%d pwm_period=%d pwm_pmic_gpio=%d pwm_lpg_chan=%d\n",
+		__func__, ctrl->bklt_ctrl, ctrl->pwm_period,
+		ctrl->pwm_pmic_gpio, ctrl->pwm_lpg_chan);
+
+	pr_debug("%s: ndx=%d level=%d duty=%d\n", __func__,
+		ctrl->ndx, level, duty);
+
+	ret = pwm_config(ctrl->pwm_bl, duty, ctrl->pwm_period);
+	if (ret) {
+		pr_err("%s: pwm_config() failed err=%d.\n", __func__, ret);
+		return;
+	}
+
+	ret = pwm_enable(ctrl->pwm_bl);
+	if (ret)
+		pr_err("%s: pwm_enable() failed err=%d\n", __func__, ret);
 }
 
 static char dcs_cmd[2] = {0x54, 0x00}; /* DTYPE_DCS_READ */
@@ -155,49 +199,43 @@ void mdss_dsi_samsung_panel_reset(struct mdss_panel_data *pdata, int enable)
 		return;
 	}
 
-	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+				panel_data);
 
-	if (!gpio_is_valid(ctrl_pdata->lcd_en)) {
-		pr_debug("%s:%d, enable line not configured\n",  __func__, __LINE__);
-	}
+	pr_info("[%s] rst_gpio : %d \n",__func__, ctrl_pdata->rst_gpio);	//test
+
+/*	if (!gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
+		pr_debug("%s:%d, enable line not configured\n",
+			   __func__, __LINE__);
+	}*/
 
 	if (!gpio_is_valid(ctrl_pdata->rst_gpio)) {
-		pr_debug("%s:%d, reset line not configured\n", __func__, __LINE__);
+		pr_debug("%s:%d, reset line not configured\n",
+			   __func__, __LINE__);
 	}
 
+
+	pr_debug("%s: enable = %d\n", __func__, enable);
+
 	if (enable) {
-                pr_info("[LCD] %s: LCD_RST High !!! \n", __func__);
 		gpio_set_value((ctrl_pdata->rst_gpio), 1);
 		msleep(20);
 		wmb();
-
-                #if 1 // def CONFIG_SAMSUNG_CMC624 /* Enable CMC Chip */
-		{
-        		int retry=0;
-        		for(retry=0; retry<3; retry++)	{
-        			cmc_power(1);
-        			if(samsung_cmc624_on(1)) {
-        				break;
-        			}	
-        			cmc_power(0);
-        			msleep(500);
-        		}
-		}
-                msleep(20);
-                #endif
-
-                /*
-                if (gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
+		gpio_set_value((ctrl_pdata->rst_gpio), 0);
+		udelay(200);
+		wmb();
+		gpio_set_value((ctrl_pdata->rst_gpio), 1);
+		msleep(20);
+		wmb();
+/*		if (gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
 			gpio_set_value((ctrl_pdata->disp_en_gpio), 1);
 			wmb();
 		}*/
 	} else {
-                pr_info("[LCD] %s: LCD_RST LOW !!! \n", __func__);
 		gpio_set_value((ctrl_pdata->rst_gpio), 0);
-                if (gpio_is_valid(ctrl_pdata->lcd_en)) {
-                        pr_info("[LCD] %s: LCD_EN LOW !!! \n", __func__);
-			gpio_set_value((ctrl_pdata->lcd_en), 0);
-		}
+/*		if (gpio_is_valid(ctrl_pdata->disp_en_gpio)) {
+			gpio_set_value((ctrl_pdata->disp_en_gpio), 0);
+		}*/
 	}
 }
 
@@ -466,6 +504,24 @@ static void mdss_dsi_panel_bl_ctrl(struct mdss_panel_data *pdata,
 		return;
 	}
 	cmc624_pwm_control_cabc(bl_level);
+#if 0
+	switch (ctrl_pdata->bklt_ctrl) {
+		case BL_WLED:
+			led_trigger_event(bl_led_trigger, bl_level);
+			break;
+		case BL_PWM:
+			mdss_dsi_panel_bklt_pwm(ctrl_pdata, bl_level);
+			break;
+		case BL_DCS_CMD:
+			msd.dstat.bright_level = bl_level;
+			mipi_samsung_disp_send_cmd(PANEL_BRIGHT_CTRL, true);
+			break;
+		default:
+			pr_err("%s: Unknown bl_ctrl configuration\n",
+				__func__);
+			break;
+	}
+#endif
 }
 
 static int mipi_samsung_disp_send_cmd(
@@ -486,7 +542,7 @@ static int mipi_samsung_disp_send_cmd(
 			cmd_desc = display_qcom_on_cmds.cmd_desc;
 			cmd_size = display_qcom_on_cmds.num_of_cmds;
 			break;
-		case PANEL_DISP_OFF:   // PANEL_READY_TO_OFF:
+		case PANEL_OFF:
 			cmd_desc = display_qcom_off_cmds.cmd_desc;
 			cmd_size = display_qcom_off_cmds.num_of_cmds;
 			break;
@@ -518,7 +574,7 @@ static int mipi_samsung_disp_send_cmd(
 			cmd_desc = touchsensing_off_cmd.cmd_desc;
 			cmd_size = touchsensing_off_cmd.num_of_cmds;
 			break;
-		case PANEL_READY_TO_OFF_2:
+		case PANEL_READY_TO_OFF:
 			cmd_desc =  display_ready_off_cmds.cmd_desc;
 			cmd_size =  display_ready_off_cmds.num_of_cmds;
 			break;
@@ -593,26 +649,23 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 {
 	struct mipi_panel_info *mipi;
 	struct mdss_dsi_ctrl_pdata *ctrl = NULL;
-	int ret;
 
 	if (pdata == NULL) {
 		pr_err("%s: Invalid input data\n", __func__);
 		return -EINVAL;
 	}
 
-	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata, panel_data);
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+			panel_data);
+
 	mipi  = &pdata->panel_info.mipi;
 
-	pr_info("[LCD] mdss_dsi_panel_on ++\n");
+	pr_info("mdss_dsi_panel_on ++\n");
 //	pr_debug("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx); // blocked because of kernel panic
 //	mipi_samsung_disp_send_cmd(DISPLAY_PANEL_ON, true);
 	mipi_samsung_disp_send_cmd(PANEL_READY_TO_ON, true);
 
-	ret = gpio_direction_output((ctrl->boost_gpio), 1);
-	if (ret) {
-		pr_err("[LCD]%s: unable to set_direction for ima_nRst [%d]\n", __func__, ctrl->boost_gpio);
-	}
-	pr_info("[LCD] %s: BOOST GPIO HIGH \n", __func__);
+	pr_info("%s: DISP_BL_CONT_GPIO High\n", __func__);
 	gpio_set_value((ctrl->boost_gpio), 1);
 
 	/* Init Index Values */
@@ -623,7 +676,7 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 	msd.dstat.on = 1;
 	msd.mfd->resume_state = MIPI_RESUME_STATE;
 	
-	pr_info("[LCD] mdss_dsi_panel_on--\n");
+	pr_info("mdss_dsi_panel_on--\n");
 
 	return 0;
 }
@@ -639,7 +692,9 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 	}
 
 	pr_info("mdss_dsi_panel_off ++\n");
-	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,	panel_data);
+	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+				panel_data);
+//	pr_debug("%s: ctrl=%p ndx=%d\n", __func__, ctrl, ctrl->ndx);
 
 	mipi  = &pdata->panel_info.mipi;
 
@@ -651,13 +706,55 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 	msd.dstat.on = 0;
 	msd.mfd->resume_state = MIPI_SUSPEND_STATE;
 
-	mipi_samsung_disp_send_cmd(PANEL_DISP_OFF, false);
-	// mipi_samsung_disp_send_cmd(PANEL_READY_TO_OFF, false);
+
+//	mipi_samsung_disp_send_cmd(PANEL_READY_TO_OFF, false);
+	mipi_samsung_disp_send_cmd(PANEL_OFF, false);
 
 	mutex_unlock(&msd.lock);
 	pr_info("mdss_dsi_panel_off --\n");
 
 	return 0;
+}
+
+
+static int mdss_samsung_parse_panel_table(struct platform_device *pdev,
+		struct cmd_map *table, char *keystring)
+{
+		const __be32 *data;
+		int  data_offset, len = 0 , i = 0;
+
+		struct device_node *np = pdev->dev.of_node;
+		data = of_get_property(np, keystring, &len);
+		if (!data) {
+			pr_err("%s:%d, Unable to read table %s ",
+				__func__, __LINE__, keystring);
+			return -EINVAL;
+		}
+		if ((len % 2) != 0) {
+			pr_err("%s:%d, Incorrect table entries for %s",
+						__func__, __LINE__, keystring);
+			return -EINVAL;
+		}
+		table->size = len / (sizeof(int)*2);
+		table->bl_level = kzalloc((sizeof(int) * table->size), GFP_KERNEL);
+		if (!table->bl_level)
+			return -ENOMEM;
+
+		table->cmd_idx = kzalloc((sizeof(int) * table->size), GFP_KERNEL);
+		if (!table->cmd_idx)
+			goto error;
+
+		data_offset = 0;
+		for (i = 0 ; i < table->size; i++) {
+			table->bl_level[i] = be32_to_cpup(&data[data_offset++]);
+			table->cmd_idx[i] = be32_to_cpup(&data[data_offset++]);
+		}
+
+		return 0;
+error:
+	kfree(table->cmd_idx);
+
+	return -ENOMEM;
 }
 
 static int mdss_samsung_parse_panel_cmd(struct platform_device *pdev,
@@ -775,7 +872,8 @@ error2:
 
 }
 
-static int mdss_panel_parse_dt(struct platform_device *pdev, struct mdss_panel_common_pdata *panel_data)
+static int mdss_panel_parse_dt(struct platform_device *pdev,
+			       struct mdss_panel_common_pdata *panel_data)
 {
 	struct device_node *np = pdev->dev.of_node;
 	u32 res[6], tmp;
@@ -788,7 +886,8 @@ static int mdss_panel_parse_dt(struct platform_device *pdev, struct mdss_panel_c
 
 	rc = of_property_read_u32_array(np, "qcom,mdss-pan-res", res, 2);
 	if (rc) {
-		pr_err("%s:%d, panel resolution not specified\n", __func__, __LINE__);
+		pr_err("%s:%d, panel resolution not specified\n",
+						__func__, __LINE__);
 		return -EINVAL;
 	}
 	panel_data->panel_info.xres = (!rc ? res[0] : 640);
@@ -1120,14 +1219,22 @@ static int mdss_panel_parse_dt(struct platform_device *pdev, struct mdss_panel_c
 
 
 #if 1
-	mdss_samsung_parse_panel_cmd(pdev, &display_qcom_on_cmds, "qcom,panel-on-cmds");
-	mdss_samsung_parse_panel_cmd(pdev, &display_qcom_off_cmds,"qcom,panel-off-cmds");
+	mdss_samsung_parse_panel_cmd(pdev, &display_qcom_on_cmds,
+				"qcom,panel-on-cmds");
+
+	mdss_samsung_parse_panel_cmd(pdev, &display_qcom_off_cmds,
+				"qcom,panel-off-cmds");
 #endif
-	mdss_samsung_parse_panel_cmd(pdev, &display_on_cmd, "qcom,panel-display-on-cmds");
-	mdss_samsung_parse_panel_cmd(pdev, &display_off_cmd,"qcom,panel-display-off-cmds");
-	mdss_samsung_parse_panel_cmd(pdev, &backlight_cont_cmd,	"qcom,panel-backlightcontrol-cmds");
+	mdss_samsung_parse_panel_cmd(pdev, &display_on_cmd,
+				"qcom,panel-display-on-cmds");
+	mdss_samsung_parse_panel_cmd(pdev, &display_off_cmd,
+				"qcom,panel-display-off-cmds");
+
+	mdss_samsung_parse_panel_cmd(pdev, &backlight_cont_cmd,
+				"qcom,panel-backlightcontrol-cmds");
 
 	return 0;
+
 
 	return -EINVAL;
 }
@@ -1173,6 +1280,7 @@ static int is_panel_supported(const char *panel_name)
 	return -EINVAL;
 }
 
+
 static int __devinit mdss_dsi_panel_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1183,21 +1291,25 @@ static int __devinit mdss_dsi_panel_probe(struct platform_device *pdev)
 #endif
 
 #if defined(CONFIG_BACKLIGHT_CLASS_DEVICE)
-        struct backlight_device *bd = NULL;
+				struct backlight_device *bd = NULL;
 #endif
+
+
 	pr_info("%s:%d", __func__, __LINE__);
 	if (!pdev->dev.of_node)
 		return -ENODEV;
 
 	panel_name = of_get_property(pdev->dev.of_node, "label", NULL);
 	if (!panel_name)
-		pr_info("%s:%d, panel name not specified\n", __func__, __LINE__);
+		pr_info("%s:%d, panel name not specified\n",
+						__func__, __LINE__);
 	else
 		pr_info("%s: Panel Name = %s\n", __func__, panel_name);
 
 
 	printk(KERN_DEBUG "Is_There_cmc624 : CMC624 is there!!!!");
 	samsung_cmc624_init();
+
 
 	if(is_panel_supported(panel_name)) {
 		LCD_DEBUG("Panel : %s is not supported:",panel_name);
@@ -1222,7 +1334,8 @@ static int __devinit mdss_dsi_panel_probe(struct platform_device *pdev)
 		return rc;
 
 #if defined(CONFIG_LCD_CLASS_DEVICE)
-	lcd_device = lcd_device_register("panel", &pdev->dev, NULL, &mipi_samsung_disp_props);
+	lcd_device = lcd_device_register("panel", &pdev->dev, NULL,
+					&mipi_samsung_disp_props);
 
 	if (IS_ERR(lcd_device)) {
 		rc = PTR_ERR(lcd_device);
@@ -1230,14 +1343,19 @@ static int __devinit mdss_dsi_panel_probe(struct platform_device *pdev)
 		return rc;
 	}
 
-	sysfs_remove_file(&lcd_device->dev.kobj, &dev_attr_lcd_power.attr);
 
-	rc = sysfs_create_file(&lcd_device->dev.kobj,&dev_attr_lcd_power.attr);
+	sysfs_remove_file(&lcd_device->dev.kobj,
+					&dev_attr_lcd_power.attr);
+
+	rc = sysfs_create_file(&lcd_device->dev.kobj,
+					&dev_attr_lcd_power.attr);
 	if (rc) {
-		pr_info("sysfs create fail-%s\n", dev_attr_lcd_power.attr.name);
+		pr_info("sysfs create fail-%s\n",
+				dev_attr_lcd_power.attr.name);
 	}
 
-	rc = sysfs_create_file(&lcd_device->dev.kobj,&dev_attr_siop_enable.attr);
+	rc = sysfs_create_file(&lcd_device->dev.kobj,
+						&dev_attr_siop_enable.attr);
 	if (rc) {
 		pr_info("sysfs create fail-%s\n",
 				dev_attr_siop_enable.attr.name);
@@ -1278,6 +1396,7 @@ static int __devinit mdss_dsi_panel_probe(struct platform_device *pdev)
 			pr_debug("CMC624 sysfs initialize FAILED\n");
 
 #endif
+
 	msd.dstat.on = 0;
 	return 0;
 }
@@ -1322,12 +1441,11 @@ __setup("lcd_attached=", lcd_attached_status);
 
 static int __init mdss_dsi_panel_init(void)
 {
-	printk("%s: get_lcd_attached(%d)!\n", __func__, get_lcd_attached());
+	printk("%s: get_lcd_attached(%d)!\n",
+				__func__, get_lcd_attached());
+	if (get_lcd_attached() == 0)
+		return -ENODEV;
 
-	if (get_lcd_attached() == 0)    {
-                printk("%s: get_lcd_attached(%d)!\n", __func__, get_lcd_attached());
-		// return -ENODEV;
-        }
 	return platform_driver_register(&this_driver);
 }
 

@@ -44,13 +44,6 @@ struct vibrator_platform_data {
 	unsigned int duty_us;
 	void (*power_onoff)(int onoff);
 	struct clk *gp2_clk;
-#if defined(CONFIG_MOTOR_DRV_DRV2603)
-	unsigned int drv2603_en_gpio;
-#endif
-};
-
-struct vibrator_platform_data_motor {
-	void (*power_onoff)(int onoff);
 };
 
 #endif

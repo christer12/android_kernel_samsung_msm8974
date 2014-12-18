@@ -382,7 +382,6 @@ static int rmidb_init(struct synaptics_rmi4_data *rmi4_data)
 {
 	int retval;
 	unsigned char attr_count;
-	int attr_count_num;
 
 	rmidb = kzalloc(sizeof(*rmidb), GFP_KERNEL);
 	if (!rmidb) {
@@ -455,8 +454,7 @@ static int rmidb_init(struct synaptics_rmi4_data *rmi4_data)
 	return 0;
 
 err_sysfs_attrs:
-	attr_count_num = (int)attr_count;
-	for (attr_count_num--; attr_count_num >= 0; attr_count_num--)
+	for (attr_count--; attr_count >= 0; attr_count--)
 		sysfs_remove_file(rmidb->sysfs_dir, &attrs[attr_count].attr);
 
 	sysfs_remove_bin_file(rmidb->sysfs_dir, &attr_data);

@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-&soc {
+/ {
 	mdss_mdp: qcom,mdss_mdp@fd900000 {
 		compatible = "qcom,mdss_mdp";
 		reg = <0xfd900000 0x22100>,
@@ -50,13 +50,7 @@
 				     <0x0160 0x22222222>,
 				     <0x0164 0x00002222>;
 		qcom,mdp-settings = <0x02E0 0x000000E9>,
-				    <0x02E4 0x00000055>,
-				    <0x03AC 0xC0000CCC>,
-				    <0x03B4 0xC0000CCC>,
-				    <0x03BC 0x00CCCCCC>,
-				    <0x04A8 0x0CCCC0C0>,
-				    <0x04B0 0xCCCCC0C0>,
-				    <0x04B8 0xCCCCC000>;
+				    <0x02E4 0x00000055>;
 
 		mdss_fb0: qcom,mdss_fb_primary {
 			cell-index = <0>;
@@ -64,8 +58,8 @@
 			qcom,memory-reservation-type = "EBI1";
 			qcom,memory-reservation-size = <0x0000000>;	/* 0 MB allocaed for fb0 */
 			qcom,memory-alt-reservation-size = <0x1000000>;	 /* Framebuffer reservation only for LPM or recovery boot mode */
-			qcom,mdss-fb-split = <1536 1024>;
 	};
+
 		mdss_fb1: qcom,mdss_fb_external {
 			cell-index = <1>;
 			compatible = "qcom,mdss-fb";
@@ -116,7 +110,7 @@
 		qcom,hdmi-tx-max-voltage-level = <0 0 1800000 1800000>;
 		qcom,hdmi-tx-peak-current = <0 0 1800000 0>;
 
-/*		qcom,hdmi-tx-cec = <&msmgpio 31 0>;*/
+		qcom,hdmi-tx-cec = <&msmgpio 31 0>;
 /*		qcom,hdmi-tx-ddc-clk = <&msmgpio 32 0>;*/
 /*		qcom,hdmi-tx-ddc-data = <&msmgpio 33 0>;*/
 		qcom,hdmi-tx-hpd = <&msmgpio 34 0>;
@@ -145,6 +139,5 @@
 		qcom,panel-pwm-period = <53>;
 		status = "disable";
 		qcom,mdss-fb-map = <&mdss_fb0>;
-		gpio-panel-hpd = <&msmgpio 102 0>;
 	};
 };

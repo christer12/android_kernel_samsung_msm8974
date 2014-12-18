@@ -46,16 +46,6 @@
 
 #if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL)
 #include "mdnie_lite_tuning_data_hlte.h"
-#elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
-#include "mdnie_lite_tuning_data_flte.h"
-#elif defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
-#include "mdnie_lite_tuning_data_jactiveltexx.h"
-#elif defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
-#include "mdnie_lite_tuning_data_wvga_s6e88a0.h"
-#elif defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
-#include "mdnie_lite_tuning_data_jvelte_tft.h"
-#elif defined(CONFIG_MACH_JS01LTEDCM)
-#include "mdnie_lite_tuning_data_js01.h"
 #else
 #include "mdnie_lite_tuning_data.h"
 #endif
@@ -242,12 +232,10 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			DPRINT(" = STANDARD MODE =\n");
 			INPUT_PAYLOAD1(STANDARD_UI_1);
 			INPUT_PAYLOAD2(STANDARD_UI_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		} else if (mdnie_tun_state.background == NATURAL_MODE) {
 			DPRINT(" = NATURAL MODE =\n");
 			INPUT_PAYLOAD1(NATURAL_UI_1);
 			INPUT_PAYLOAD2(NATURAL_UI_2);
-#endif
 		} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 			DPRINT(" = DYNAMIC MODE =\n");
 			INPUT_PAYLOAD1(DYNAMIC_UI_1);
@@ -266,25 +254,19 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 	case mDNIe_VIDEO_MODE:
 		DPRINT(" = VIDEO MODE =\n");
 		if (mdnie_tun_state.outdoor == OUTDOOR_ON_MODE) {
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
-			DPRINT("[ERROR] no data for OUTDOOR\n");
-#else
 			DPRINT(" = OUTDOOR ON MODE =\n");
 			INPUT_PAYLOAD1(OUTDOOR_VIDEO_1);
 			INPUT_PAYLOAD2(OUTDOOR_VIDEO_2);
-#endif			
 		} else if (mdnie_tun_state.outdoor == OUTDOOR_OFF_MODE) {
 			DPRINT(" = OUTDOOR OFF MODE =\n");
 			if (mdnie_tun_state.background == STANDARD_MODE) {
 				DPRINT(" = STANDARD MODE =\n");
 				INPUT_PAYLOAD1(STANDARD_VIDEO_1);
 				INPUT_PAYLOAD2(STANDARD_VIDEO_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 			} else if (mdnie_tun_state.background == NATURAL_MODE) {
 				DPRINT(" = NATURAL MODE =\n");
 				INPUT_PAYLOAD1(NATURAL_VIDEO_1);
 				INPUT_PAYLOAD2(NATURAL_VIDEO_2);
-#endif
 			} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 				DPRINT(" = DYNAMIC MODE =\n");
 				INPUT_PAYLOAD1(DYNAMIC_VIDEO_1);
@@ -302,9 +284,6 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 		break;
 
 	case mDNIe_VIDEO_WARM_MODE:
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
-		DPRINT("[ERROR] no data for VIDEO WARM MODE\n");
-#else
 		DPRINT(" = VIDEO WARM MODE =\n");
 		if (mdnie_tun_state.outdoor == OUTDOOR_ON_MODE) {
 			DPRINT(" = OUTDOOR ON MODE =\n");
@@ -315,13 +294,9 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			INPUT_PAYLOAD1(WARM_1);
 			INPUT_PAYLOAD2(WARM_2);
 		}
-#endif		
 		break;
 
 	case mDNIe_VIDEO_COLD_MODE:
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
-		DPRINT("[ERROR] no data for VIDEO COLD MODE\n");
-#else
 		DPRINT(" = VIDEO COLD MODE =\n");
 		if (mdnie_tun_state.outdoor == OUTDOOR_ON_MODE) {
 			DPRINT(" = OUTDOOR ON MODE =\n");
@@ -332,7 +307,6 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			INPUT_PAYLOAD1(COLD_1);
 			INPUT_PAYLOAD2(COLD_2);
 		}
-#endif		
 		break;
 
 	case mDNIe_CAMERA_MODE:
@@ -348,13 +322,9 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 				INPUT_PAYLOAD2(CAMERA_2);
 			}
 		} else if (mdnie_tun_state.outdoor == OUTDOOR_ON_MODE) {
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
-			DPRINT("[ERROR] no data for CAMERA OUTDOOR_ON_MODE\n");
-#else
 			DPRINT(" = NATURAL MODE =\n");
 			INPUT_PAYLOAD1(CAMERA_OUTDOOR_1);
 			INPUT_PAYLOAD2(CAMERA_OUTDOOR_2);
-#endif
 		}
 		break;
 
@@ -369,12 +339,10 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			DPRINT(" = STANDARD MODE =\n");
 			INPUT_PAYLOAD1(STANDARD_GALLERY_1);
 			INPUT_PAYLOAD2(STANDARD_GALLERY_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		} else if (mdnie_tun_state.background == NATURAL_MODE) {
 			DPRINT(" = NATURAL MODE =\n");
 			INPUT_PAYLOAD1(NATURAL_GALLERY_1);
 			INPUT_PAYLOAD2(NATURAL_GALLERY_2);
-#endif
 		} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 			DPRINT(" = DYNAMIC MODE =\n");
 			INPUT_PAYLOAD1(DYNAMIC_GALLERY_1);
@@ -396,12 +364,10 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			DPRINT(" = STANDARD MODE =\n");
 			INPUT_PAYLOAD1(STANDARD_VT_1);
 			INPUT_PAYLOAD2(STANDARD_VT_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		} else if (mdnie_tun_state.background == NATURAL_MODE) {
 			DPRINT(" = NATURAL MODE =\n");
 			INPUT_PAYLOAD1(NATURAL_VT_1);
 			INPUT_PAYLOAD2(NATURAL_VT_2);
-#endif
 		} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 			DPRINT(" = DYNAMIC MODE =\n");
 			INPUT_PAYLOAD1(DYNAMIC_VT_1);
@@ -430,12 +396,10 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 				DPRINT(" = STANDARD MODE =\n");
 				INPUT_PAYLOAD1(STANDARD_DMB_1);
 				INPUT_PAYLOAD2(STANDARD_DMB_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 			} else if (mdnie_tun_state.background == NATURAL_MODE) {
 				DPRINT(" = NATURAL MODE =\n");
 				INPUT_PAYLOAD1(NATURAL_DMB_1);
 				INPUT_PAYLOAD2(NATURAL_DMB_2);
-#endif
 			} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 				DPRINT(" = DYNAMIC MODE =\n");
 				INPUT_PAYLOAD1(DYNAMIC_DMB_1);
@@ -485,12 +449,10 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			DPRINT(" = STANDARD MODE =\n");
 			INPUT_PAYLOAD1(STANDARD_BROWSER_1);
 			INPUT_PAYLOAD2(STANDARD_BROWSER_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		} else if (mdnie_tun_state.background == NATURAL_MODE) {
 			DPRINT(" = NATURAL MODE =\n");
 			INPUT_PAYLOAD1(NATURAL_BROWSER_1);
 			INPUT_PAYLOAD2(NATURAL_BROWSER_2);
-#endif
 		} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 			DPRINT(" = DYNAMIC MODE =\n");
 			INPUT_PAYLOAD1(DYNAMIC_BROWSER_1);
@@ -512,12 +474,10 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			DPRINT(" = STANDARD MODE =\n");
 			INPUT_PAYLOAD1(STANDARD_EBOOK_1);
 			INPUT_PAYLOAD2(STANDARD_EBOOK_2);
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 		} else if (mdnie_tun_state.background == NATURAL_MODE) {
 			DPRINT(" = NATURAL MODE =\n");
 			INPUT_PAYLOAD1(NATURAL_EBOOK_1);
 			INPUT_PAYLOAD2(NATURAL_EBOOK_2);
-#endif
 		} else if (mdnie_tun_state.background == DYNAMIC_MODE) {
 			DPRINT(" = DYNAMIC MODE =\n");
 			INPUT_PAYLOAD1(DYNAMIC_EBOOK_1);
@@ -532,8 +492,6 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			INPUT_PAYLOAD2(AUTO_EBOOK_2);
 		}
 		break;
-
-#if !defined(CONFIG_SUPPORT_DISPLAY_OCTA_TFT) && !defined(CONFIG_FB_MSM_MIPI_TFT_VIDEO_FULL_HD_PT_PANEL)
 	case mDNIe_EMAIL_MODE:
 		DPRINT(" = EMAIL MODE =\n");
 		if (mdnie_tun_state.background == STANDARD_MODE) {
@@ -558,7 +516,6 @@ void mDNIe_Set_Mode(enum Lcd_mDNIe_UI mode)
 			INPUT_PAYLOAD2(AUTO_EMAIL_2);
 		}
 		break;
-#endif
 
 	case mDNIE_BLINE_MODE:
 		DPRINT(" = BLIND MODE =\n");
@@ -866,12 +823,7 @@ static ssize_t outdoor_store(struct device *dev,
 				value);
 	}
 
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_WVGA_S6E88A0_PT_PANEL)
-	mdnie_tun_state.outdoor = OUTDOOR_OFF_MODE;
-	DPRINT("[ERROR] no data for OUTDOOR setting\n");
-#else
 	mdnie_tun_state.outdoor = value;
-#endif
 
 	if (mdnie_tun_state.negative) {
 		DPRINT("already negative mode(%d), do not outdoor mode(%d)\n",
@@ -1093,44 +1045,23 @@ void mdnie_lite_tuning_init(struct mipi_samsung_driver_data *msd)
 #define coordinate_data_size 6
 #define scr_wr_addr 36
 
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL) \
-	|| defined(CONFIG_FB_MSM_MIPI_SAMSUNG_YOUM_CMD_FULL_HD_PT_PANEL)
-#define F1(x,y) ((y)-((99*(x))/91)-6)
-#define F2(x,y) ((y)-((164*(x))/157)-8)
-#define F3(x,y) ((y)+((218*(x))/39)-20166)
-#define F4(x,y) ((y)+((23*(x))/8)-11610)
-
-static char coordinate_data[][coordinate_data_size] = {
-	{0xff, 0x00, 0xff, 0x00, 0xff, 0x00}, /* dummy */
-	{0xff, 0x00, 0xf7, 0x00, 0xf8, 0x00}, /* Tune_1 */
-	{0xff, 0x00, 0xfa, 0x00, 0xfe, 0x00}, /* Tune_2 */
-	{0xfb, 0x00, 0xf9, 0x00, 0xff, 0x00}, /* Tune_3 */
-	{0xff, 0x00, 0xfd, 0x00, 0xfa, 0x00}, /* Tune_4 */
-	{0xff, 0x00, 0xff, 0x00, 0xff, 0x00}, /* Tune_5 */
-	{0xf9, 0x00, 0xfb, 0x00, 0xff, 0x00}, /* Tune_6 */
-	{0xfc, 0x00, 0xff, 0x00, 0xf8, 0x00}, /* Tune_7 */
-	{0xfb, 0x00, 0xff, 0x00, 0xfb, 0x00}, /* Tune_8 */
-	{0xf9, 0x00, 0xff, 0x00, 0xff, 0x00}, /* Tune_9 */
-};
-#else
 #define F1(x,y) ((y)-((107*(x))/100)-60)
 #define F2(x,y) ((y)-((44*(x))/43)-72)
 #define F3(x,y) ((y)+((57*(x))/8)-25161)
 #define F4(x,y) ((y)+((19*(x))/6)-12613)
 
 static char coordinate_data[][coordinate_data_size] = {
-	{0xff, 0x00, 0xff, 0x00, 0xff, 0x00}, /* dummy */
-	{0xff, 0x00, 0xf7, 0x00, 0xf8, 0x00}, /* Tune_1 */
-	{0xff, 0x00, 0xf9, 0x00, 0xfe, 0x00}, /* Tune_2 */
-	{0xfa, 0x00, 0xf8, 0x00, 0xff, 0x00}, /* Tune_3 */
-	{0xff, 0x00, 0xfc, 0x00, 0xf9, 0x00}, /* Tune_4 */
-	{0xff, 0x00, 0xff, 0x00, 0xff, 0x00}, /* Tune_5 */
-	{0xf8, 0x00, 0xfa, 0x00, 0xff, 0x00}, /* Tune_6 */
-	{0xfc, 0x00, 0xff, 0x00, 0xf8, 0x00}, /* Tune_7 */
-	{0xfb, 0x00, 0xff, 0x00, 0xfb, 0x00}, /* Tune_8 */
-	{0xf9, 0x00, 0xff, 0x00, 0xff, 0x00}, /* Tune_9 */
+	{0xff, 0x00, 0xff, 0x00, 0xff, 0x00},
+	{0xff, 0x00, 0xf7, 0x00, 0xf8, 0x00},
+	{0xff, 0x00, 0xf9, 0x00, 0xfe, 0x00},
+	{0xfa, 0x00, 0xf8, 0x00, 0xff, 0x00},
+	{0xff, 0x00, 0xfc, 0x00, 0xf9, 0x00},
+	{0xff, 0x00, 0xff, 0x00, 0xff, 0x00},
+	{0xf8, 0x00, 0xfa, 0x00, 0xff, 0x00},
+	{0xfc, 0x00, 0xff, 0x00, 0xf8, 0x00},
+	{0xfb, 0x00, 0xff, 0x00, 0xfb, 0x00},
+	{0xf9, 0x00, 0xff, 0x00, 0xff, 0x00},
 };
-#endif
 
 void coordinate_tunning(int x, int y)
 {

@@ -29,7 +29,6 @@ struct msm_hotplug_device {
 	unsigned int warm_boot;
 };
 
-
 static cpumask_t cpu_dying_mask;
 
 static DEFINE_PER_CPU_SHARED_ALIGNED(struct msm_hotplug_device,
@@ -74,7 +73,6 @@ static inline void platform_do_lowpower(unsigned int cpu, int *spurious)
 int platform_cpu_kill(unsigned int cpu)
 {
 	int ret = 0;
-
 	if (cpumask_test_and_clear_cpu(cpu, &cpu_dying_mask))
 		ret = msm_pm_wait_cpu_shutdown(cpu);
 

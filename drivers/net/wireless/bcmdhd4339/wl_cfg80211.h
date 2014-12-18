@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: wl_cfg80211.h 423265 2013-09-11 16:26:12Z $
+ * $Id: wl_cfg80211.h 401713 2013-05-13 12:11:03Z $
  */
 
 #ifndef _wl_cfg80211_h_
@@ -173,7 +173,7 @@ do {									\
 #define WL_AF_SEARCH_TIME_MAX           450
 #define WL_AF_TX_EXTRA_TIME_MAX         200
 
-#define WL_SCAN_TIMER_INTERVAL_MS	10000 /* Scan timeout */
+#define WL_SCAN_TIMER_INTERVAL_MS	8000 /* Scan timeout */
 #define WL_CHANNEL_SYNC_RETRY 	5
 #define WL_INVALID 		-1
 
@@ -186,7 +186,7 @@ do {									\
 #define WL_SCAN_SUPPRESS_TIMEOUT 31000 /* default Framwork DHCP timeout is 30 sec */
 #define WL_SCAN_SUPPRESS_RETRY 3000
 
-#define WL_PM_ENABLE_TIMEOUT 10000
+#define WL_PM_ENABLE_TIMEOUT 3000
 
 /* driver status */
 enum wl_status {
@@ -270,14 +270,6 @@ enum wl_management_type {
 	WL_PROBE_RESP = 0x2,
 	WL_ASSOC_RESP = 0x4
 };
-
-enum wl_handler_del_type {
-	WL_HANDLER_NOTUSE,
-	WL_HANDLER_DEL,
-	WL_HANDLER_MAINTAIN,
-	WL_HANDLER_PEND
-};
-
 /* beacon / probe_response */
 struct beacon_proberesp {
 	__le64 timestamp;
@@ -632,8 +624,6 @@ struct wl_priv {
 	struct mutex event_sync;	/* maily for up/down synchronization */
 	bool pm_enable_work_on;
 	struct delayed_work pm_enable_work;
-	vndr_ie_setbuf_t *ibss_vsie;	/* keep the VSIE for IBSS */
-	int ibss_vsie_len;
 };
 
 
@@ -964,7 +954,7 @@ extern void get_primary_mac(struct wl_priv *wl, struct ether_addr *mac);
 #if defined(DUAL_ESCAN_RESULT_BUFFER)
 #define wl_escan_set_sync_id(a, b) ((a) = (b)->escan_info.cur_sync_id)
 #define wl_escan_get_buf(a, b) ((wl_scan_results_t *) (a)->escan_info.escan_buf\
-[((a)->escan_info.cur_sync_id + (b))%SCAN_BUF_CNT])
+[((a)->escan_info.cur_sync_id + (b)?1:0)%SCAN_BUF_CNT])
 static inline int wl_escan_check_sync_id(s32 status, u16 result_id, u16 wl_id)
 {
 	if (result_id != wl_id) {
@@ -994,11 +984,4 @@ static inline void wl_escan_print_sync_id(s32 status, u16 result_id, u16 wl_id)
 #define wl_escan_increment_sync_id(a, b)
 #define wl_escan_init_sync_id(a)
 #endif /* DUAL_ESCAN_RESULT_BUFFER */
-extern void wl_cfg80211_ibss_vsie_set_buffer(vndr_ie_setbuf_t *ibss_vsie, int ibss_vsie_len);
-extern s32 wl_cfg80211_ibss_vsie_delete(struct net_device *dev);
-
-/* Action frame specific functions */
-extern u8 wl_get_action_category(void *frame, u32 frame_len);
-extern int wl_get_public_action(void *frame, u32 frame_len, u8 *ret_action);
-
 #endif				/* _wl_cfg80211_h_ */

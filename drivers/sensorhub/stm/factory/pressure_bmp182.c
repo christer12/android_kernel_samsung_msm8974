@@ -129,28 +129,35 @@ static ssize_t pressure_cabratioin_show(struct device *dev,
 static ssize_t eeprom_check_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
-	char chTempBuf  = 0;
-	int iRet = 0;
+	bool bSuccess = false;
+	char chTempBuf[2] = {0, 10};
+	int iRet, iDelayCnt = 0;
 	struct ssp_data *data = dev_get_drvdata(dev);
 
-	struct ssp_msg *msg = kzalloc(sizeof(*msg), GFP_KERNEL);
-	msg->cmd = PRESSURE_FACTORY;
-	msg->length = 1;
-	msg->options = AP2HUB_READ;
-	msg->buffer = &chTempBuf;
-	msg->free_buffer = 0;
+	data->uFactorydataReady = 0;
+	memset(data->uFactorydata, 0, sizeof(char) * FACTORY_DATA_MAX);
 
-	iRet = ssp_spi_sync(data, msg, 3000);
+	iRet = send_instruction(data, FACTORY_MODE, PRESSURE_FACTORY,
+			chTempBuf, 2);
 
-	if (iRet != SUCCESS) {
-		pr_err("[SSP]: %s - Pressure Selftest Timeout!!\n", __func__);
+	while (!(data->uFactorydataReady & (1 << PRESSURE_FACTORY))
+		&& (iDelayCnt++ < 150)
+		&& (iRet == SUCCESS))
+		msleep(20);
+
+	if ((iDelayCnt >= 150) || (iRet != SUCCESS)) {
+		pr_err("[SSP]: %s - Pressure Selftest Timeout!!\n",
+			__func__);
 		goto exit;
 	}
 
-	ssp_dbg("[SSP]: %s - %u\n", __func__, chTempBuf);
+	mdelay(5);
 
-	exit:
-	return snprintf(buf, PAGE_SIZE, "%d", chTempBuf);
+	bSuccess = (bool)(!!data->uFactorydata[0]);
+	ssp_dbg("[SSP]: %s - %u\n", __func__, bSuccess);
+
+exit:
+	return snprintf(buf, PAGE_SIZE, "%d", bSuccess);
 }
 
 /* sysfs for vendor & name */

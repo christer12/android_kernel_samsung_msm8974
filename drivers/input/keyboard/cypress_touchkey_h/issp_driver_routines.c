@@ -37,9 +37,11 @@
 #include "issp_directives.h"
 #include "issp_extern.h"
 #include <asm/mach-types.h>
+#define _CYPRESS_TKEY_FW_H
+#include "cypress_tkey_fw.h"
 
 #if CONFIG_KEYBOARD_CYPRESS_TOUCHKEY
-#include <linux/i2c/touchkey_i2c.h>
+#include <linux/i2c/cypress_touchkey.h>
 #endif
 
 #include <linux/device.h>
@@ -115,13 +117,8 @@ void LoadProgramData(struct cypress_touchkey_info *info, unsigned char bBlockNum
 	int dataNum;
 
 	for (dataNum = 0; dataNum < TARGET_DATABUFF_LEN; dataNum++) {
-		#ifdef TKEY_REQUEST_FW_UPDATE
-		abTargetDataOUT[dataNum] =
-			info->fw_img->data[bBlockNum * TARGET_DATABUFF_LEN + dataNum];
-		#else
 		abTargetDataOUT[dataNum] =
 			firmware_data[bBlockNum * TARGET_DATABUFF_LEN + dataNum];
-		#endif
 	}
 }
 
@@ -181,12 +178,12 @@ signed char fLoadSecurityData(unsigned char bBankNum)
 unsigned char fSDATACheck(void)
 {
 #ifdef PSOC3_5
-	if (gpio_get_value(GPIO_TOUCHKEY_SDA))
+	if (gpio_get_value(GPIO_TOUCHKEY_SDA_2))
 		return 1;
 	else
 		return 0;
 #else /* CONFIG_SEC_H_PROJECT */
-	if (gpio_get_value(GPIO_TOUCHKEY_SDA))
+	if (gpio_get_value(GPIO_TOUCHKEY_SDA_2))
 		return 1;
 	else
 		return 0;
@@ -207,7 +204,7 @@ unsigned char fSDATACheck(void)
 */
 void SCLKHigh(void)
 {
-	gpio_direction_output(GPIO_TOUCHKEY_SCL, 1);
+	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 1);
 }
 
 
@@ -224,7 +221,7 @@ void SCLKHigh(void)
 */
 void SCLKLow(void)
 {
-	gpio_direction_output(GPIO_TOUCHKEY_SCL, 0);
+	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
 }
 
 #ifndef RESET_MODE
@@ -241,7 +238,7 @@ void SCLKLow(void)
 */
 void SetSCLKHiZ(void)
 {
-	gpio_direction_input(GPIO_TOUCHKEY_SCL);
+	gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
 }
 #endif
 
@@ -258,7 +255,7 @@ void SetSCLKHiZ(void)
 */
 void SetSCLKStrong(void)
 {
-	gpio_direction_output(GPIO_TOUCHKEY_SCL, 0);
+	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
 }
 
 
@@ -275,7 +272,7 @@ void SetSCLKStrong(void)
 */
 void SetSDATAHigh(void)
 {
-	gpio_direction_output(GPIO_TOUCHKEY_SDA, 1);
+	gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 1);
 }
 
  /*
@@ -291,7 +288,7 @@ void SetSDATAHigh(void)
 */
 void SetSDATALow(void)
 {
-	 gpio_direction_output(GPIO_TOUCHKEY_SDA, 0);
+	 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
 }
 
  /*
@@ -307,7 +304,7 @@ void SetSDATALow(void)
 */
 void SetSDATAHiZ(void)
 {
-	 gpio_direction_input(GPIO_TOUCHKEY_SDA);
+	 gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
 }
 
  /* 0BIT 1BIT
@@ -333,7 +330,7 @@ void SetSDATAOpenDrain(void)
 */
 void SetSDATAStrong(void)
 {
-	 gpio_direction_output(GPIO_TOUCHKEY_SDA, 0);
+	 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
 }
 
 #ifdef RESET_MODE
@@ -413,12 +410,149 @@ void SetTargetVDDStrong(void)
  Provide power to the target PSoC's Vdd pin through a GPIO.
  ****************************************************************************
 */
+
+static int reg_set_optimum_mode_check(struct regulator *reg, int load_uA)
+{
+	return (regulator_count_voltages(reg) > 0) ?
+		regulator_set_optimum_mode(reg, load_uA) : 0;
+}
+
+static void cypress_power_onoff(struct cypress_touchkey_info *info, int onoff)
+{
+	int ret = 0, rc = 0;
+
+	dev_info(&info->client->dev, "%s: power %s\n",
+			__func__, onoff ? "on" : "off");
+
+	if (!info->vcc_en) {
+		if (info->pdata->i2c_pull_up) {
+			info->vcc_en = regulator_get(&info->client->dev,
+				"vcc_en");
+			if (IS_ERR(info->vcc_en)) {
+				rc = PTR_ERR(info->vcc_en);
+				dev_info(&info->client->dev,
+					"Regulator(vcc_en) get failed rc=%d\n", rc);
+				goto error_get_vtg_i2c;
+			}
+			if (regulator_count_voltages(info->vcc_en) > 0) {
+				rc = regulator_set_voltage(info->vcc_en,
+				1800000, 1800000);
+				if (rc) {
+					dev_info(&info->client->dev,
+					"regulator(vcc_en) set_vtg failed rc=%d\n",
+					rc);
+					goto error_set_vtg_i2c;
+				}
+			}
+		}
+	}
+	if (info->pdata->vdd_led < 0) {
+		if (!info->vdd_led) {
+			info->vdd_led = regulator_get(&info->client->dev,
+				"vdd_led");
+			if (IS_ERR(info->vdd_led)) {
+				rc = PTR_ERR(info->vdd_led);
+				dev_info(&info->client->dev,
+					"Regulator(vdd_led) get failed rc=%d\n", rc);
+				goto error_get_vtg_i2c;
+			}
+
+			if (regulator_count_voltages(info->vdd_led) > 0) {
+				rc = regulator_set_voltage(info->vdd_led,
+				3300000, 3300000);
+				if (rc) {
+					dev_info(&info->client->dev,
+					"regulator(vdd_led) set_vtg failed rc=%d\n",
+					rc);
+					goto error_set_vtg_i2c;
+				}
+			}
+
+		}
+	}
+	if (onoff) {
+		if (info->pdata->i2c_pull_up) {
+			rc = reg_set_optimum_mode_check(info->vcc_en,
+						10000);
+			if (rc < 0) {
+				dev_info(&info->client->dev,
+				"Regulator vcc_en set_opt failed rc=%d\n",
+				rc);
+				goto error_reg_opt_i2c;
+			}
+
+			rc = regulator_enable(info->vcc_en);
+			if (rc) {
+				dev_info(&info->client->dev,
+				"Regulator vcc_en enable failed rc=%d\n",
+				rc);
+				goto error_reg_en_vcc_en;
+			}
+			if (info->pdata->vdd_led < 0) {
+				rc = reg_set_optimum_mode_check(info->vdd_led,
+							10000);
+				if (rc < 0) {
+					dev_info(&info->client->dev,
+					"Regulator vdd_led set_opt failed rc=%d\n",
+					rc);
+					goto error_reg_opt_i2c;
+				}
+
+				rc = regulator_enable(info->vdd_led);
+				if (rc) {
+					dev_info(&info->client->dev,
+					"Regulator vdd_led enable failed rc=%d\n",
+					rc);
+					goto error_reg_en_vcc_en;
+				}
+			}
+		}
+	} else {
+		if (info->pdata->i2c_pull_up) {
+			reg_set_optimum_mode_check(info->vcc_en, 0);
+			regulator_disable(info->vcc_en);
+			if (info->pdata->vdd_led < 0) {
+				reg_set_optimum_mode_check(info->vdd_led, 0);
+				regulator_disable(info->vdd_led);
+			}
+		}
+	}
+	/*msleep(50);*/
+
+	if (info->pdata->vdd_led > 0) {
+		ret = gpio_direction_output(info->pdata->vdd_led, onoff);
+		if (ret) {
+			dev_info(&info->client->dev,
+					"[TKEY]%s: unable to set_direction for vdd_led [%d]\n",
+					__func__, info->pdata->vdd_led);
+		}
+		/*msleep(30);*/
+	}
+	return;
+
+error_reg_en_vcc_en:
+	if (info->pdata->i2c_pull_up) {
+		reg_set_optimum_mode_check(info->vcc_en, 0);
+		if (info->pdata->vdd_led < 0)
+			reg_set_optimum_mode_check(info->vdd_led, 0);
+	}
+error_reg_opt_i2c:
+error_set_vtg_i2c:
+	regulator_put(info->vcc_en);
+	if (info->pdata->vdd_led < 0)
+		regulator_put(info->vdd_led);
+error_get_vtg_i2c:
+	return;
+}
+
+
+
 void ApplyTargetVDD(struct cypress_touchkey_info *info)
 {
 
-	gpio_direction_input(GPIO_TOUCHKEY_SDA);
+	gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
 
-	gpio_direction_input(GPIO_TOUCHKEY_SCL);
+	gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
 
 	cypress_power_onoff(info, 1);
 }

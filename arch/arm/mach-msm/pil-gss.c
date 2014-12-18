@@ -30,7 +30,6 @@
 #include <mach/msm_bus.h>
 #include <mach/subsystem_restart.h>
 #include <mach/ramdump.h>
-#include <mach/msm_smem.h>
 
 #include "peripheral-loader.h"
 #include "scm-pas.h"

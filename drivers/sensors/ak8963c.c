@@ -35,9 +35,6 @@
 #define SENSOR_DATA_SIZE		8
 #define AK8963C_DEFAULT_DELAY           200
 
-#define I2C_M_WR                        0 /* for i2c Write */
-#define I2c_M_RD                        1 /* for i2c Read */
-
 #define VENDOR_NAME                     "AKM"
 #define MODEL_NAME                      "AK8963C"
 #define MODULE_NAME                     "magnetic_sensor"
@@ -83,66 +80,48 @@ struct ak8963c_p {
 	int m_sensor_int;
 };
 
-static int ak8963c_i2c_read(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char *buf)
-{
-        int ret;
-        struct i2c_msg msg[2];
-
-        msg[0].addr = client->addr;
-        msg[0].flags = I2C_M_WR;
-        msg[0].len = 1;
-        msg[0].buf = &reg_addr;
-
-        msg[1].addr = client->addr;
-        msg[1].flags = I2C_M_RD;
-        msg[1].len = 1;
-        msg[1].buf = buf;
-
-        ret = i2c_transfer(client->adapter, msg, 2);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
-			__func__, ret);
-	        return ret;
-	}
-
-        return 0;
-}
-
-static int ak8963c_i2c_write(struct i2c_client *client,
-		unsigned char reg_addr, unsigned char buf)
-{
-        int ret;
-        struct i2c_msg msg;
-	unsigned char w_buf[2];
-
-	w_buf[0] = reg_addr;
-	w_buf[1] = buf;
-
-        msg.addr = client->addr;
-        msg.flags = I2C_M_WR;
-        msg.len = 2;
-        msg.buf = (char *)w_buf;
-
-        ret = i2c_transfer(client->adapter, &msg, 1);
-	if (ret < 0) {
-		pr_err("[SENSOR]: %s - i2c bus write error %d\n",
-			__func__, ret);
-	        return ret;
-	}
-
-        return 0;
-}
-
-static int ak8963c_i2c_read_block(struct i2c_client *client,
+static int ak8963c_smbus_read_byte_block(struct i2c_client *client,
 		unsigned char reg_addr, unsigned char *buf, unsigned char len)
 {
-	int i, ret = 0;
+	s32 dummy;
 
-	for (i = 0; i < len; i++)
-		ret += ak8963c_i2c_read(client, reg_addr + i, &buf[i]);
+	dummy = i2c_smbus_read_i2c_block_data(client, reg_addr, len, buf);
+	if (dummy < 0) {
+		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
+			__func__, dummy);
+		return -EIO;
+	}
+	return 0;
+}
 
-	return ret;
+static int ak8963c_smbus_read_byte(struct i2c_client *client,
+		unsigned char reg_addr, unsigned char *buf)
+{
+	s32 dummy;
+
+	dummy = i2c_smbus_read_byte_data(client, reg_addr);
+	if (dummy < 0) {
+		pr_err("[SENSOR]: %s - i2c bus read error %d\n",
+			__func__, dummy);
+		return -EIO;
+	}
+	*buf = dummy & 0x000000ff;
+
+	return 0;
+}
+
+static int ak8963c_smbus_write_byte(struct i2c_client *client,
+		unsigned char reg_addr, unsigned char *buf)
+{
+	s32 dummy;
+
+	dummy = i2c_smbus_write_byte_data(client, reg_addr, *buf);
+	if (dummy < 0) {
+		pr_err("[SENSOR]: %s - i2c bus write error %d\n",
+			__func__, dummy);
+		return -EIO;
+	}
+	return 0;
 }
 
 static void ak8963c_disable_irq(struct ak8963c_p *data)
@@ -163,7 +142,7 @@ static int ak8963c_ecs_set_mode_power_down(struct ak8963c_p *data)
 	int ret;
 
 	reg = AK8963C_CNTL1_POWER_DOWN;
-	ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+	ret = ak8963c_smbus_write_byte(data->client, AK8963C_REG_CNTL1, &reg);
 
 	return ret;
 }
@@ -176,11 +155,13 @@ static int ak8963c_ecs_set_mode(struct ak8963c_p *data, char mode)
 	switch (mode) {
 	case AK8963C_CNTL1_SNG_MEASURE:
 		reg = AK8963C_CNTL1_SNG_MEASURE;
-		ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+		ret = ak8963c_smbus_write_byte(data->client,
+				AK8963C_REG_CNTL1, &reg);
 		break;
 	case AK8963C_CNTL1_FUSE_ACCESS:
 		reg = AK8963C_CNTL1_FUSE_ACCESS;
-		ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+		ret = ak8963c_smbus_write_byte(data->client,
+				AK8963C_REG_CNTL1, &reg);
 		break;
 	case AK8963C_CNTL1_POWER_DOWN:
 		reg = AK8963C_CNTL1_SNG_MEASURE;
@@ -188,7 +169,8 @@ static int ak8963c_ecs_set_mode(struct ak8963c_p *data, char mode)
 		break;
 	case AK8963C_CNTL1_SELF_TEST:
 		reg = AK8963C_CNTL1_SELF_TEST;
-		ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+		ret = ak8963c_smbus_write_byte(data->client,
+				AK8963C_REG_CNTL1, &reg);
 		break;
 	default:
 		return -EINVAL;
@@ -255,7 +237,7 @@ static int ak8963c_read_mag_xyz(struct ak8963c_p *data, struct ak8963c_v *mag)
 		return ret;
 	}
 
-	ret = ak8963c_i2c_read_block(data->client, AK8963C_REG_ST1,
+	ret = ak8963c_smbus_read_byte_block(data->client, AK8963C_REG_ST1,
 			temp, SENSOR_DATA_SIZE);
 	mutex_unlock(&data->lock);
 
@@ -387,36 +369,37 @@ retry:
 	mutex_lock(&data->lock);
 	/* power down */
 	reg = AK8963C_CNTL1_POWER_DOWN;
-	ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+	ak8963c_smbus_write_byte(data->client, AK8963C_REG_CNTL1, &reg);
 
 	/* read device info */
-	ak8963c_i2c_read_block(data->client, AK8963C_REG_WIA, temp, 2);
+	ak8963c_smbus_read_byte_block(data->client, AK8963C_REG_WIA, temp, 2);
 	pr_info("[SENSOR]: %s - device id = 0x%x, info = 0x%x\n",
 		__func__, temp[0], temp[1]);
 
 	/* set ATSC self test bit to 1 */
 	reg = 0x40;
-	ak8963c_i2c_write(data->client, AK8963C_REG_ASTC, reg);
+	ak8963c_smbus_write_byte(data->client, AK8963C_REG_ASTC, &reg);
 
 	/* start self test */
 	reg = AK8963C_CNTL1_SELF_TEST;
-	ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+	ak8963c_smbus_write_byte(data->client, AK8963C_REG_CNTL1, &reg);
 
 	/* wait for data ready */
 	while (ready_count < 10) {
 		msleep(20);
-		ret = ak8963c_i2c_read(data->client, AK8963C_REG_ST1, &reg);
+		ret = ak8963c_smbus_read_byte(data->client,
+				AK8963C_REG_ST1, &reg);
 		if ((reg == 1) && (ret == 0))
 			break;
 		ready_count++;
 	}
 
-	ak8963c_i2c_read_block(data->client, AK8963C_REG_HXL,
-			temp, sizeof(temp));
+	ak8963c_smbus_read_byte_block(data->client, AK8963C_REG_HXL,
+		temp, sizeof(temp));
 
 	/* set ATSC self test bit to 0 */
 	reg = 0x00;
-	ak8963c_i2c_write(data->client, AK8963C_REG_ASTC, reg);
+	ak8963c_smbus_write_byte(data->client, AK8963C_REG_ASTC, &reg);
 	mutex_unlock(&data->lock);
 
 	x = temp[0] | (temp[1] << 8);
@@ -514,12 +497,11 @@ static ssize_t ak8963c_check_registers(struct device *dev,
 	mutex_lock(&data->lock);
 	/* power down */
 	reg = AK8963C_CNTL1_POWER_DOWN;
-	ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
-
+	ak8963c_smbus_write_byte(data->client, AK8963C_REG_CNTL1, &reg);
 	/* get the value */
-	ak8963c_i2c_read_block(data->client, AK8963C_REG_WIA, temp, 11);
-	ak8963c_i2c_read(data->client, AK8963C_REG_ASTC, &temp[11]);
-	ak8963c_i2c_read(data->client, AK8963C_REG_I2CDIS, &temp[12]);
+	ak8963c_smbus_read_byte_block(data->client, AK8963C_REG_WIA, temp, 11);
+	ak8963c_smbus_read_byte(data->client, AK8963C_REG_ASTC, &temp[11]);
+	ak8963c_smbus_read_byte(data->client, AK8963C_REG_I2CDIS, &temp[12]);
 	mutex_unlock(&data->lock);
 
 	return snprintf(buf, PAGE_SIZE,
@@ -539,9 +521,12 @@ static ssize_t ak8963c_check_cntl(struct device *dev,
 	mutex_lock(&data->lock);
 	/* power down */
 	reg = AK8963C_CNTL1_POWER_DOWN;
+	ret = ak8963c_smbus_write_byte(data->client,
+			AK8963C_REG_CNTL1, &reg);
 
-	ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
-	ret += ak8963c_i2c_read(data->client, AK8963C_REG_CNTL1, &reg);
+	ret += ak8963c_smbus_read_byte(data->client,
+			AK8963C_REG_CNTL1, &reg);
+
 	mutex_unlock(&data->lock);
 
 	return snprintf(buf, PAGE_SIZE, "%s\n",
@@ -570,7 +555,7 @@ static ssize_t ak8963c_adc(struct device *dev,
 {
 	bool success = false;
 	u8 temp[SENSOR_DATA_SIZE] = {0,};
-	int ret, retry = 0;
+	int ret;
 	struct ak8963c_p *data = dev_get_drvdata(dev);
 	struct ak8963c_v mag = data->magdata;
 
@@ -579,9 +564,6 @@ static ssize_t ak8963c_adc(struct device *dev,
 		goto exit;
 	}
 
-	msleep(20);
-
-retry_adc:
 	mutex_lock(&data->lock);
 	ret = ak8963c_ecs_set_mode(data, AK8963C_CNTL1_SNG_MEASURE);
 	if (ret) {
@@ -593,7 +575,7 @@ retry_adc:
 		mutex_unlock(&data->lock);
 		goto exit;
 	}
-	ret = ak8963c_i2c_read_block(data->client, AK8963C_REG_ST1,
+	ret = ak8963c_smbus_read_byte_block(data->client, AK8963C_REG_ST1,
 			temp, SENSOR_DATA_SIZE);
 	if (ret < 0) {
 		pr_err("[SENSOR] %s: failed to read mag data\n", __func__);
@@ -605,12 +587,8 @@ retry_adc:
 	mutex_unlock(&data->lock);
 
 	/* buf[0] is status1, buf[7] is status2 */
-	if ((temp[0] == 0) | (temp[7] == 1)) {
-		if (retry++ < 3)
-			goto retry_adc;
-
+	if ((temp[0] == 0) | (temp[7] == 1))
 		success = false;
-	}
 	else
 		success = true;
 
@@ -631,15 +609,12 @@ static ssize_t ak8963c_raw_data_read(struct device *dev,
 {
 	struct ak8963c_p *data = dev_get_drvdata(dev);
 	struct ak8963c_v mag = data->magdata;
-	int ret, retry = 0;
+	int ret;
 	u8 temp[SENSOR_DATA_SIZE] = {0,};
 
 	if (atomic_read(&data->enable) == 1)
 		goto exit;
 
-	msleep(20);
-
-retry_rawdata:
 	mutex_lock(&data->lock);
 	ret = ak8963c_ecs_set_mode(data, AK8963C_CNTL1_SNG_MEASURE);
 	if (ret) {
@@ -651,7 +626,7 @@ retry_rawdata:
 		mutex_unlock(&data->lock);
 		goto exit;
 	}
-	ret = ak8963c_i2c_read_block(data->client, AK8963C_REG_ST1,
+	ret = ak8963c_smbus_read_byte_block(data->client, AK8963C_REG_ST1,
 			temp, SENSOR_DATA_SIZE);
 	if (ret < 0) {
 		pr_err("[SENSOR] %s: failed to read mag data\n", __func__);
@@ -671,9 +646,6 @@ retry_rawdata:
 					__func__, temp[0] & 0x01);
 		pr_info("[SENSOR]: %s - ST1=%d, x=%d, y=%d, z=%d, ST2=%d\n",
 			__func__, temp[0], mag.x, mag.y, mag.z, temp[7]);
-
-		if (retry++ < 3)
-			goto retry_rawdata;
 	}
 
 exit:
@@ -710,14 +682,14 @@ static int ak8963c_read_fuserom(struct ak8963c_p *data)
 
 	/* put into fuse access mode to read asa data */
 	reg = AK8963C_CNTL1_FUSE_ACCESS;
-	ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+	ret = ak8963c_smbus_write_byte(data->client, AK8963C_REG_CNTL1, &reg);
 	if (ret < 0) {
 		pr_err("[SENSOR]: %s - unable to enter fuse rom mode\n",
 			__func__);
 		goto exit_default_value;
 	}
 
-	ret = ak8963c_i2c_read_block(data->client, AK8963C_FUSE_ASAX,
+	ret = ak8963c_smbus_read_byte_block(data->client, AK8963C_FUSE_ASAX,
 			data->asa, sizeof(data->asa));
 	if (ret < 0) {
 		pr_err("[SENSOR]: %s - unable to load factory sensitivity "\
@@ -728,7 +700,7 @@ static int ak8963c_read_fuserom(struct ak8963c_p *data)
 			__func__, data->asa[0], data->asa[1], data->asa[2]);
 
 	reg = AK8963C_CNTL1_POWER_DOWN;
-	ret = ak8963c_i2c_write(data->client, AK8963C_REG_CNTL1, reg);
+	ret = ak8963c_smbus_write_byte(data->client, AK8963C_REG_CNTL1, &reg);
 	if (ret < 0)
 		pr_err("[SENSOR] Error in setting power down mode\n");
 
@@ -835,8 +807,6 @@ static int ak8963c_input_init(struct ak8963c_p *data)
 	/* sysfs node creation */
 	ret = sysfs_create_group(&dev->dev.kobj, &ak8963c_attribute_group);
 	if (ret < 0) {
-		sensors_remove_symlink(&data->input->dev.kobj,
-			data->input->name);
 		input_unregister_device(dev);
 		return ret;
 	}
@@ -941,10 +911,10 @@ static int ak8963c_probe(struct i2c_client *client,
 	return 0;
 
 exit_input_init:
-exit_set_mode_power_down:
 	free_irq(data->irq, data);
 	gpio_free(data->m_rst_n);
 	gpio_free(data->m_sensor_int);
+exit_set_mode_power_down:
 exit_setup_pin:
 exit_of_node:
 	kfree(data);

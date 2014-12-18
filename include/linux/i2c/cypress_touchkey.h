@@ -103,6 +103,10 @@ struct cypress_touchkey_info {
 	struct workqueue_struct		*glove_wq;
 	struct work_struct		glove_work;
 #endif
+#ifdef AUTOCAL_WORKQUEUE
+	struct workqueue_struct		*autocal_wq;
+	struct work_struct		autocal_work;
+#endif
 	bool is_powering_on;
 	bool enabled;
 	bool done_ta_setting;

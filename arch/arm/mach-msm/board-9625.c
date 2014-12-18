@@ -247,7 +247,8 @@ void __init msm9625_init(void)
 		pr_err("%s: socinfo_init() failed\n", __func__);
 
 	msm9625_init_gpiomux();
-	board_dt_populate(msm9625_auxdata_lookup);
+	of_platform_populate(NULL, of_default_bus_match_table,
+			msm9625_auxdata_lookup, NULL);
 	msm9625_add_drivers();
 }
 

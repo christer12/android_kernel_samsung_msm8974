@@ -167,12 +167,12 @@ bail:
 bool ipa_rm_peers_list_has_last_peer(
 		struct ipa_rm_peers_list *peers_list)
 {
-	bool result = false;
+	bool result = true;
 	if (!peers_list)
 		goto bail;
 	read_lock(&peers_list->peers_lock);
 	if (peers_list->peers_count == 1)
-		result = true;
+		result = false;
 	read_unlock(&peers_list->peers_lock);
 bail:
 	return result;

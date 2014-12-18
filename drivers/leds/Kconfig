@@ -586,10 +586,4 @@ config LEDS_MAX77803
 	  Now camera_class is exceptioned
 	  by sgonil.kim.
 
-config LEDS_SEPERATE_MOVIE_FLASH
-       bool "LED support for seperate movie flash"
-       depends on LEDS_MAX77803
-       default n
-       help
-	 This option enables support for seperate movie flash
 endif # NEW_LEDS

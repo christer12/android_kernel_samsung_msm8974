@@ -59,8 +59,6 @@ uint64_t msm_bus_div64(unsigned int w, uint64_t bw)
 		return 1;
 
 	switch (w) {
-	case 0:
-		WARN(1, "AXI: Divide by 0 attempted\n");
 	case 1: return bw;
 	case 2:	return (bw >> 1);
 	case 4:	return (bw >> 2);
@@ -249,11 +247,6 @@ static int getpath(int src, int dest)
 				struct msm_bus_fabric_device *gwfab =
 					msm_bus_get_fabric_device(fabnodeinfo->
 						info->node_info->priv_id);
-				if (!gwfab) {
-					MSM_BUS_ERR("Err: No gateway found\n");
-					return -ENXIO;
-				}
-
 				if (!gwfab->visited) {
 					MSM_BUS_DBG("VISITED ID: %d\n",
 						gwfab->id);
@@ -327,12 +320,6 @@ static int update_path(int curr, int pnode, uint64_t req_clk, uint64_t req_bw,
 	struct msm_bus_fabric_device *fabdev = msm_bus_get_fabric_device
 		(GET_FABID(curr));
 
-	if (!fabdev) {
-		MSM_BUS_ERR("Bus device for bus ID: %d not found!\n",
-			GET_FABID(curr));
-		return -ENXIO;
-	}
-
 	MSM_BUS_DBG("args: %d %d %d %llu %llu %llu %llu %u\n",
 		curr, GET_NODE(pnode), GET_INDEX(pnode), req_clk, req_bw,
 		curr_clk, curr_bw, ctx);
@@ -343,27 +330,6 @@ static int update_path(int curr, int pnode, uint64_t req_clk, uint64_t req_bw,
 		MSM_BUS_ERR("Cannot find node info!\n");
 		return -ENXIO;
 	}
-
-	/* Set mode flag if requested ib is lower than threshold.
-	 * If lower than threshold don't do anything. */
-	if (req_clk < info->node_info->th) {
-		info->thresh_flag = 1;
-		if (info->node_info->id == 1 || info->node_info->id == 2)
-		MSM_BUS_DBG("AXI: Node: %d, threshold flag set\n",
-			info->node_info->id);
-	} else {
-		if (info->node_info->id == 1 || info->node_info->id == 2)
-			MSM_BUS_DBG("AXI: Node: %d, threshold flag reset\n",
-				info->node_info->id);
-		info->thresh_flag = 0;
-	}
-
-	/* If master supports dual configuration, check if
-	 * the configuration needs to be changed based on
-	 * incoming requests */
-	if (info->node_info->dual_conf)
-		fabdev->algo->config_master(fabdev, info,
-			req_clk, req_bw);
 
 	info->link_info.sel_bw = &info->link_info.bw[ctx];
 	info->link_info.sel_clk = &info->link_info.clk[ctx];
@@ -440,13 +406,6 @@ static int update_path(int curr, int pnode, uint64_t req_clk, uint64_t req_bw,
 			req_clk);
 		bwsum_hz = BW_TO_CLK_FREQ_HZ(hop->node_info->buswidth,
 			bwsum);
-		/* Account for multiple channels if any */
-		if (hop->node_info->num_sports > 1)
-			bwsum_hz = msm_bus_div64(hop->node_info->num_sports,
-				bwsum_hz);
-		MSM_BUS_DBG("AXI: Hop: %d, ports: %d, bwsum_hz: %llu\n",
-				hop->node_info->id, hop->node_info->num_sports,
-				bwsum_hz);
 		MSM_BUS_DBG("up-clk: curr_hz: %llu, req_hz: %llu, bw_hz %llu\n",
 			curr_clk, req_clk, bwsum_hz);
 		ret = fabdev->algo->update_clks(fabdev, hop, index,
@@ -566,11 +525,6 @@ uint32_t msm_bus_scale_register_client(struct msm_bus_scale_pdata *pdata)
 			goto err;
 		}
 		srcfab = msm_bus_get_fabric_device(GET_FABID(src));
-		if (!srcfab) {
-			MSM_BUS_ERR("Fabric not found\n");
-			goto err;
-		}
-
 		srcfab->visited = true;
 		pnode[i] = getpath(src, dest);
 		bus_for_each_dev(&msm_bus_type, NULL, NULL, clearvisitedflag);
@@ -707,12 +661,6 @@ int reset_pnodes(int curr, int pnode)
 	struct msm_bus_fabric_device *fabdev;
 	int index, next_pnode;
 	fabdev = msm_bus_get_fabric_device(GET_FABID(curr));
-	if (!fabdev) {
-		MSM_BUS_ERR("Fabric not found for: %d\n",
-			(GET_FABID(curr)));
-			return -ENXIO;
-	}
-
 	index = GET_INDEX(pnode);
 	info = fabdev->algo->find_node(fabdev, curr);
 	if (!info) {
@@ -809,46 +757,3 @@ void msm_bus_scale_unregister_client(uint32_t cl)
 }
 EXPORT_SYMBOL(msm_bus_scale_unregister_client);
 
-int msm_bus_set_thresh(int id, u64 thresh)
-{
-	struct msm_bus_fabric_device *fabdev;
-	struct msm_bus_inode_info *info;
-	int fabid = GET_FABID(id);
-
-	fabdev = msm_bus_get_fabric_device(fabid);
-	if (!fabdev) {
-		MSM_BUS_WARN("Fabric Not Found\n");
-		return -ENXIO;
-	}
-
-	info = fabdev->algo->find_node(fabdev, id);
-	if (ZERO_OR_NULL_PTR(info)) {
-		MSM_BUS_ERR("Node %d not found\n", id);
-		return -ENXIO;
-	}
-
-	info->node_info->th = thresh;
-
-	return 0;
-}
-
-u64 msm_bus_get_thresh(int id)
-{
-	struct msm_bus_fabric_device *fabdev;
-	struct msm_bus_inode_info *info;
-	int fabid = GET_FABID(id);
-
-	fabdev = msm_bus_get_fabric_device(fabid);
-	if (!fabdev) {
-		MSM_BUS_WARN("Fabric Not Found\n");
-		return -ENXIO;
-	}
-
-	info = fabdev->algo->find_node(fabdev, id);
-	if (ZERO_OR_NULL_PTR(info)) {
-		MSM_BUS_ERR("Node %d not found\n", id);
-		return -ENXIO;
-	}
-
-	return info->node_info->th;
-}

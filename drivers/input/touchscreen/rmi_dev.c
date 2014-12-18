@@ -608,7 +608,7 @@ static int rmidev_init_device(struct synaptics_rmi4_data *rmi4_data)
 		retval = -ENODEV;
 		goto err_char_device;
 	}
-#if !defined(CONFIG_MACH_H3GDUOS)
+
 	retval = gpio_request(80, "tsp_int");
 	if (retval != 0) {
 		printk(KERN_ERR"tsp int request failed, ret=%d", retval);
@@ -616,7 +616,7 @@ static int rmidev_init_device(struct synaptics_rmi4_data *rmi4_data)
 	}
 	gpio_tlmm_config(GPIO_CFG(80, 0,
 				GPIO_CFG_INPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-#endif
+
 
 
 	retval = gpio_export(rmi4_data->board->gpio, false);

@@ -22,7 +22,6 @@
 #define MSM_VDEC_DVC_NAME "msm_vdec_8974"
 #define MIN_NUM_OUTPUT_BUFFERS 4
 #define MAX_NUM_OUTPUT_BUFFERS 6
-#define DEFAULT_CONCEAL_COLOR 0x0
 
 enum msm_vdec_ctrl_cluster {
 	MSM_VDEC_CTRL_CLUSTER_MAX = 1 << 0,
@@ -67,13 +66,6 @@ static const char *const mpeg_video_vidc_extradata[] = {
 	"Extradata input crop",
 	"Extradata digital zoom",
 	"Extradata aspect ratio",
-	"Extradata mpeg2 seqdisp",
-};
-
-static const char *const perf_level[] = {
-	"Nominal",
-	"Performance",
-	"Turbo"
 };
 
 static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
@@ -222,7 +214,7 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 		.name = "Extradata Type",
 		.type = V4L2_CTRL_TYPE_MENU,
 		.minimum = V4L2_MPEG_VIDC_EXTRADATA_NONE,
-		.maximum = V4L2_MPEG_VIDC_EXTRADATA_MPEG2_SEQDISP,
+		.maximum = V4L2_MPEG_VIDC_INDEX_EXTRADATA_ASPECT_RATIO,
 		.default_value = V4L2_MPEG_VIDC_EXTRADATA_NONE,
 		.menu_skip_mask = ~(
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_NONE) |
@@ -242,24 +234,9 @@ static struct msm_vidc_ctrl msm_vdec_ctrls[] = {
 			(1 << V4L2_MPEG_VIDC_EXTRADATA_METADATA_FILLER) |
 			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_INPUT_CROP) |
 			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_DIGITAL_ZOOM) |
-			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_ASPECT_RATIO) |
-			(1 << V4L2_MPEG_VIDC_EXTRADATA_MPEG2_SEQDISP)
+			(1 << V4L2_MPEG_VIDC_INDEX_EXTRADATA_ASPECT_RATIO)
 			),
 		.qmenu = mpeg_video_vidc_extradata,
-		.step = 0,
-		.flags = 0,
-	},
-	{
-		.id = V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL,
-		.name = "Encoder Performance Level",
-		.type = V4L2_CTRL_TYPE_MENU,
-		.minimum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
-		.maximum = V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO,
-		.default_value = V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL,
-		.menu_skip_mask = ~(
-			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL) |
-			(1 << V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO)),
-		.qmenu = perf_level,
 		.step = 0,
 		.flags = 0,
 	},
@@ -733,7 +710,7 @@ exit:
 int msm_vdec_s_parm(struct msm_vidc_inst *inst, struct v4l2_streamparm *a)
 {
 	u64 us_per_frame = 0;
-	int rc = 0, fps = 0;
+	int rc = 0, fps = 0, rem = 0;
 	if (a->parm.output.timeperframe.denominator) {
 		switch (a->type) {
 		case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
@@ -759,12 +736,11 @@ int msm_vdec_s_parm(struct msm_vidc_inst *inst, struct v4l2_streamparm *a)
 	}
 
 	fps = USEC_PER_SEC;
-	do_div(fps, us_per_frame);
-
-	if ((fps % 15 == 14) || (fps % 24 == 23))
-		fps = fps + 1;
-	else if ((fps % 24 == 1) || (fps % 15 == 1))
-		fps = fps - 1;
+	rem = do_div(fps, us_per_frame);
+	if (rem) {
+		/* Effectively fps = ceil((float)USEC_PER_SEC/us_per_frame) */
+		fps++;
+	}
 
 	if (inst->prop.fps != fps) {
 		dprintk(VIDC_PROF, "reported fps changed for %p: %d->%d\n",
@@ -948,8 +924,6 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 	struct hal_buffer_requirements *bufreq;
 	int extra_idx = 0;
 	struct hfi_device *hdev;
-	struct hal_buffer_count_actual new_buf_count;
-	enum hal_property property_id;
 	if (!q || !num_buffers || !num_planes
 		|| !sizes || !q->drv_priv) {
 		dprintk(VIDC_ERR, "Invalid input, q = %p, %p, %p\n",
@@ -975,16 +949,6 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 			sizes[i] = inst->fmts[OUTPUT_PORT]->get_frame_size(
 					i, inst->capability.height.max,
 					inst->capability.width.max);
-		}
-		property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
-		new_buf_count.buffer_type = HAL_BUFFER_INPUT;
-		new_buf_count.buffer_count_actual = *num_buffers;
-		rc = call_hfi_op(hdev, session_set_property,
-				inst->session, property_id, &new_buf_count);
-		if (rc) {
-			dprintk(VIDC_WARN,
-				"Failed to set new buffer count(%d) on FW, err: %d\n",
-				new_buf_count.buffer_count_actual, rc);
 		}
 		break;
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
@@ -1013,11 +977,15 @@ static int msm_vdec_queue_setup(struct vb2_queue *q,
 		}
 		if (*num_buffers && *num_buffers >
 			bufreq->buffer_count_actual) {
-			property_id = HAL_PARAM_BUFFER_COUNT_ACTUAL;
+			struct hal_buffer_count_actual new_buf_count;
+			enum hal_property property_id =
+				HAL_PARAM_BUFFER_COUNT_ACTUAL;
+
 			new_buf_count.buffer_type = HAL_BUFFER_OUTPUT;
 			new_buf_count.buffer_count_actual = *num_buffers;
 			rc = call_hfi_op(hdev, session_set_property,
 				inst->session, property_id, &new_buf_count);
+
 		}
 		if (bufreq->buffer_count_actual > *num_buffers)
 			*num_buffers =  bufreq->buffer_count_actual;
@@ -1066,7 +1034,6 @@ static inline int start_streaming(struct msm_vidc_inst *inst)
 			"Failed to set persist buffers: %d\n", rc);
 		goto fail_start;
 	}
-
 	mutex_lock(&inst->core->sync_lock);
 	msm_comm_scale_clocks_and_bus(inst);
 	mutex_unlock(&inst->core->sync_lock);
@@ -1112,29 +1079,17 @@ static int msm_vdec_start_streaming(struct vb2_queue *q, unsigned int count)
 {
 	struct msm_vidc_inst *inst;
 	int rc = 0;
-	int pdata = DEFAULT_CONCEAL_COLOR;
-	struct hfi_device *hdev;	
 	if (!q || !q->drv_priv) {
 		dprintk(VIDC_ERR, "Invalid input, q = %p\n", q);
 		return -EINVAL;
 	}
 	inst = q->drv_priv;
-	if (!inst || !inst->core || !inst->core->device) {
-		dprintk(VIDC_ERR, "%s invalid parameters", __func__);
-		return -EINVAL;
-	}
-	hdev = inst->core->device;	
 	dprintk(VIDC_DBG,
 		"Streamon called on: %d capability\n", q->type);
 	switch (q->type) {
 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
 		if (inst->bufq[CAPTURE_PORT].vb2_bufq.streaming)
 			rc = start_streaming(inst);
-			rc = call_hfi_op(hdev, session_set_property,
-			(void *) inst->session,
-			HAL_PARAM_VDEC_CONCEAL_COLOR,
-			(void *) &pdata);
-		
 		break;
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
 		if (inst->bufq[OUTPUT_PORT].vb2_bufq.streaming)
@@ -1173,7 +1128,6 @@ static int msm_vdec_stop_streaming(struct vb2_queue *q)
 		rc = -EINVAL;
 		break;
 	}
-
 	mutex_lock(&inst->core->sync_lock);
 	msm_comm_scale_clocks_and_bus(inst);
 	mutex_unlock(&inst->core->sync_lock);
@@ -1196,6 +1150,7 @@ static void msm_vdec_buf_queue(struct vb2_buffer *vb)
 int msm_vdec_cmd(struct msm_vidc_inst *inst, struct v4l2_decoder_cmd *dec)
 {
 	int rc = 0;
+	struct v4l2_event dqevent = {0};
 	struct msm_vidc_core *core = inst->core;
 
 	if (!dec || !inst || !inst->core) {
@@ -1227,15 +1182,16 @@ int msm_vdec_cmd(struct msm_vidc_inst *inst, struct v4l2_decoder_cmd *dec)
 			dprintk(VIDC_ERR,
 				"Core %p in bad state, Sending CLOSE event\n",
 					core);
-			msm_vidc_queue_v4l2_event(inst,
-					V4L2_EVENT_MSM_VIDC_CLOSE_DONE);
+			dqevent.type = V4L2_EVENT_MSM_VIDC_CLOSE_DONE;
+			v4l2_event_queue_fh(&inst->event_handler, &dqevent);
 			goto exit;
 		}
 		rc = msm_comm_try_state(inst, MSM_VIDC_CLOSE_DONE);
 		/* Clients rely on this event for joining poll thread.
 		 * This event should be returned even if firmware has
 		 * failed to respond */
-		msm_vidc_queue_v4l2_event(inst, V4L2_EVENT_MSM_VIDC_CLOSE_DONE);
+		dqevent.type = V4L2_EVENT_MSM_VIDC_CLOSE_DONE;
+		v4l2_event_queue_fh(&inst->event_handler, &dqevent);
 		break;
 	default:
 		dprintk(VIDC_ERR, "Unknown Decoder Command\n");
@@ -1292,9 +1248,8 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 	u32 control_idx = 0;
 	enum hal_property property_id = 0;
 	u32 property_val = 0;
-	void *pdata = NULL;
+	void *pdata;
 	struct hfi_device *hdev;
-	struct hal_extradata_enable extra;
 
 	if (!inst || !inst->core || !inst->core->device) {
 		dprintk(VIDC_ERR, "%s invalid parameters", __func__);
@@ -1362,32 +1317,19 @@ static int try_set_ctrl(struct msm_vidc_inst *inst, struct v4l2_ctrl *ctrl)
 				!!(inst->flags & VIDC_SECURE));
 		break;
 	case V4L2_CID_MPEG_VIDC_VIDEO_EXTRADATA:
+	{
+		struct hal_extradata_enable extra;
 		property_id = HAL_PARAM_INDEX_EXTRADATA;
 		extra.index = msm_comm_get_hal_extradata_index(ctrl->val);
 		extra.enable = 1;
 		pdata = &extra;
 		break;
-	case V4L2_CID_MPEG_VIDC_SET_PERF_LEVEL:
-		switch (ctrl->val) {
-		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_NOMINAL:
-			inst->flags &= ~VIDC_TURBO;
-			break;
-		case V4L2_CID_MPEG_VIDC_PERF_LEVEL_TURBO:
-			inst->flags |= VIDC_TURBO;
-			break;
-		default:
-			dprintk(VIDC_ERR, "Perf mode %x not supported",
-					ctrl->val);
-			rc = -ENOTSUPP;
-			break;
-		}
-
-		break;
+	}
 	default:
 		break;
 	}
 
-	if (!rc && property_id) {
+	if (property_id) {
 		dprintk(VIDC_DBG,
 			"Control: HAL property=%d,ctrl_id=%d,ctrl_value=%d\n",
 			property_id,
@@ -1502,7 +1444,7 @@ static struct v4l2_ctrl **get_cluster(int type, int *size)
 		return NULL;
 
 	for (c = 0; c < NUM_CTRLS; c++) {
-		if (msm_vdec_ctrls[c].cluster & type) {
+		if (msm_vdec_ctrls[c].cluster == type) {
 			cluster[sz] = msm_vdec_ctrls[c].priv;
 			++sz;
 		}
@@ -1613,6 +1555,6 @@ int msm_vdec_ctrl_deinit(struct msm_vidc_inst *inst)
 		kfree(curr->cluster);
 		kfree(curr);
 	}
-	v4l2_ctrl_handler_free(&inst->ctrl_handler);
+
 	return 0;
 }

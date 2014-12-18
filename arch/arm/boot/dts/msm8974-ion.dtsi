@@ -10,7 +10,7 @@
  * GNU General Public License for more details.
  */
 
-&soc {
+/ {
 	qcom,ion {
 		compatible = "qcom,msm-ion";
 		#address-cells = <1>;
@@ -22,22 +22,6 @@
 
 		qcom,ion-heap@21 { /* SYSTEM CONTIG HEAP */
 			reg = <21>;
-		};
-
-		qcom,ion-heap@16 { /* Camera*/
-			compatible = "qcom,msm-ion-reserve";
-			reg = <16>;
-			qcom,heap-align = <0x1000>;
-			qcom,memory-reservation-type = "EBI1"; /* reserve EBI memory */
-			qcom,memory-reservation-size = <0x1E00000>;
-		};
-
-		qcom,ion-heap@20 { /* Camera*/
-			compatible = "qcom,msm-ion-reserve";
-			reg = <20>;
-			qcom,heap-align = <0x1000>;
-			qcom,memory-reservation-type = "EBI1"; /* reserve EBI memory */
-			qcom,memory-reservation-size = <0xA300000>;
 		};
 
 		qcom,ion-heap@8 { /* CP_MM HEAP */
@@ -58,14 +42,6 @@
 			reg = <25>;
 		};
 
-		qcom,ion-heap@24 { /* SF HEAP */
-			compatible = "qcom,msm-ion-reserve";
-			reg = <24>;
-			qcom,heap-align = <0x1000>;
-			qcom,memory-reservation-type = "EBI1"; /* reserve EBI memory */
-			qcom,memory-reservation-size = <0xE600000>;
-		};
-
 		qcom,ion-heap@27 { /* QSECOM HEAP */
 			compatible = "qcom,msm-ion-reserve";
 			reg = <27>;
@@ -78,7 +54,7 @@
 			reg = <28>;
 			qcom,heap-align = <0x1000>;
 			qcom,memory-reservation-type = "EBI1"; /* reserve EBI memory */
-			qcom,memory-reservation-size = <0x614000>;
+			qcom,memory-reservation-size = <0x314000>;
 		};
 	};
 };

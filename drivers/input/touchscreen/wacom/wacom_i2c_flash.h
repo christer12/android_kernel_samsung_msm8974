@@ -235,7 +235,3 @@ extern int wacom_i2c_flash_9007(struct wacom_i2c *wac_i2c);
 extern int wacom_i2c_flash_fw_check(struct wacom_i2c *wac_i2c);
 extern int wacom_check_mpu_version(struct wacom_i2c *wac_i2c);
 extern int wacom_i2c_select_flash_code(struct wacom_i2c *wac_i2c);
-extern int wacom_fw_load_from_UMS(struct wacom_i2c *wac_i2c);
-extern int wacom_load_fw_from_req_fw(struct wacom_i2c *wac_i2c);
-extern int wacom_enter_bootloader(struct wacom_i2c *wac_i2c);
-extern int wacom_check_flash_mode(struct wacom_i2c *wac_i2c, int mode);

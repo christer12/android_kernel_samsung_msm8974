@@ -201,11 +201,6 @@ unsigned char fSDATACheck(void)
 		else
 			return 0;
 	}
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	if (gpio_get_value(GPIO_TOUCHKEY_SDA_2))
-		return 1;
-	else
-		return 0;
 #else /* CONFIG_SEC_H_PROJECT */
 	if (gpio_get_value(GPIO_TOUCHKEY_SDA_2))
 		return 1;
@@ -238,8 +233,6 @@ void SCLKHigh(void)
 		gpio_direction_output(GPIO_TOUCHKEY_SCL, 1);
 	else
 		gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 1);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 1);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 1);
 #endif
@@ -269,8 +262,6 @@ void SCLKLow(void)
 		gpio_direction_output(GPIO_TOUCHKEY_SCL, 0);
 	else
 		gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
 #endif
@@ -300,8 +291,6 @@ void SetSCLKHiZ(void)
 		gpio_direction_input(GPIO_TOUCHKEY_SCL);
 	else
 		gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
 #endif
@@ -332,8 +321,6 @@ void SetSCLKStrong(void)
 		gpio_direction_output(GPIO_TOUCHKEY_SCL, 0);
 	else
 		gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_output(GPIO_TOUCHKEY_SCL_2, 0);
 #endif
@@ -358,8 +345,6 @@ void SetSDATAHigh(void)
 		gpio_direction_output(GPIO_TOUCHKEY_SDA, 1);
 	else
 		gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 1);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 1);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 1);
 #endif
@@ -383,8 +368,6 @@ void SetSDATALow(void)
 		 gpio_direction_output(GPIO_TOUCHKEY_SDA, 0);
 	 else
 		 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
 #else /* CONFIG_SEC_H_PROJECT */
 	 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
 #endif
@@ -408,8 +391,6 @@ void SetSDATAHiZ(void)
 		 gpio_direction_input(GPIO_TOUCHKEY_SDA);
 	 else
 		 gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	 gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
 #else /* CONFIG_SEC_H_PROJECT */
 	 gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
 #endif
@@ -443,8 +424,6 @@ void SetSDATAStrong(void)
 		 gpio_direction_output(GPIO_TOUCHKEY_SDA, 0);
 	 else
 		 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
 #else /* CONFIG_SEC_H_PROJECT */
 	 gpio_direction_output(GPIO_TOUCHKEY_SDA_2, 0);
 #endif
@@ -671,8 +650,6 @@ void ApplyTargetVDD(struct cypress_touchkey_info *info)
 		gpio_direction_input(GPIO_TOUCHKEY_SDA);
 	else
 		gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-    gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_input(GPIO_TOUCHKEY_SDA_2);
 #endif
@@ -687,8 +664,6 @@ void ApplyTargetVDD(struct cypress_touchkey_info *info)
 		gpio_direction_input(GPIO_TOUCHKEY_SCL);
 	else
 		gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
-#elif defined(CONFIG_MACH_JACTIVESKT)
-	gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
 #else /* CONFIG_SEC_H_PROJECT */
 	gpio_direction_input(GPIO_TOUCHKEY_SCL_2);
 #endif

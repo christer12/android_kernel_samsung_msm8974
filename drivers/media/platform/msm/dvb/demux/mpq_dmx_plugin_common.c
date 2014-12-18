@@ -4055,13 +4055,11 @@ static void mpq_sdmx_pes_filter_results(struct mpq_demux *mpq_demux,
 		pes_event.pes_end.start_gap = 0;
 		pes_event.data_length = 0;
 
-		/* Parse error indicators */
+		/* Parse error indicators - TODO: these should be per filter */
 		if (sts->error_indicators & SDMX_FILTER_ERR_INVALID_PES_LEN)
 			pes_event.pes_end.pes_length_mismatch = 1;
-		else
-			pes_event.pes_end.pes_length_mismatch = 0;
-
-		pes_event.pes_end.disc_indicator_set = 0;
+		if (sts->error_indicators & SDMX_FILTER_ERR_CONT_CNT_INVALID)
+			pes_event.pes_end.disc_indicator_set = 0;
 
 		pes_event.pes_end.stc = 0;
 		pes_event.pes_end.tei_counter = counters.transport_err_count;
@@ -4111,7 +4109,7 @@ static void mpq_sdmx_section_filter_results(struct mpq_demux *mpq_demux,
 		MPQ_DVB_DBG_PRINT("%s: Notify CRC err event\n", __func__);
 		event.status = DMX_CRC_ERROR;
 		event.data_length = 0;
-		dvb_dmx_notify_section_event(feed, &event, 1);
+		feed->data_ready_cb.sec(&feed->filter->filter, &event);
 	}
 
 	if (sts->error_indicators & SDMX_FILTER_ERR_D_BUF_FULL)
@@ -4145,7 +4143,12 @@ section_filter_check_eos:
 	if (sts->status_indicators & SDMX_FILTER_STATUS_EOS) {
 		event.data_length = 0;
 		event.status = DMX_OK_EOS;
-		dvb_dmx_notify_section_event(feed, &event, 1);
+		f = feed->filter;
+
+		while (f && sec->is_filtering) {
+			feed->data_ready_cb.sec(&f->filter, &event);
+			f = f->next;
+		}
 	}
 
 }
@@ -4466,12 +4469,10 @@ static void mpq_sdmx_process_results(struct mpq_demux *mpq_demux)
 {
 	int i;
 	int j;
-	int sdmx_filters;
 	struct sdmx_filter_status *sts;
 	struct mpq_feed *mpq_feed;
 
-	sdmx_filters = mpq_demux->sdmx_filter_count;
-	for (i = 0; i < sdmx_filters; i++) {
+	for (i = 0; i < mpq_demux->sdmx_filter_count; i++) {
 		/*
 		 * MPQ_TODO: review lookup optimization
 		 * Can have the related mpq_feed index already associated with
@@ -4605,10 +4606,10 @@ static int mpq_sdmx_process_buffer(struct mpq_demux *mpq_demux,
 		mpq_demux->sdmx_filter_count, mpq_demux->filters_status);
 
 	process_end_time = current_kernel_time();
-	bytes_read = prev_fill_count - fill_count;
+	mpq_dmx_update_sdmx_stat(mpq_demux, prev_fill_count,
+		&process_start_time, &process_end_time);
 
-	mpq_dmx_update_sdmx_stat(mpq_demux, bytes_read,
-			&process_start_time, &process_end_time);
+	bytes_read = prev_fill_count - fill_count;
 
 	MPQ_DVB_DBG_PRINT(
 		"%s: SDMX result=%d, input_fill_count=%u, read_offset=%u, read %d bytes from input, status=0x%X, errors=0x%X\n",
@@ -4771,12 +4772,6 @@ int mpq_dmx_oob_command(struct dvb_demux_feed *feed,
 	mutex_lock(&mpq_demux->mutex);
 	mpq_feed = feed->priv;
 
-	if (!dvb_dmx_is_video_feed(feed) && !dvb_dmx_is_pcr_feed(feed) &&
-		!feed->secure_mode.is_secured) {
-		mutex_unlock(&mpq_demux->mutex);
-		return 0;
-	}
-
 	event.data_length = 0;
 
 	switch (cmd->type) {
@@ -4814,11 +4809,21 @@ int mpq_dmx_oob_command(struct dvb_demux_feed *feed,
 		event.status = DMX_OK_MARKER;
 		event.marker.id = cmd->params.marker.id;
 
-		if (feed->type == DMX_TYPE_SEC)
-			ret = dvb_dmx_notify_section_event(feed, &event, 1);
-		else
+		if (feed->type == DMX_TYPE_SEC) {
+			struct dvb_demux_filter *f = feed->filter;
+			struct dmx_section_feed *sec = &feed->feed.sec;
+
+			while (f && sec->is_filtering) {
+				ret = feed->data_ready_cb.sec(&f->filter,
+					&event);
+				if (ret)
+					break;
+				f = f->next;
+			}
+		} else {
 			/* MPQ_TODO: Notify decoder via the stream buffer */
 			ret = feed->data_ready_cb.ts(&feed->feed.ts, &event);
+		}
 		break;
 
 	default:

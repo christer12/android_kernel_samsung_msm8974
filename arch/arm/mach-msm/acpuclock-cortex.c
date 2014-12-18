@@ -160,8 +160,7 @@ static int set_speed_atomic(struct clkctl_acpu_speed *tgt_s)
 static int set_speed(struct clkctl_acpu_speed *tgt_s)
 {
 	int rc = 0;
-	unsigned int div = tgt_s->src_div ? tgt_s->src_div : 1;
-	unsigned int tgt_freq_hz = tgt_s->khz * 1000 * div;
+	unsigned int tgt_freq_hz = tgt_s->khz * 1000;
 	struct clkctl_acpu_speed *strt_s = priv->current_speed;
 	struct clkctl_acpu_speed *cxo_s = &priv->freq_tbl[0];
 	struct clk *strt = priv->src_clocks[strt_s->src].clk;

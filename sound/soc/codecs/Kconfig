@@ -313,18 +313,6 @@ config SND_SOC_ES325_SLIM
 	help
 		Select driver for Audience Slimbus Driver.
 
-config ES325_UART_WORKAROUND
-	tristate "Audience Slimbus Driver"
-	default n
-	help
-		Select driver for Audience Slimbus Driver.
-
-config ES325_UART_WORKAROUND_ENG_ONLY
-	tristate "Audience Slimbus Driver"
-	default n
-	help
-		Select driver for Audience Slimbus Driver.
-
 config SND_SOC_WL1273
 	tristate
 
@@ -480,8 +468,4 @@ config SND_SOC_MSM_STUB
 	tristate
 
 config SND_SOC_MSM_HDMI_CODEC_RX
-	bool "HDMI Audio Playback"
-	depends on FB_MSM_MDSS_HDMI_PANEL && SND_SOC_MSM8974
-	help
-	HDMI audio drivers should be built only if the platform
-        supports hdmi panel.
+	tristate

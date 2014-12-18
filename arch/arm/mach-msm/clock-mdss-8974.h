@@ -26,25 +26,17 @@ int hdmi_pll_enable(void);
 void hdmi_pll_disable(void);
 int hdmi_pll_set_rate(unsigned long rate);
 
-
-struct edp_pll_vco_clk {
-	unsigned long ref_clk_rate;
-	unsigned long rate;	/* vco rate */
-	unsigned long *rate_list;
-
-	struct clk c;
-};
-
 struct lpfr_cfg {
 	unsigned long vco_rate;
 	u32 r;
 };
 
+typedef int (*pll_enable_seq_t)(void);
 struct dsi_pll_vco_clk {
 	unsigned long ref_clk_rate;
 	unsigned long min_rate;
 	unsigned long max_rate;
-	int (*pll_enable_seqs[MAX_DSI_PLL_EN_SEQS])(void);
+	pll_enable_seq_t pll_enable_seqs[MAX_DSI_PLL_EN_SEQS];
 	u32 pll_en_seq_cnt;
 	struct lpfr_cfg *lpfr_lut;
 	u32 lpfr_lut_size;
@@ -65,8 +57,5 @@ extern struct div_clk indirect_path_div2_clk_8226;
 extern struct div_clk pixel_clk_src_8226;
 extern struct mux_clk byte_mux_8226;
 extern struct div_clk byte_clk_src_8226;
-
-extern struct div_clk edp_mainlink_clk_src;
-extern struct div_clk edp_pixel_clk_src;
 
 #endif

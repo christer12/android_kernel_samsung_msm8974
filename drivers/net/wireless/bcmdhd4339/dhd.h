@@ -24,7 +24,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd.h 418907 2013-08-18 02:10:25Z $
+ * $Id: dhd.h 402415 2013-05-15 14:30:44Z $
  */
 
 /****************
@@ -43,7 +43,6 @@
 #include <linux/random.h>
 #include <linux/spinlock.h>
 #include <linux/ethtool.h>
-#include <linux/string.h>
 #include <asm/uaccess.h>
 #include <asm/unaligned.h>
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)) && defined(CONFIG_HAS_WAKELOCK)
@@ -59,10 +58,10 @@ int setScheduler(struct task_struct *p, int policy, struct sched_param *param);
 #include <wlioctl.h>
 #include <wlfc_proto.h>
 
-#if defined(NDISVER) && (NDISVER >= 0x0600)
+#if 0 && (0>= 0x0600)
 #include <wdf.h>
 #include <WdfMiniport.h>
-#endif /* (NDISVER >= 0x0600)  */
+#endif 
 
 #if defined(KEEP_ALIVE)
 /* Default KEEP_ALIVE Period is 55 sec to prevent AP from sending Keep Alive probe frame */
@@ -83,7 +82,7 @@ enum dhd_bus_state {
 	DHD_BUS_DATA		/* Ready for frame transfers */
 };
 
-#if defined(NDISVER) && (NDISVER >= 0x0600)
+#if 0 && (0>= 0x0600)
 /* Firmware requested operation mode */
 #define STA_MASK			0x0001
 #define HOSTAPD_MASK		0x0002
@@ -92,7 +91,7 @@ enum dhd_bus_state {
 #define P2P_GO_ENABLED		0x0010
 #define P2P_GC_ENABLED		0x0020
 #define CONCURENT_MASK		0x00F0
-#endif /* (NDISVER >= 0x0600)  */
+#endif 
 
 enum dhd_op_flags {
 /* Firmware requested operation mode */
@@ -105,8 +104,7 @@ enum dhd_op_flags {
 	/* Current P2P mode for P2P connection */
 	DHD_FLAG_P2P_GC_MODE				= (1 << (5)),
 	DHD_FLAG_P2P_GO_MODE				= (1 << (6)),
-	DHD_FLAG_MBSS_MODE				= (1 << (7)), /* MBSS in future */
-	DHD_FLAG_IBSS_MODE				= (1 << (8))
+	DHD_FLAG_MBSS_MODE				= (1 << (7)) /* MBSS in future */
 };
 
 #define MANUFACTRING_FW 	"WLTEST"
@@ -167,13 +165,6 @@ typedef enum  {
 	DHD_IF_CHANGE,
 	DHD_IF_DELETING
 } dhd_if_state_t;
-
-
-typedef enum  {
-	DHD_IPV6_ADDR_NONE = 0,
-	DHD_IPV6_ADDR_ADD,
-	DHD_IPV6_ADDR_DELETE
-} dhd_ipv6_op_t;
 
 
 #if defined(CONFIG_DHD_USE_STATIC_BUF)
@@ -337,11 +328,7 @@ typedef struct dhd_pub {
 #ifdef WLMEDIA_HTSF
 	uint8 htsfdlystat_sz; /* Size of delay stats, max 255B */
 #endif
-#ifdef WLTDLS
-	bool tdls_enable;
-#endif
 	struct reorder_info *reorder_bufs[WLHOST_REORDERDATA_MAXFLOWS];
-	char  fw_capabilities[WLC_IOCTL_SMLEN];
 #ifdef RXFRAME_THREAD
 #define MAXSKBPEND 1024
 	void *skbbuf[MAXSKBPEND];
@@ -352,17 +339,14 @@ typedef struct dhd_pub {
 	int tcp_ack_info_cnt;
 	tcp_ack_info_t tcp_ack_info_tbl[MAXTCPSTREAMS];
 #endif /* DHDTCPACK_SUPPRESS */
+#if defined(ARP_OFFLOAD_SUPPORT)
 	uint32 arp_version;
+#endif
 #if defined(BCMSUP_4WAY_HANDSHAKE) && defined(WLAN_AKM_SUITE_FT_8021X)
 	bool fw_4way_handshake;		/* Whether firmware will to do the 4way handshake. */
 #endif
-#if defined(CUSTOMER_HW4)
-	bool dhd_bug_on;
-#endif
 } dhd_pub_t;
-#if defined(CUSTOMER_HW4)
-#define MAX_RESCHED_CNT 600
-#endif
+
 typedef struct dhd_cmn {
 	osl_t *osh;		/* OSL handle */
 	dhd_pub_t *dhd;
@@ -425,11 +409,6 @@ typedef struct dhd_cmn {
 #undef	SPINWAIT_SLEEP
 #define SPINWAIT_SLEEP(a, exp, us) SPINWAIT(exp, us)
 #endif /* DHDTHREAD */
-
-#ifndef OSL_SLEEP
-#define OSL_SLEEP(ms)		OSL_DELAY(ms*1000)
-#endif /* OSL_SLEEP */
-
 #define DHD_IF_VIF	0x01	/* Virtual IF (Hidden from user) */
 
 unsigned long dhd_os_spin_lock(dhd_pub_t *pub);
@@ -656,7 +635,6 @@ extern int dhd_pno_suspend(dhd_pub_t *dhd, int pfn_suspend);
 #define DHD_MULTICAST4_FILTER_NUM	2
 #define DHD_MULTICAST6_FILTER_NUM	3
 #define DHD_MDNS_FILTER_NUM		4
-#define DHD_ARP_FILTER_NUM		5
 extern int 	dhd_os_enable_packet_filter(dhd_pub_t *dhdp, int val);
 extern void dhd_enable_packet_filter(int value, dhd_pub_t *dhd);
 extern int net_os_enable_packet_filter(struct net_device *dev, int val);
@@ -848,11 +826,6 @@ extern uint dhd_force_tx_queueing;
 #define CUSTOM_SUSPEND_BCN_LI_DTIM		DEFAULT_SUSPEND_BCN_LI_DTIM
 #endif
 
-#define DEFAULT_WIFI_TURNOFF_DELAY	0
-#ifndef WIFI_TURNOFF_DELAY
-#define WIFI_TURNOFF_DELAY		DEFAULT_WIFI_TURNOFF_DELAY
-#endif /* WIFI_TURNOFF_DELAY */
-
 #ifdef RXFRAME_THREAD
 #ifndef CUSTOM_RXF_PRIO_SETTING
 #define CUSTOM_RXF_PRIO_SETTING		MAX((CUSTOM_DPC_PRIO_SETTING - 1), 1)
@@ -862,12 +835,6 @@ extern uint dhd_force_tx_queueing;
 #ifdef WLTDLS
 #ifndef CUSTOM_TDLS_IDLE_MODE_SETTING
 #define CUSTOM_TDLS_IDLE_MODE_SETTING  60000 /* 60sec to tear down TDLS of not active */
-#endif
-#ifndef CUSTOM_TDLS_RSSI_THRESHOLD_HIGH
-#define CUSTOM_TDLS_RSSI_THRESHOLD_HIGH -70 /* rssi threshold for establishing TDLS link */
-#endif
-#ifndef CUSTOM_TDLS_RSSI_THRESHOLD_LOW
-#define CUSTOM_TDLS_RSSI_THRESHOLD_LOW -80 /* rssi threshold for tearing down TDLS link */
 #endif
 #endif /* WLTDLS */
 
@@ -1066,7 +1033,7 @@ extern void dhd_wait_event_wakeup(dhd_pub_t*dhd);
 	NdisStallExecution(1);
 #define IFUNLOCK(lock)  InterlockedExchange((lock), 0)
 #define IFLOCK_FREE(lock)
-#define FW_SUPPORTED(dhd, capa) ((strstr(dhd->fw_capabilities, #capa) != NULL))
+
 #ifdef PNO_SUPPORT
 extern int dhd_pno_enable(dhd_pub_t *dhd, int pfn_enabled);
 extern int dhd_pnoenable(dhd_pub_t *dhd, int pfn_enabled);
@@ -1090,13 +1057,7 @@ void dhd_aoe_arp_clr(dhd_pub_t *dhd, int idx);
 int dhd_arp_get_arp_hostip_table(dhd_pub_t *dhd, void *buf, int buflen, int idx);
 void dhd_arp_offload_add_ip(dhd_pub_t *dhd, uint32 ipaddr, int idx);
 #endif /* ARP_OFFLOAD_SUPPORT */
-#ifdef WLTDLS
-int dhd_tdls_enable_disable(dhd_pub_t *dhd, bool flag);
-#endif
-/* Neighbor Discovery Offload Support */
-int dhd_ndo_enable(dhd_pub_t * dhd, int ndo_enable);
-int dhd_ndo_add_ip(dhd_pub_t *dhd, char* ipaddr, int idx);
-int dhd_ndo_remove_ip(dhd_pub_t *dhd, int idx);
+
 /* ioctl processing for nl80211 */
 int dhd_ioctl_process(dhd_pub_t *pub, int ifidx, struct dhd_ioctl *ioc);
 
@@ -1111,19 +1072,4 @@ void dhd_set_bus_state(void *bus, uint32 state);
 
 /* Remove proper pkts(either one no-frag pkt or whole fragmented pkts) */
 extern bool dhd_prec_drop_pkts(osl_t *osh, struct pktq *pq, int prec);
-
-#if defined(CUSTOMER_HW4) && defined(USE_WFA_CERT_CONF)
-enum {
-	SET_PARAM_BUS_TXGLOM_MODE,
-	SET_PARAM_ROAMOFF,
-#ifdef USE_WL_FRAMEBURST
-	SET_PARAM_FRAMEBURST,
-#endif /* USE_WL_FRAMEBURST */
-#ifdef USE_WL_TXBF
-	SET_PARAM_TXBF,
-#endif /* USE_WL_TXBF */
-	PARAM_LAST_VALUE
-};
-extern int sec_get_param(dhd_pub_t *dhd, int mode);
-#endif /* CUSTOMER_HW4 && USE_WFA_CERT_CONF */
 #endif /* _dhd_h_ */

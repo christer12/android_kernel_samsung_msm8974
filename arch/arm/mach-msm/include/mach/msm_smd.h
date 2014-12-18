@@ -19,9 +19,7 @@
 #define __ASM_ARCH_MSM_SMD_H
 
 #include <linux/io.h>
-#include <linux/notifier.h>
-
-#include <mach/msm_smem.h>
+#include <mach/msm_smsm.h>
 
 typedef struct smd_channel smd_channel_t;
 
@@ -42,13 +40,13 @@ typedef struct smd_channel smd_channel_t;
  * SMD, the entry will only exist in this enum.
  */
 enum {
-	SMD_APPS = SMEM_APPS,
-	SMD_MODEM = SMEM_MODEM,
-	SMD_Q6 = SMEM_Q6,
-	SMD_DSPS = SMEM_DSPS,
-	SMD_WCNSS = SMEM_WCNSS,
-	SMD_MODEM_Q6_FW = SMEM_MODEM_Q6_FW,
-	SMD_RPM = SMEM_RPM,
+	SMD_APPS = SMSM_APPS,
+	SMD_MODEM = SMSM_MODEM,
+	SMD_Q6 = SMSM_Q6,
+	SMD_WCNSS = SMSM_WCNSS,
+	SMD_DSPS = SMSM_DSPS,
+	SMD_MODEM_Q6_FW,
+	SMD_RPM,
 	NUM_SMD_SUBSYSTEMS,
 };
 

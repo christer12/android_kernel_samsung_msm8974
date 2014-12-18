@@ -110,32 +110,7 @@ static struct i2c_client *g_client;
 static int gpiox_state;
 static bool fw_dl_complete;
 
-#if defined(CONFIG_SEC_MELIUSCA_PROJECT)
-static struct regulator *barcode_l20_2p95=NULL;
 
-static int bc_poweron(struct device dev)
-{
-	int ret;
-	printk(KERN_ERR "%s\n",__func__);
-	barcode_l20_2p95 = regulator_get(NULL, "8941_l20");
-	if (IS_ERR(barcode_l20_2p95)) {
-        	pr_err("%s: could not get vdda vreg, rc=%ld\n",
-                	__func__, PTR_ERR(barcode_l20_2p95));
-		return PTR_ERR(barcode_l20_2p95);
-	}
-	ret = regulator_set_voltage(barcode_l20_2p95,
-		2950000, 2950000);
-       if (ret)
-               pr_err("%s: error vreg_l20 set voltage ret=%d\n",
-                       __func__, ret);
-
-       ret = regulator_enable(barcode_l20_2p95);
-        if (ret)
-                pr_err("%s: error l20 enabling regulator\n", __func__);
-	return 0;
-}
-#endif
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 static int check_cdone_state(void)
 {
 	if (gpio_get_value(g_pdata->cdone) != 1) {
@@ -146,20 +121,11 @@ static int check_cdone_state(void)
 	}
 	return 0;
 }
-#endif
-#if defined(CONFIG_SEC_MELIUSCA_PROJECT)
-static void irda_wake_en(bool onoff)
-{
-	gpio_direction_output(g_pdata->rst_n, onoff);
-	printk(KERN_ERR "%s: %d\n", __func__, onoff);
-}
-#else
 static void irda_wake_en(bool onoff)
 {
 	gpio_direction_output(g_pdata->irda_wake, onoff);
 	printk(KERN_ERR "%s: %d\n", __func__, onoff);
 }
-#endif
 static int ice4_clock_en(int onoff)
 {
 	static struct clk *fpga_main_src_clk;
@@ -240,18 +206,15 @@ static int barcode_parse_dt(struct device *dev,
 				0, &pdata->cresetb_flag);
 	pdata->rst_n = of_get_named_gpio_flags(np, "barcode,reset_n",
 				0, &pdata->rst_n_flag);
-
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	pdata->cdone = of_get_named_gpio_flags(np, "barcode,cdone",
 				0, &pdata->cdone_flag);
-	pdata->irda_wake = of_get_named_gpio(np, "barcode,irda_en", 0);
-#endif
 	pdata->spi_clk =of_get_named_gpio_flags(np, "barcode,scl-gpio",
 				0, &pdata->spi_clk_flag);		
 	pdata->spi_si =of_get_named_gpio_flags(np, "barcode,sda-gpio",
 				0, &pdata->spi_si_flag);
 	pdata->irda_irq =of_get_named_gpio_flags(np, "barcode,irq-gpio",
 				0, &pdata->irda_irq_flag);
+	pdata->irda_wake = of_get_named_gpio(np, "barcode,irda_en", 0);
 
 	return 0;
 }
@@ -271,13 +234,9 @@ static void barcode_gpio_config(void)
 		GPIO_CFG_OUTPUT, GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
 	gpio_tlmm_config(GPIO_CFG(g_pdata->spi_clk, 0,
 		GPIO_CFG_OUTPUT,	GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	gpio_tlmm_config(GPIO_CFG(g_pdata->cdone, 0,
 		GPIO_CFG_INPUT,	GPIO_CFG_NO_PULL, GPIO_CFG_2MA), 1);
 
-	gpio_request(g_pdata->irda_wake, "irda_en");
-	gpio_direction_output(g_pdata->irda_wake,0);
-#endif
 	gpio_request(g_pdata->cresetb, "irda_creset");
 	gpio_direction_output(g_pdata->cresetb, 0);
 
@@ -287,6 +246,9 @@ static void barcode_gpio_config(void)
 	gpio_request(g_pdata->irda_irq, "irda_irq");
 	gpio_direction_input(g_pdata->irda_irq);
 	
+	gpio_request(g_pdata->irda_wake, "irda_en");
+	gpio_direction_output(g_pdata->irda_wake,0);	
+
 	gpio_tlmm_config(GPIO_CFG(GPIO_FPGA_MAIN_CLK, \
 		6, GPIO_CFG_OUTPUT, GPIO_CFG_PULL_DOWN, GPIO_CFG_2MA), GPIO_CFG_ENABLE);	
 }
@@ -344,14 +306,13 @@ static int barcode_fpga_fimrware_update_start(const u8 *data, int len)
 
 		gpio_set_value(g_pdata->cresetb, GPIO_LEVEL_HIGH);
 		usleep_range(1000, 1300);
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
+
 		if (gpio_get_value(g_pdata->cdone))
 			pr_err("%s cdone HIGH before firmware download",
 				__func__);
-#endif
 		barcode_send_firmware_data(data, len);
 		usleep_range(50, 70);
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
+
 		if (gpio_get_value(g_pdata->cdone)) {
 			udelay(5);
 			pr_barcode("FPGA firmware update success\n");
@@ -364,12 +325,6 @@ static int barcode_fpga_fimrware_update_start(const u8 *data, int len)
 			else
 				pr_err("FPGA FIRMWARE_MAX_RETRY reached");
 		}
-#else
-		udelay(5);
-		pr_barcode("FPGA firmware update success\n");
-		fw_dl_complete = true;
-		break;
-#endif
 	} while (retry);
 	fpga_enable(0);
 	return 0;
@@ -408,13 +363,12 @@ static ssize_t barcode_emul_store(struct device *dev,
 	struct barcode_emul_data *data = dev_get_drvdata(dev);
 	struct i2c_client *client = data->client;
 	pr_barcode("%s start\n", __func__);
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	check_cdone_state();
 	if (gpio_get_value(g_pdata->cdone) != 1) {
 		pr_err("%s: cdone fail !!\n", __func__);
 		return 1;
 	}
-#endif
+
 	fpga_enable(1);
 
 	client->addr = BARCODE_I2C_ADDR;
@@ -519,13 +473,12 @@ static ssize_t barcode_emul_test_store(struct device *dev,
 			0x0A, 0xA8, 0xD1, 0xA3, 0x46, 0xC5, 0xDA, 0xFF};
 
 	client->addr = BARCODE_I2C_ADDR;
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	check_cdone_state();
 	if (gpio_get_value(g_pdata->cdone) != 1) {
 		pr_err("%s: cdone fail !!\n", __func__);
 		return 1;
 	}
-#endif
+
 	fpga_enable(1);
 
 	if (buf[0] == LOOP_BACK) {
@@ -1039,13 +992,11 @@ static ssize_t irda_test_store(struct device *dev,
 		0x00, 0x15, 0x00, 0x3F, 0x00, 0x15, 0x00, 0x3F,
 		0x00, 0x15, 0x00, 0x3F
 	};
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	check_cdone_state();
 	if (gpio_get_value(g_pdata->cdone) != 1) {
 		pr_err("%s: cdone fail !!\n", __func__);
 		return 1;
 	}
-#endif
 	pr_barcode("IRDA test code start\n");
 
 	/* change address for IRDA */
@@ -1188,13 +1139,11 @@ EXPORT_SYMBOL(ice_gpiox_set);
 static void fw_work(struct work_struct *work)
 {
 	ice4_fpga_firmware_update();
-#if !defined(CONFIG_SEC_MELIUSCA_PROJECT)
 	check_cdone_state();
 	if (gpio_get_value(g_pdata->cdone) != 1) {
 		pr_err("%s: cdone fail !!\n", __func__);
 		return;
 	}
-#endif
 	Is_clk_enabled = 0;
 }
 
@@ -1233,9 +1182,6 @@ static int __devinit barcode_emul_probe(struct i2c_client *client,
 	g_pdata = pdata;
 	pr_barcode("%s setting gpio config.\n", __func__);
 	barcode_gpio_config();	
-#if defined(CONFIG_SEC_MELIUSCA_PROJECT)
-	bc_poweron(client->dev);
-#endif
 	client->irq = gpio_to_irq(pdata->irda_irq);
 
 	data = kzalloc(sizeof(struct barcode_emul_data), GFP_KERNEL);

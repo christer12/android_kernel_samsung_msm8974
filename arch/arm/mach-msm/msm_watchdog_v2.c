@@ -27,10 +27,6 @@
 #include <linux/platform_device.h>
 #include <mach/scm.h>
 #include <mach/msm_memory_dump.h>
-#include <asm/cacheflush.h>
-#if CONFIG_SEC_DEBUG
-#include <mach/sec_debug.h>
-#endif
 
 #define MODULE_NAME "msm_watchdog"
 #define WDT0_ACCSCSSNBARK_INT 0
@@ -364,13 +360,7 @@ static irqreturn_t wdog_bark_handler(int irq, void *dev_id)
 		wdog_dd->last_pet, nanosec_rem / 1000);
 	if (wdog_dd->do_ipi_ping)
 		dump_cpu_alive_mask(wdog_dd);
-
-#if CONFIG_SEC_DEBUG
-	sec_debug_dump_stack();
-	dump_stack();
-	outer_flush_all();
-#endif
-	printk(KERN_INFO "Causing a watchdog bite!\n");
+	printk(KERN_INFO "Causing a watchdog bite!");
 	__raw_writel(1, wdog_dd->base + WDT0_BITE_TIME);
 	mb();
 	__raw_writel(1, wdog_dd->base + WDT0_RST);

@@ -134,13 +134,7 @@ int mdss_mdp_wb_set_secure(struct msm_fb_data_type *mfd, int enable)
 		return 0;
 
 	pr_debug("setting secure=%d\n", enable);
-	
-    // add for ctl null check
-    if (!ctl) {
-        pr_err("ctl is null, the wb device is already closed.\n");
-        return 0;
-    }
-    
+
 	ctl->is_secure = enable;
 	wb->is_secure = enable;
 
@@ -262,7 +256,6 @@ static int mdss_mdp_wb_terminate(struct msm_fb_data_type *mfd)
 		mdss_mdp_secure_vote(0);
 		wb->is_secure = false;
 	}
-
 	if (wb->secure_pipe)
 		mdss_mdp_pipe_destroy(wb->secure_pipe);
 	mutex_unlock(&wb->lock);
@@ -555,12 +548,7 @@ int mdss_mdp_wb_kickoff(struct msm_fb_data_type *mfd)
 		goto kickoff_fail;
 	}
 
-	ret = wait_for_completion_timeout(&comp, KOFF_TIMEOUT);
-	if (ret == 0)
-		WARN(1, "wfd kick off time out=%d ctl=%d", ret, ctl->num);
-	else
-		ret = 0;
-
+	wait_for_completion_interruptible(&comp);
 	if (wb && node) {
 		mutex_lock(&wb->lock);
 		list_add_tail(&node->active_entry, &wb->busy_queue);
