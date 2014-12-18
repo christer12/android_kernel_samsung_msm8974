@@ -1,0 +1,23 @@
+#
+# Immersion TouchSense Player driver configuration
+#
+menuconfig VIBETONZ
+	tristate "Vibetonz"
+	default n
+	help
+	Say Y to enable Vibetonz support.
+	-------------
+	-------------
+	-------------
+
+config MOTOR_DRV_MAX77803
+	tristate "Maxim MAX77803 motor"
+	default n
+
+	depends on MFD_MAX77803
+config MOTOR_DRV_ISA1400
+	tristate "ISA1400 motor"
+	default n
+	depends on I2C
+	help
+	  Say Y to enalbe the ISA1400 IC.
