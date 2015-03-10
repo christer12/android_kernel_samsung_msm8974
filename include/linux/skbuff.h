@@ -495,6 +495,10 @@ struct sk_buff {
 				*data;
 	unsigned int		truesize;
 	atomic_t		users;
+
+	uid_t uid;
+	pid_t pid;
+
 };
 
 #ifdef __KERNEL__
