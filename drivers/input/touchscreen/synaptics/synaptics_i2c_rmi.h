@@ -268,6 +268,7 @@
 #define FW_IMAGE_NAME_S5100_K_A3	"tsp_synaptics/synaptics_s5100_k_a3.fw"
 #define FW_IMAGE_NAME_S5100_K_A3_KOR	"tsp_synaptics/synaptics_s5100_kkor_a3.fw"
 #define FW_IMAGE_NAME_S5100_K_ACTIVE	"tsp_synaptics/synaptics_s5100_k_active.fw"
+#define FW_IMAGE_NAME_S5100_K_SPORTS	"tsp_synaptics/synaptics_s5100_k_sports.fw"
 #define FW_IMAGE_NAME_S5100_HESTIA	"tsp_synaptics/synaptics_s5100_hestia.fw"
 #define FW_IMAGE_NAME_S5707		"tsp_synaptics/synaptics_s5707.fw"
 #define FW_IMAGE_NAME_S5707_KLIMT	"tsp_synaptics/synaptics_s5707_klimt.fw"

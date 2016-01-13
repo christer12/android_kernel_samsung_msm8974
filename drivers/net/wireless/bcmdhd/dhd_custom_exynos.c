@@ -1,7 +1,7 @@
 /*
  * Platform Dependent file for Samsung Exynos
  *
- * Copyright (C) 1999-2014, Broadcom Corporation
+ * Copyright (C) 1999-2015, Broadcom Corporation
  * 
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd_custom_exynos.c 489763 2014-07-08 02:05:45Z $
+ * $Id: dhd_custom_exynos.c 532081 2015-02-05 02:47:14Z $
  */
 #include <linux/device.h>
 #include <linux/gpio.h>
@@ -46,19 +46,32 @@
 #include <linux/platform_device.h>
 #include <linux/wlan_plat.h>
 
+#ifndef CONFIG_MACH_UNIVERSAL7580
 #include <mach/gpio.h>
+#endif /* CONFIG_MACH_UNIVERSAL7580 */
+
 #include <mach/irqs.h>
 #include <linux/sec_sysfs.h>
 
 #include <plat/gpio-cfg.h>
 
+#ifdef CONFIG_MACH_A7LTE
+#define PINCTL_DELAY 150
+#endif /* CONFIG_MACH_A7LTE */
 #ifdef CONFIG_BROADCOM_WIFI_RESERVED_MEM
 
 #define WLAN_STATIC_SCAN_BUF0		5
 #define WLAN_STATIC_SCAN_BUF1		6
 #define WLAN_STATIC_DHD_INFO_BUF	7
-#define WLAN_SCAN_BUF_SIZE		(64 * 1024)
+#define WLAN_STATIC_DHD_WLFC_BUF	8
+#define WLAN_SCAN_BUF_SIZE		(128 * 1024)
+#if defined(CONFIG_64BIT)
+#define WLAN_DHD_INFO_BUF_SIZE  (24 * 1024)
+#else
 #define WLAN_DHD_INFO_BUF_SIZE	(16 * 1024)
+#endif /* CONFIG_64BIT */
+#define WLAN_DHD_WLFC_BUF_SIZE	(64 * 1024)
+
 #define PREALLOC_WLAN_SEC_NUM		4
 #define PREALLOC_WLAN_BUF_NUM		160
 #define PREALLOC_WLAN_SECTION_HEADER	24
@@ -97,6 +110,7 @@ static struct wlan_mem_prealloc wlan_mem_array[PREALLOC_WLAN_SEC_NUM] = {
 void *wlan_static_scan_buf0;
 void *wlan_static_scan_buf1;
 void *wlan_static_dhd_info_buf;
+void *wlan_static_dhd_wlfc_buf;
 
 static void *dhd_wlan_mem_prealloc(int section, unsigned long size)
 {
@@ -117,6 +131,14 @@ static void *dhd_wlan_mem_prealloc(int section, unsigned long size)
 			return NULL;
 		}
 		return wlan_static_dhd_info_buf;
+	}
+
+	if (section == WLAN_STATIC_DHD_WLFC_BUF)  {
+		if (size > WLAN_DHD_WLFC_BUF_SIZE) {
+			pr_err("request DHD_WLFC size(%lu) is bigger than static size(%d).\n", size, WLAN_DHD_WLFC_BUF_SIZE);
+			return NULL;
+		}
+		return wlan_static_dhd_wlfc_buf;
 	}
 
 	if ((section < 0) || (section > PREALLOC_WLAN_SEC_NUM))
@@ -169,6 +191,10 @@ static int dhd_init_wlan_mem(void)
 	if (!wlan_static_dhd_info_buf)
 		goto err_mem_alloc;
 
+	wlan_static_dhd_wlfc_buf = kmalloc(WLAN_DHD_WLFC_BUF_SIZE, GFP_KERNEL);
+	if (!wlan_static_dhd_wlfc_buf)
+		goto err_mem_alloc;
+
 	pr_err("%s: WIFI MEM Allocated\n", __FUNCTION__);
 	return 0;
 
@@ -198,18 +224,42 @@ err_skb_alloc:
 static struct device *wlan_dev;
 static int wlan_pwr_on = -1;
 static int wlan_host_wake_irq = 0;
+#ifdef CONFIG_MACH_A7LTE
+extern struct device *mmc_dev_for_wlan;
+#endif /* CONFIG_MACH_A7LTE */
 
 static int dhd_wlan_power(int onoff)
 {
+#ifdef CONFIG_MACH_A7LTE
+	struct pinctrl *pinctrl = NULL;
+#endif /* CONFIG_MACH_A7LTE */
+
 	printk(KERN_INFO"------------------------------------------------");
 	printk(KERN_INFO"------------------------------------------------\n");
 	printk(KERN_INFO"%s Enter: power %s\n", __FUNCTION__, onoff ? "on" : "off");
+
+#ifdef CONFIG_MACH_A7LTE
+	if (onoff) {
+		pinctrl = devm_pinctrl_get_select(mmc_dev_for_wlan, "sdio_wifi_on");
+		if (IS_ERR(pinctrl))
+			printk(KERN_INFO "%s WLAN SDIO GPIO control error\n", __FUNCTION__);
+		msleep(PINCTL_DELAY);
+	}
+#endif /* CONFIG_MACH_A7LTE */
 
 	if (gpio_direction_output(wlan_pwr_on, onoff)) {
 		printk(KERN_ERR "%s failed to control WLAN_REG_ON to %s\n",
 			__FUNCTION__, onoff ? "HIGH" : "LOW");
 		return -EIO;
 	}
+
+#ifdef CONFIG_MACH_A7LTE
+	if (!onoff) {
+		pinctrl = devm_pinctrl_get_select(mmc_dev_for_wlan, "sdio_wifi_off");
+		if (IS_ERR(pinctrl))
+			printk(KERN_INFO "%s WLAN SDIO GPIO control error\n", __FUNCTION__);
+	}
+#endif /* CONFIG_MACH_A7LTE */
 
 	return 0;
 }
@@ -354,7 +404,7 @@ int __init dhd_wlan_init(void)
 	dhd_wlan_resources.end = wlan_host_wake_irq;
 
 #ifdef CONFIG_BROADCOM_WIFI_RESERVED_MEM
-	dhd_init_wlan_mem();
+	ret = dhd_init_wlan_mem();
 #endif
 
 	return ret;

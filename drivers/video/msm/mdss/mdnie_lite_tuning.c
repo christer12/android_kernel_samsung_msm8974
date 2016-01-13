@@ -277,9 +277,9 @@ static struct dsi_cmd_desc mdni_tune_cmd[] = {
 	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, sizeof(tune_data5)}, tune_data5},
 	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0, sizeof(cmd_disable)}, cmd_disable},
 #else
-	{{DTYPE_DCS_LWRITE, 0, 0, 0, 0,
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0,
 		sizeof(level1_key)}, level1_key},
-	{{DTYPE_DCS_LWRITE, 0, 0, 0, 0,
+	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0,
 		sizeof(level2_key)}, level2_key},
 
 	{{DTYPE_DCS_LWRITE, 1, 0, 0, 0,
@@ -467,6 +467,14 @@ void mDNIe_Set_Mode(void)
 
 	play_speed_1_5 = 0;
 
+#if defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL) // JACTIVE
+	if(mdnie_tun_state.scenario == mDNIe_EMAIL_MODE && \
+		mdnie_tune_value[mdnie_tun_state.scenario][mdnie_tun_state.background][mdnie_tun_state.outdoor][0] == NULL) {
+		mdnie_tun_state.scenario = mDNIe_eBOOK_MODE;
+		DPRINT("EMAIL mode data is null, set eBOOK mode. \n");
+	}
+#endif
+
 	if (mdnie_tun_state.accessibility) {
 		DPRINT(" = ACCESSIBILITY MODE =\n");
 #if defined(CONFIG_FB_MSM_MIPI_VIDEO_WVGA_NT35502_PT_PANEL)
@@ -624,6 +632,8 @@ static ssize_t mode_store(struct device *dev,
 		return size;
 	}
 	backup = mdnie_tun_state.background;
+	if(mdnie_tun_state.background == value)
+		return size;
 	mdnie_tun_state.background = value;
 
 	if (mdnie_tun_state.accessibility == NEGATIVE) {
@@ -668,6 +678,8 @@ static ssize_t scenario_store(struct device *dev,
 	}
 
 	backup = mdnie_tun_state.scenario;
+	if(mdnie_tun_state.scenario == value)
+		return size;
 	mdnie_tun_state.scenario = value;
 
 #if defined(CONFIG_TDMB)
@@ -791,6 +803,8 @@ static ssize_t outdoor_store(struct device *dev,
 	}
 
 	backup = mdnie_tun_state.outdoor;
+	if(mdnie_tun_state.outdoor == value)
+		return size;
 	mdnie_tun_state.outdoor = value;
 
 	if (mdnie_tun_state.accessibility == NEGATIVE) {
@@ -806,6 +820,64 @@ static ssize_t outdoor_store(struct device *dev,
 }
 
 static DEVICE_ATTR(outdoor, 0664, outdoor_show, outdoor_store);
+
+
+#if defined(AUTO_BRIGHTNESS_CABC_FUNCTION)
+
+unsigned int mdss_dsi_show_cabc(void )
+{
+	return msd.dstat.cabc_on;
+}
+void mdss_dsi_store_cabc(unsigned int cabc)
+{
+	struct msm_fb_data_type *mfd;
+	mfd = mdnie_msd->mfd;
+
+	if(mfd->resume_state == MIPI_SUSPEND_STATE){
+		pr_err("%s: panel power off no bl ctrl\n", __func__);
+		return;
+	}
+
+	msd.dstat.cabc_on = cabc;
+
+	pr_info("%s : CABC : %d\n", __func__,msd.dstat.cabc_on);
+
+	if(mfd->resume_state == MIPI_RESUME_STATE)
+		mipi_samsung_cabc_onoff(cabc);
+}
+
+
+static ssize_t cabc_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	unsigned int cabc;
+	cabc = mdss_dsi_show_cabc();
+	pr_info("%s : CABC : %d\n", __func__, cabc);
+	return cabc;
+
+}
+
+static ssize_t cabc_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+
+	unsigned char cabc;
+	cabc = mdss_dsi_show_cabc();
+
+	if (sysfs_streq(buf, "1") && !cabc)
+		cabc = true;
+	else if (sysfs_streq(buf, "0") && cabc)
+		cabc = false;
+	else
+		pr_info("%s: Invalid argument!!", __func__);
+	mdss_dsi_store_cabc(cabc);
+
+	return size;
+
+}
+static DEVICE_ATTR(cabc, 0664, cabc_show, cabc_store);
+#endif
+
 
 #if 0 // accessibility
 static ssize_t negative_show(struct device *dev,
@@ -827,7 +899,8 @@ static ssize_t negative_store(struct device *dev,
 	DPRINT
 	    ("negative_store, input value = %d\n",
 	     value);
-
+	if(mdnie_tun_state.accessibility == value)
+		return size;
 	mdnie_tun_state.accessibility = value;
 
 	mDNIe_Set_Mode();
@@ -913,6 +986,8 @@ static ssize_t accessibility_store(struct device *dev,
 	backup = mdnie_tun_state.accessibility;
 
 	if (cmd_value == NEGATIVE) {
+		if(mdnie_tun_state.accessibility == NEGATIVE)
+			return size;
 		mdnie_tun_state.accessibility = NEGATIVE;
 	}
 #ifndef	NEGATIVE_COLOR_USE_ACCESSIBILLITY
@@ -932,11 +1007,15 @@ static ssize_t accessibility_store(struct device *dev,
 	defined(CONFIG_FB_MSM_MDSS_MAGNA_OCTA_VIDEO_720P_PANEL) || defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_WXGA_PT_DUAL_PANEL) ||\
 	defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQXGA_S6E3HA1_PT_PANEL) || defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_FULL_HD_PT_PANEL)
 	else if (cmd_value == SCREEN_CURTAIN) {
+		if(mdnie_tun_state.accessibility == SCREEN_CURTAIN)
+			return size;
 		mdnie_tun_state.accessibility = SCREEN_CURTAIN;
 	}
 #endif
 #endif /* NEGATIVE_COLOR_USE_ACCESSIBILLITY */
 	else if (cmd_value == ACCESSIBILITY_OFF) {
+		if(mdnie_tun_state.accessibility == ACCESSIBILITY_OFF)
+			return size;
 		mdnie_tun_state.accessibility = ACCESSIBILITY_OFF;
 	} else
 		pr_info("%s ACCESSIBILITY_MAX", __func__);
@@ -1230,6 +1309,13 @@ void init_mdnie_class(void)
 		(tune_mdnie_dev, &dev_attr_outdoor) < 0)
 		pr_err("Failed to create device file(%s)!\n",
 	       dev_attr_outdoor.attr.name);
+
+#if defined(AUTO_BRIGHTNESS_CABC_FUNCTION)
+	if (device_create_file
+		(tune_mdnie_dev, &dev_attr_cabc) < 0)
+		pr_err("Failed to create device file(%s)!\n",
+		   dev_attr_cabc.attr.name);
+#endif
 
 #if 0 // accessibility
 	if (device_create_file

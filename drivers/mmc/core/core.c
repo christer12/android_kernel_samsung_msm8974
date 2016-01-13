@@ -3351,9 +3351,6 @@ void mmc_start_host(struct mmc_host *host)
 	}
 	else
 #endif
-#if defined (CONFIG_BCM4354)
-	if ( 0 != strcmp(mmc_hostname(host),"mmc1"))
-#endif
 	mmc_detect_change(host, 0);
 }
 

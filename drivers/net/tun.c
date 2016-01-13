@@ -74,11 +74,8 @@
 #include <linux/tcp.h>
 #include <linux/ip.h>
 #include <net/ip.h>
-#include <net/netfilter/nf_conntrack.h>
 
 #define META_MARK_BASE_LOWER 100
-#define META_UID_PID_MARK_BASE_LOWER 150
-#define META_UID_PID_MARK_BASE_UPPER 199
 #define META_MARK_BASE_UPPER 500
 
 // ------------- END of KNOX_VPN -------------------//
@@ -86,7 +83,7 @@
 #include <asm/uaccess.h>
 
 /* Uncomment to enable debugging */
-/* #define TUN_DEBUG 1 */
+#define TUN_DEBUG 1
 
 #ifdef TUN_DEBUG
 static int debug;
@@ -127,13 +124,13 @@ do {								\
 
 /* Metadata header structure */
 
-struct tun_meta_header {
+struct knox_meta_param {
 	uid_t uid;
 	pid_t pid;
 };
 
-#define TUN_META_HDR_SZ sizeof(struct tun_meta_header)
-#define TUN_META_MARK_OFFSET offsetof(struct tun_meta_header, uid)
+#define TUN_META_HDR_SZ sizeof(struct knox_meta_param)
+#define TUN_META_MARK_OFFSET offsetof(struct knox_meta_param, uid)
 // ------------- END of KNOX_VPN -------------------//
 
 #define FLT_EXACT_COUNT 8
@@ -787,48 +784,66 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	return result;
 }
 
-
 // ------------- START of KNOX_VPN ------------------//
 
-/* KNOX VPN packets have extra bytes because they carry meta information by default 
+/* KNOX VPN packets have extra bytes because they carry meta information by default
      * Such packets have sizeof(struct tun_meta_header) extra bytes in the IP options
      * This automatically reflects in the IP header length (IHL)
      */
-static int knoxvpn_tun_uidpid(struct tun_struct *tun, struct sk_buff *skb, const struct iovec *iv, int* len, ssize_t* total)
+static int knoxvpn_process_uidpid(struct tun_struct *tun, struct sk_buff *skb,
+			      const struct iovec *iv, int *len, ssize_t * total)
 {
-    struct nf_conn *ct;
-	enum ip_conntrack_info ctinfo;
-	struct tun_meta_header metalocal = {0,0};
+	struct skb_shared_info *knox_shinfo = NULL;
+	struct knox_meta_param metalocal = { 0, 0 };
 
-	ct = nf_ct_get(skb, &ctinfo);
+	if (skb != NULL)
+		knox_shinfo = skb_shinfo(skb);
+	else {
+		#ifdef TUN_DEBUG
+			pr_err("KNOX: NULL SKB in knoxvpn_process_uidpid");
+		#endif
+		return 0;
+	}
 
-    if ( (tun->flags & TUN_META_HDR) == 0 || skb == NULL || ct == NULL || ct->mark < META_UID_PID_MARK_BASE_LOWER || META_UID_PID_MARK_BASE_UPPER < ct->mark ){
-        metalocal.uid = 0;
-        metalocal.pid = 0;
-    }
-    else{    
-        metalocal.uid = skb->uid;
-        metalocal.pid = skb->pid;
-    }
+	if (knox_shinfo == NULL) {
+		#ifdef TUN_DEBUG
+			pr_err("KNOX: knox_shinfo value is null");
+		#endif
+			return 0;
+	}
 
+	if (knox_shinfo->knox_mark >= META_MARK_BASE_LOWER && knox_shinfo->knox_mark <= META_MARK_BASE_UPPER) {
+		metalocal.uid = knox_shinfo->uid;
+		metalocal.pid = knox_shinfo->pid;
+	}
 
+	if (knox_shinfo != NULL) {
+		knox_shinfo->uid = knox_shinfo->pid = 0;
+		knox_shinfo->knox_mark = 0;
+	}
 
-    if (tun->flags & TUN_META_HDR) {
+	if (tun->flags & TUN_META_HDR) {
 #ifdef TUN_DEBUG
-        pr_err("KNOX: Appending uid: %d and pid: %d", metalocal.uid, metalocal.pid);
+		pr_err("KNOX: Appending uid: %d and pid: %d", metalocal.uid,
+		       metalocal.pid);
 #endif
-        if (unlikely(memcpy_toiovecend(iv, (void *)&metalocal, (*total), sizeof(struct tun_meta_header)))) {
-            return -1;
-        }			
-        (*total) += TUN_META_HDR_SZ;
-    }
+		if (unlikely
+		    (memcpy_toiovecend
+		     (iv, (void *)&metalocal, (*total),
+		      sizeof(struct knox_meta_param)))) {
+#ifdef TUN_DEBUG
+			pr_err("KNOX: Failed to copy buffer to userspace");
+#endif
+			return -1;
+		}
+		(*total) += TUN_META_HDR_SZ;
+	}
 
-    return 0;
+	return 0;
 
 }
 
 // ------------- END of KNOX_VPN ------------------//
-
 
 /* Put packet to the user space buffer */
 static ssize_t tun_put_user(struct tun_struct *tun,
@@ -900,9 +915,8 @@ static ssize_t tun_put_user(struct tun_struct *tun,
 		total += tun->vnet_hdr_sz;
 	}
 
-
 // ------------- START of KNOX_VPN ------------------//
-	if( knoxvpn_tun_uidpid(tun, skb, iv, &len, &total) < 0 ){
+	if (knoxvpn_process_uidpid(tun, skb, iv, &len, &total) < 0) {
 		return -EINVAL;
 	}
 // ------------- END of KNOX_VPN ------------------//
@@ -1090,12 +1104,12 @@ static int tun_flags(struct tun_struct *tun)
 	int flags = 0;
 
 // ------------- START of KNOX_VPN ------------------//
-	/* Checks if meta header is enabled so that 
+	/* Checks if meta header is enabled so that
 	 * packets will be prepended with meta data(UID/PID)
 	 */
 	if (tun->flags & TUN_META_HDR) {
-		flags |= IFF_META_HDR;		
-	}	
+		flags |= IFF_META_HDR;
+	}
 // ------------- END of KNOX_VPN -------------------//
 
 	if (tun->flags & TUN_TUN_DEV)
@@ -1532,7 +1546,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 
 // ------------- START of KNOX_VPN ------------------//
 	case TUNGETMETAPARAM:
-       
+
 		if (copy_from_user(&tun_meta_param, argp,
 				   sizeof(tun_meta_param))) {
 			ret = -EFAULT;
@@ -1558,7 +1572,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 			if (copy_to_user(argp, &tun_meta_value,
 					 sizeof(tun_meta_value)))
 				ret = -EFAULT;
-		} 			
+		}
 		break;
 // ------------- END of KNOX_VPN -------------------//
 

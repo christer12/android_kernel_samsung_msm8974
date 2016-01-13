@@ -40,10 +40,14 @@
 #include <linux/syscore_ops.h>
 #include <linux/version.h>
 #include <linux/ctype.h>
+
 #include <linux/mm.h>
 #include <linux/mempolicy.h>
 #include <linux/sched.h>
 
+#ifdef CONFIG_RESTART_REASON_SEC_PARAM
+#include <mach/sec_debug.h>
+#endif
 #include <linux/compat.h>
 #include <linux/syscalls.h>
 #include <linux/kprobes.h>
@@ -418,6 +422,9 @@ EXPORT_SYMBOL(unregister_reboot_notifier);
  */
 void kernel_restart(char *cmd)
 {
+#ifdef CONFIG_RESTART_REASON_SEC_PARAM
+	sec_param_restart_reason(cmd);
+#endif
 #ifdef CONFIG_SEC_MONITOR_BATTERY_REMOVAL
 	kernel_sec_set_normal_pwroff(1);
 #endif
@@ -2076,7 +2083,9 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		unsigned long, arg4, unsigned long, arg5)
 {
 	struct task_struct *me = current;
-	//struct task_struct *tsk;
+#ifndef CONFIG_SEC_H_PROJECT
+	struct task_struct *tsk;
+#endif
 	unsigned char comm[sizeof(me->comm)];
 	long error;
 
@@ -2236,13 +2245,15 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 		case PR_SET_VMA:
 			error = prctl_set_vma(arg2, arg3, arg4, arg5);
 			break;
-		/* remove this case because of sidesync call mute
+		/* remove this case because of sidesync call mute for H-projects */
+
+#ifndef CONFIG_SEC_H_PROJECT
 		case PR_SET_TIMERSLACK_PID:
-			if (current->pid != (pid_t)arg3 &&
+			if (task_pid_vnr(current) != (pid_t)arg3 &&
 					!capable(CAP_SYS_NICE))
 				return -EPERM;
 			rcu_read_lock();
-			tsk = find_task_by_pid_ns((pid_t)arg3, &init_pid_ns);
+			tsk = find_task_by_vpid((pid_t)arg3);
 			if (tsk == NULL) {
 				rcu_read_unlock();
 				return -EINVAL;
@@ -2257,7 +2268,7 @@ SYSCALL_DEFINE5(prctl, int, option, unsigned long, arg2, unsigned long, arg3,
 			put_task_struct(tsk);
 			error = 0;
 			break;
-		*/
+#endif
 		default:
 			error = -EINVAL;
 			break;

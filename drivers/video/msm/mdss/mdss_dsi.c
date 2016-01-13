@@ -62,7 +62,9 @@ int get_lcd_pcd_detected(void);
 #if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
 void xlog(const char *name, u32 data0, u32 data1, u32 data2, u32 data3, u32 data4, u32 data5);
 #endif
+#if !defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 extern int mdss_panel_get_dst_fmt(u32 bpp, char mipi_mode, u32 pixel_packing,char *dst_format);
+#endif
 
 static int mdss_dsi_regulator_init(struct platform_device *pdev)
 {
@@ -675,6 +677,7 @@ static int mdss_dsi_off(struct mdss_panel_data *pdata)
 			pr_err("%s: unable to config tlmm = %d\n",
 				__func__, ctrl_pdata->disp_te_gpio);
 			gpio_free(ctrl_pdata->disp_te_gpio);
+			mutex_unlock(&ctrl_pdata->mutex);
 			return -ENODEV;
 		}
 	}
@@ -956,7 +959,7 @@ static int mdss_dsi_ulps_config_sub(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 error:
 	return ret;
 }
-
+#if !defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 static int mdss_dsi_update_panel_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 				int mode)
 {
@@ -976,12 +979,13 @@ static int mdss_dsi_update_panel_config(struct mdss_dsi_ctrl_pdata *ctrl_pdata,
 	}
 
 	ctrl_pdata->panel_mode = pinfo->mipi.mode;
-	mdss_panel_get_dst_fmt(pinfo->bpp, pinfo->mipi.mode,
+	mdss_panel_dt_get_dst_fmt(pinfo->bpp, pinfo->mipi.mode,
 			pinfo->mipi.pixel_packing, &(pinfo->mipi.dst_format));
 	pinfo->cont_splash_enabled = 0;
 
 	return ret;
 }
+#endif
 static int mdss_dsi_ulps_config(struct mdss_dsi_ctrl_pdata *ctrl,
 	int enable)
 {
@@ -1238,11 +1242,14 @@ static int mdss_dsi_blank(struct mdss_panel_data *pdata)
 			return ret;
 		}
         }
+#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_HD_PANEL) && \
+	! defined(CONFIG_FB_MSM_MDSS_MAGNA_OCTA_VIDEO_720P_PANEL)
 	if (pdata->panel_info.type == MIPI_VIDEO_PANEL &&
 			ctrl_pdata->off_cmds.link_state == DSI_LP_MODE) {
 		mdss_dsi_sw_reset(pdata);
 		mdss_dsi_host_init(pdata);
 	}
+#endif
 	mdss_dsi_op_mode_config(DSI_CMD_MODE, pdata);
 
 	if (pdata->panel_info.dynamic_switch_pending) {
@@ -1588,10 +1595,12 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		rc = mdss_dsi_register_recovery_handler(ctrl_pdata,
 			(struct mdss_panel_recovery *)arg);
 		break;
+#if !defined(CONFIG_FB_MSM_MIPI_JDI_TFT_VIDEO_FULL_HD_PT_PANEL)
 	case MDSS_EVENT_DSI_DYNAMIC_SWITCH:
 		rc = mdss_dsi_update_panel_config(ctrl_pdata,
 					(int)(unsigned long) arg);
 		break;
+#endif
 	default:
 		if(ctrl_pdata->event_handler)
 			rc = ctrl_pdata->event_handler(event);
@@ -1682,7 +1691,8 @@ static int __devinit mdss_dsi_ctrl_probe(struct platform_device *pdev)
 	}
 #if !defined(CONFIG_FB_MSM8x26_MDSS_CHECK_LCD_CONNECTION) && \
 	!defined(CONFIG_FB_MSM_MIPI_SAMSUNG_TFT_VIDEO_WQXGA_PT_PANEL) && \
-	!defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_WXGA_PT_DUAL_PANEL)
+	!defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_WXGA_PT_DUAL_PANEL) && \
+	!defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_WQHD_PT_PANEL)
 	if (get_lcd_attached() == 0) {
 		pr_err("%s : lcd is not attached..\n",__func__);
 		return -ENODEV;
@@ -2103,17 +2113,12 @@ int dsi_panel_device_register(struct device_node *pan_node,
 	pinfo->panel_max_fps = mdss_panel_get_framerate(pinfo);
 	pinfo->panel_max_vtotal = mdss_panel_get_vtotal(pinfo);
 
-#if !defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL)
-	ctrl_pdata->disp_en_gpio = of_get_named_gpio(pan_node,
-		"qcom,enable-gpio", 0);
-#else
-#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_CMD_FULL_HD_PT_PANEL)
+#if 1
 	ctrl_pdata->disp_en_gpio = of_get_named_gpio(pan_node,
 		"qcom,enable-gpio", 0);
 #else
 	ctrl_pdata->disp_en_gpio = of_get_named_gpio(ctrl_pdev->dev.of_node,
 		"qcom,platform-enable-gpio", 0);
-#endif
 #endif
 	pr_err("%s:%d, Disp_en_gpio (%d)",__func__, __LINE__,ctrl_pdata->disp_en_gpio );
 

@@ -1,7 +1,7 @@
 /*
  * Linux cfg80211 driver
  *
- * Copyright (C) 1999-2014, Broadcom Corporation
+ * Copyright (C) 1999-2015, Broadcom Corporation
  * 
  *      Unless you and Broadcom execute a separate written software license
  * agreement governing use of this software, this software is licensed to you
@@ -21,7 +21,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: wl_cfg80211.h 519153 2014-12-05 05:10:07Z $
+ * $Id: wl_cfg80211.h 531050 2015-02-02 07:21:19Z $
  */
 
 #ifndef _wl_cfg80211_h_
@@ -403,7 +403,7 @@ struct wl_pmk_list {
 };
 
 
-#define ESCAN_BUF_SIZE (64 * 1024)
+#define ESCAN_BUF_SIZE (128 * 1024)
 
 struct escan_info {
 	u32 escan_state;
@@ -430,6 +430,15 @@ struct escan_info {
 	struct wiphy *wiphy;
 	struct net_device *ndev;
 };
+
+#ifdef ESCAN_BUF_OVERFLOW_MGMT
+#define BUF_OVERFLOW_MGMT_COUNT 3
+typedef struct {
+	int RSSI;
+	int length;
+	struct ether_addr BSSID;
+} removal_element_t;
+#endif /* ESCAN_BUF_OVERFLOW_MGMT */
 
 struct ap_info {
 /* Structure to hold WPS, WPA IEs for a AP */
@@ -625,6 +634,13 @@ struct bcm_cfg80211 {
 	uint8 fbt_key[FBT_KEYLEN];
 #endif
 	bool need_wait_afrx;
+#if defined(CUSTOMER_HW4) && defined(WL_CFG80211_P2P_DEV_IF)
+	bool down_disc_if;
+#endif /* CUSTOMER_HW4 && WL_CFG80211_P2P_DEV_IF */
+#ifdef QOS_MAP_SET
+	uint8	 *up_table;	/* user priority table, size is UP_TABLE_MAX */
+#endif /* QOS_MAP_SET */
+	struct ether_addr last_roamed_addr;
 };
 
 
@@ -960,6 +976,7 @@ extern s32 wl_cfg80211_apply_eventbuffer(struct net_device *ndev,
 	struct bcm_cfg80211 *cfg, wl_eventmsg_buf_t *ev);
 extern void get_primary_mac(struct bcm_cfg80211 *cfg, struct ether_addr *mac);
 extern void wl_cfg80211_update_power_mode(struct net_device *dev);
+extern void wl_terminate_event_handler(void);
 #define SCAN_BUF_CNT	2
 #define SCAN_BUF_NEXT	1
 #define WL_SCANTYPE_LEGACY	0x1
@@ -1036,5 +1053,13 @@ struct net_device *wl_cfg80211_get_remain_on_channel_ndev(struct bcm_cfg80211 *c
 #endif /* WL_CFG80211_VSDB_PRIORITIZE_SCAN_REQUEST */
 
 extern int wl_cfg80211_get_ioctl_version(void);
+
+#ifdef WL_CFG80211_P2P_DEV_IF
+extern void wl_cfg80211_del_p2p_wdev(void);
+#endif /* WL_CFG80211_P2P_DEV_IF */
+
+#ifdef QOS_MAP_SET
+extern int8 *wl_get_up_table(void);
+#endif /* QOS_MAP_SET */
 
 #endif				/* _wl_cfg80211_h_ */

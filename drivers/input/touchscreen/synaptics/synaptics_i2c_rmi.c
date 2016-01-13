@@ -341,8 +341,16 @@ static int synaptics_parse_dt(struct device *dev,
 		dt_data->sub_project = "0";
 	}
 
-	if (dt_data->extra_config[2] > 0)
-		pr_err("%s: OCTA ID = %d\n", __func__, gpio_get_value(dt_data->extra_config[2]));
+	if (dt_data->extra_config[2] > 0) {
+		pr_err("%s: OCTA ID = %d\n", __func__,
+				gpio_get_value(dt_data->extra_config[2]));
+
+		if ((strncmp(dt_data->project, "K", 1) == 0) &&
+				(strncmp(dt_data->sub_project, "active", 6) == 0))
+			gpio_tlmm_config(GPIO_CFG(dt_data->extra_config[2], 0,
+					GPIO_CFG_INPUT, GPIO_CFG_PULL_DOWN,
+					GPIO_CFG_2MA), 1);
+	}
 
 	pr_err("%s: power= %d, tsp_int= %d, X= %d, Y= %d, project= %s, config[%d][%d][%d][%d], tablet = %d reset= %d\n",
 		__func__, dt_data->external_ldo, dt_data->irq_gpio,
@@ -4984,9 +4992,10 @@ static void synaptics_get_firmware_name(struct synaptics_rmi4_data *rmi4_data)
 				}
 			} else if (rmi4_data->ic_revision_of_ic == SYNAPTICS_IC_REVISION_A3) {
 				if (strncmp(rmi4_data->dt_data->sub_project, "0", 1) != 0) {
-					if ((strncmp(rmi4_data->dt_data->sub_project, "active", 6) == 0) ||
-						(strncmp(rmi4_data->dt_data->sub_project, "sports", 6) == 0))
-						rmi4_data->firmware_name = FW_IMAGE_NAME_S5100_K_ACTIVE;
+					if ((strncmp(rmi4_data->dt_data->sub_project, "active", 6) == 0))
+							rmi4_data->firmware_name = FW_IMAGE_NAME_S5100_K_ACTIVE;					
+					else if(strncmp(rmi4_data->dt_data->sub_project, "sports", 6) == 0)
+							rmi4_data->firmware_name = FW_IMAGE_NAME_S5100_K_SPORTS;
 					else
 						rmi4_data->firmware_name = FW_IMAGE_NAME_NONE;
 				} else {

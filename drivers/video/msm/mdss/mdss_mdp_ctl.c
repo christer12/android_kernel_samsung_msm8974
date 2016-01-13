@@ -366,7 +366,7 @@ int mdss_mdp_perf_calc_pipe(struct mdss_mdp_pipe *pipe,
 	 * no need to account for these lines in MDP clock or request bus
 	 * bandwidth to fetch them.
 	 */
-	src_h = src.h >> pipe->vert_deci;
+	src_h = DECIMATED_DIMENSION(src.h, pipe->vert_deci);
 
 	quota = fps * src.w * src_h;
 
@@ -397,6 +397,12 @@ int mdss_mdp_perf_calc_pipe(struct mdss_mdp_pipe *pipe,
 		perf->bw_overlap = quota;
 	} else {
 		perf->bw_overlap = (quota / dst.h) * v_total;
+	}
+
+     /* The following change has been taken from CL 2767750. The bw has been increased as a fix
+      * for underrun during UHD video play cases. */
+	if ( ((pipe->src.h * pipe->src.w) / (pipe->dst.h * pipe->dst.w)) > 6) {
+		perf->bw_overlap = perf->bw_overlap * 2;
 	}
 
 	if (apply_fudge)
@@ -701,7 +707,8 @@ int mdss_mdp_perf_bw_check(struct mdss_mdp_ctl *ctl,
 {
 	struct mdss_data_type *mdata = ctl->mdata;
 	struct mdss_mdp_perf_params perf;
-	u32 bw, threshold;
+	u32 bw, threshold, i;
+	u64 bw_sum_of_intfs = 0;
 
 	/* we only need bandwidth check on real-time clients (interfaces) */
 	if (ctl->intf_type == MDSS_MDP_NO_INTF)
@@ -710,11 +717,21 @@ int mdss_mdp_perf_bw_check(struct mdss_mdp_ctl *ctl,
 	__mdss_mdp_perf_calc_ctl_helper(ctl, &perf,
 			left_plist, left_cnt, right_plist, right_cnt);
 
+	ctl->bw_pending = perf.bw_ctl;
+ 
+	for (i = 0; i < mdata->nctl; i++) {
+	struct mdss_mdp_ctl *temp = mdata->ctl_off + i;
+	if (temp->power_on && (temp->intf_type != MDSS_MDP_NO_INTF))
+	bw_sum_of_intfs += temp->bw_pending;
+	}
+
 	/* convert bandwidth to kb */
-	bw = DIV_ROUND_UP_ULL(perf.bw_ctl, 1000);
+	bw = DIV_ROUND_UP_ULL(bw_sum_of_intfs, 1000);
 	pr_debug("calculated bandwidth=%uk\n", bw);
 
-	threshold = ctl->is_video_mode ? mdata->max_bw_low : mdata->max_bw_high;
+	threshold = (ctl->is_video_mode ||
+	mdss_mdp_video_mode_intf_connected(ctl)) ?
+	mdata->max_bw_low : mdata->max_bw_high;
 	if (bw > threshold) {
 		pr_debug("exceeds bandwidth: %ukb > %ukb\n", bw, threshold);
 		return -E2BIG;
@@ -735,7 +752,8 @@ static void mdss_mdp_perf_calc_ctl(struct mdss_mdp_ctl *ctl,
 			left_plist, (left_plist ? MDSS_MDP_MAX_STAGE : 0),
 			right_plist, (right_plist ? MDSS_MDP_MAX_STAGE : 0));
 
-	if (ctl->is_video_mode || mdss_mdp_video_mode_intf_connected(ctl)) {
+	if (ctl->is_video_mode || ((ctl->intf_type != MDSS_MDP_NO_INTF) &&
+		mdss_mdp_video_mode_intf_connected(ctl))) {
 		perf->bw_ctl =
 			max(apply_fudge_factor(perf->bw_overlap,
 				&mdss_res->ib_factor_overlap),
@@ -2639,7 +2657,10 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 	int mixer1_changed, mixer2_changed;
 	int ret = 0;
 	bool is_bw_released;
-
+	
+#if defined(CONFIG_FB_MSM_CAMERA_CSC)
+	struct mdss_overlay_private *mdp5_data = NULL;
+#endif
 	if (!ctl) {
 		pr_err("display function not set\n");
 		return -ENODEV;
@@ -2712,7 +2733,7 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 	if (ctl->wait_pingpong)
 		ctl->wait_pingpong(ctl, NULL);
 	ATRACE_END("wait_pingpong");
-
+	
 	ctl->roi_bkup.w = ctl->roi.w;
 	ctl->roi_bkup.h = ctl->roi.h;
 
@@ -2731,6 +2752,31 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 	wmb();
 	ctl->flush_bits = 0;
 
+#if defined(CONFIG_FB_MSM_CAMERA_CSC)
+	if(ctl->mfd)
+		mdp5_data = mfd_to_mdp5_data(ctl->mfd);
+
+	if (mdp5_data) {
+	  		mutex_lock(&mdp5_data->list_lock);
+			if (csc_change == 1) {
+		  			struct mdss_mdp_pipe *pipe, *next;
+					mdss_mdp_irq_enable(MDSS_MDP_IRQ_PING_PONG_COMP, ctl->num);
+					if (ctl->wait_video_pingpong) {
+			  				ctl->wait_video_pingpong(ctl, NULL);
+					}
+					list_for_each_entry_safe(pipe, next, &mdp5_data->pipes_used, list) {
+		  				if (pipe->type == MDSS_MDP_PIPE_TYPE_VIG) {
+		  					pr_info(" mdss_mdp_csc_setup start\n");
+							mdss_mdp_csc_setup(MDSS_MDP_BLOCK_SSPP, pipe->num, 1,
+				 									MDSS_MDP_CSC_YUV2RGB);
+							csc_change = 0;
+						}
+					}
+			}
+			mutex_unlock(&mdp5_data->list_lock);
+	}
+
+#endif
 	mdss_mdp_xlog_mixer_reg(ctl);
 
 	if (ctl->display_fnc)
